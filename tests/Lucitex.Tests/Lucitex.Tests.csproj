@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Lucitex.Core\Lucitex.Core.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Exr\Lucitex.Exr.csproj" />
   </ItemGroup>
 
 </Project>

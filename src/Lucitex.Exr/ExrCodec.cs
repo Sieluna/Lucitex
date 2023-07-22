@@ -5,7 +5,7 @@ using Lucitex.Exr.Format;
 
 namespace Lucitex.Exr;
 
-public sealed class ExrCodec(ExrCompressionId defaultCompression = ExrCompressionId.Zip) : IImageCodec
+public sealed class ExrCodec(ExrCompressionId defaultCompression = ExrCompressionId.Zip, ExrTileDesc? tiles = null) : IImageCodec
 {
     private static ReadOnlySpan<byte> Magic => [0x76, 0x2f, 0x31, 0x01];
 
@@ -27,5 +27,5 @@ public sealed class ExrCodec(ExrCompressionId defaultCompression = ExrCompressio
 
     public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null) => new ExrReader(stream, limits ?? DecodeLimits.Default);
 
-    public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) => new ExrWriter(stream, descriptor, defaultCompression);
+    public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) => new ExrWriter(stream, descriptor, defaultCompression, tiles);
 }

@@ -24,13 +24,13 @@ public class UnsupportedFeatureTests
     }
 
     [Fact]
-    public void OpenReader_RejectsTiledFlag()
+    public void OpenReader_RejectsTiledFlagWithoutTilesAttribute()
     {
         using var stream = WriteMinimalStream(ExrVersionFlags.Tiled, BuildMinimalHeader());
         var codec = new Lucitex.Exr.ExrCodec();
 
         var exception = Assert.Throws<ImageFormatException>(() => codec.OpenReader(stream));
-        Assert.Contains("Tiled", exception.Code);
+        Assert.Equal("MissingAttribute", exception.Code);
     }
 
     [Fact]

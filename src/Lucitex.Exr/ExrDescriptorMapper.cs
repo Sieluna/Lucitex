@@ -13,7 +13,10 @@ internal static class ExrDescriptorMapper
 {
     private const string MetadataNamespace = "exr";
 
-    public static ImageAssetDescriptor ToImageAssetDescriptor(ExrHeader header)
+    public static ImageAssetDescriptor ToImageAssetDescriptor(IReadOnlyList<ExrHeader> headers) =>
+        new() { Parts = headers.Select(ToImagePartDescriptor).ToList() };
+
+    public static ImagePartDescriptor ToImagePartDescriptor(ExrHeader header)
     {
         var dataWindow = ImageBox.FromInclusive(
             header.DataWindow.XMin, header.DataWindow.YMin,
@@ -67,7 +70,7 @@ internal static class ExrDescriptorMapper
             ? new AlphaDescriptor { Mode = AlphaMode.Straight }
             : null;
 
-        var part = new ImagePartDescriptor
+        return new ImagePartDescriptor
         {
             Name = header.PartName,
             Spatial = spatial,
@@ -77,13 +80,13 @@ internal static class ExrDescriptorMapper
             Alpha = alpha,
             Metadata = ToMetadata(header),
         };
-
-        return new ImageAssetDescriptor { Parts = [part] };
     }
 
-    public static ExrHeader ToExrHeader(ImageAssetDescriptor asset, ExrCompressionId compression)
+    public static ExrHeader ToExrHeader(ImageAssetDescriptor asset, ExrCompressionId compression) =>
+        ToExrHeader(asset.Parts[0], compression);
+
+    public static ExrHeader ToExrHeader(ImagePartDescriptor part, ExrCompressionId compression)
     {
-        var part = asset.Parts[0];
         var dataWindow = ToExrBox2i(part.Spatial.DataWindow);
         var displayWindow = ToExrBox2i(part.Spatial.DisplayWindow);
 

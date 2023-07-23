@@ -19,7 +19,26 @@ internal static class ExrHeaderReader
         return (ExrVersionFlags)(versionField & ~0xFF);
     }
 
-    public static ExrHeader ReadHeader(ExrBinaryReader reader)
+    public static ExrHeader ReadHeader(ExrBinaryReader reader) =>
+        TryReadHeader(reader) ?? throw new ImageFormatException("exr", "MissingAttribute", "Expected a header but found an empty part-list terminator.");
+
+    public static List<ExrHeader> ReadHeaderList(ExrBinaryReader reader, bool isMultiPart)
+    {
+        if (!isMultiPart)
+        {
+            return [ReadHeader(reader)];
+        }
+
+        var headers = new List<ExrHeader>();
+        while (TryReadHeader(reader) is { } header)
+        {
+            headers.Add(header);
+        }
+
+        return headers;
+    }
+
+    public static ExrHeader? TryReadHeader(ExrBinaryReader reader)
     {
         List<ExrChannelInfo>? channels = null;
         ExrCompressionId? compression = null;
@@ -32,14 +51,22 @@ internal static class ExrHeaderReader
         string? partType = null;
         int? chunkCount = null;
         var unknown = new List<ExrRawAttribute>();
+        var isFirstAttribute = true;
 
         while (true)
         {
             var name = reader.ReadCString();
             if (name.Length == 0)
             {
+                if (isFirstAttribute)
+                {
+                    return null;
+                }
+
                 break;
             }
+
+            isFirstAttribute = false;
 
             var type = reader.ReadCString();
             var size = reader.ReadInt32();

@@ -9,14 +9,26 @@ namespace Lucitex.Exr;
 
 internal sealed class ExrWriter : IImageWriter
 {
+    private sealed class PartState
+    {
+        public required ExrHeader Header { get; init; }
+
+        public required byte[] PixelBuffer { get; init; }
+
+        public required int RowStrideBytes { get; init; }
+
+        public required long DataMinX { get; init; }
+
+        public required long DataMinY { get; init; }
+
+        public required long Width { get; init; }
+
+        public required long Height { get; init; }
+    }
+
     private readonly Stream _stream;
-    private readonly ExrHeader _header;
-    private readonly byte[] _pixelBuffer;
-    private readonly int _rowStrideBytes;
-    private readonly long _dataMinX;
-    private readonly long _dataMinY;
-    private readonly long _width;
-    private readonly long _height;
+    private readonly List<PartState> _parts;
+    private readonly bool _isMultiPart;
     private bool _finished;
 
     public ExrWriter(Stream stream, ImageAssetDescriptor descriptor, ExrCompressionId compression, ExrTileDesc? tiles)
@@ -32,15 +44,11 @@ internal sealed class ExrWriter : IImageWriter
         }
 
         _stream = stream;
-        _header = ExrDescriptorMapper.ToExrHeader(descriptor, compression) with { Tiles = tiles };
+        _isMultiPart = descriptor.Parts.Count > 1;
 
-        _width = _header.DataWindow.Width;
-        _height = _header.DataWindow.Height;
-        _dataMinX = _header.DataWindow.XMin;
-        _dataMinY = _header.DataWindow.YMin;
-
-        _rowStrideBytes = ExrReader.ComputeChannelOffsets(_header.Channels, _width).RowStride;
-        _pixelBuffer = new byte[checked(_rowStrideBytes * _height)];
+        _parts = descriptor.Parts
+            .Select((part, index) => BuildPartState(part, index, compression, tiles, _isMultiPart))
+            .ToList();
     }
 
     public WriterExecutionContract Contract { get; } = new()
@@ -57,16 +65,18 @@ internal sealed class ExrWriter : IImageWriter
 
     public void Write(WorkRegion region, ReadOnlySpan<byte> data)
     {
-        if (region.Region.MinX != _dataMinX || region.Region.MaxXExclusive != _dataMinX + _width)
+        var part = _parts[region.Subresource.Part];
+
+        if (region.Region.MinX != part.DataMinX || region.Region.MaxXExclusive != part.DataMinX + part.Width)
         {
             throw new NotSupportedException("Partial-row EXR writes are not supported yet.");
         }
 
-        var startRow = (int)(region.Region.MinY - _dataMinY);
+        var startRow = (int)(region.Region.MinY - part.DataMinY);
         var rowCount = (int)region.Region.Height;
-        var byteCount = rowCount * _rowStrideBytes;
+        var byteCount = rowCount * part.RowStrideBytes;
 
-        data[..byteCount].CopyTo(_pixelBuffer.AsSpan(startRow * _rowStrideBytes, byteCount));
+        data[..byteCount].CopyTo(part.PixelBuffer.AsSpan(startRow * part.RowStrideBytes, byteCount));
     }
 
     public void Finish()
@@ -78,60 +88,130 @@ internal sealed class ExrWriter : IImageWriter
 
         using var headerBuffer = new MemoryStream();
         var headerWriter = new ExrBinaryWriter(headerBuffer);
-        ExrHeaderWriter.WriteFileVersion(headerWriter, _header.Tiles is null ? ExrVersionFlags.None : ExrVersionFlags.Tiled);
-        ExrHeaderWriter.WriteHeader(headerWriter, _header);
+        var flags = _isMultiPart ? ExrVersionFlags.MultiPart : (_parts[0].Header.Tiles is null ? ExrVersionFlags.None : ExrVersionFlags.Tiled);
+        ExrHeaderWriter.WriteFileVersion(headerWriter, flags);
+
+        foreach (var part in _parts)
+        {
+            ExrHeaderWriter.WriteHeader(headerWriter, part.Header);
+        }
+
+        if (_isMultiPart)
+        {
+            headerWriter.WriteByte(0);
+        }
+
         var headerBytes = headerBuffer.ToArray();
 
-        var (chunkYs, chunkTileCoords, chunkPayloads) = _header.Tiles is { } tiles
-            ? BuildTiledChunks(tiles)
-            : BuildScanlineChunks();
+        var perPartChunks = _parts.Select(BuildChunksForPart).ToList();
 
-        var chunkCount = chunkPayloads.Length;
-        var chunkDataStart = headerBytes.Length + (long)chunkCount * 8;
-        var offsets = new long[chunkCount];
+        var chunkDataStart = headerBytes.Length + perPartChunks.Sum(p => (long)p.Payloads.Length * 8);
         var running = chunkDataStart;
-        var perChunkHeaderBytes = _header.Tiles is null ? 8 : 20;
+        var offsetTables = new long[_parts.Count][];
 
-        for (var i = 0; i < chunkCount; i++)
+        for (var partIndex = 0; partIndex < _parts.Count; partIndex++)
         {
-            offsets[i] = running;
-            running += perChunkHeaderBytes + chunkPayloads[i].Length;
+            var (_, _, payloads) = perPartChunks[partIndex];
+            var offsets = new long[payloads.Length];
+            var perChunkHeaderBytes = (_isMultiPart ? 4 : 0) + (_parts[partIndex].Header.Tiles is null ? 8 : 20);
+
+            for (var i = 0; i < payloads.Length; i++)
+            {
+                offsets[i] = running;
+                running += perChunkHeaderBytes + payloads[i].Length;
+            }
+
+            offsetTables[partIndex] = offsets;
         }
 
         _stream.Write(headerBytes);
-
         var outWriter = new ExrBinaryWriter(_stream);
-        foreach (var offset in offsets)
+
+        foreach (var offsets in offsetTables)
         {
-            outWriter.WriteInt64(offset);
+            foreach (var offset in offsets)
+            {
+                outWriter.WriteInt64(offset);
+            }
         }
 
-        for (var i = 0; i < chunkCount; i++)
+        for (var partIndex = 0; partIndex < _parts.Count; partIndex++)
         {
-            if (_header.Tiles is null)
-            {
-                outWriter.WriteInt32(chunkYs[i]);
-            }
-            else
-            {
-                var (dx, dy) = chunkTileCoords[i];
-                outWriter.WriteInt32(dx);
-                outWriter.WriteInt32(dy);
-                outWriter.WriteInt32(0);
-                outWriter.WriteInt32(0);
-            }
+            var (chunkYs, tileCoords, payloads) = perPartChunks[partIndex];
+            var isTiled = _parts[partIndex].Header.Tiles is not null;
 
-            outWriter.WriteInt32(chunkPayloads[i].Length);
-            outWriter.WriteBytes(chunkPayloads[i]);
+            for (var i = 0; i < payloads.Length; i++)
+            {
+                if (_isMultiPart)
+                {
+                    outWriter.WriteInt32(partIndex);
+                }
+
+                if (isTiled)
+                {
+                    outWriter.WriteInt32(tileCoords[i].Dx);
+                    outWriter.WriteInt32(tileCoords[i].Dy);
+                    outWriter.WriteInt32(0);
+                    outWriter.WriteInt32(0);
+                }
+                else
+                {
+                    outWriter.WriteInt32(chunkYs[i]);
+                }
+
+                outWriter.WriteInt32(payloads[i].Length);
+                outWriter.WriteBytes(payloads[i]);
+            }
         }
 
         _finished = true;
     }
 
-    private (int[] ChunkYs, (int Dx, int Dy)[] TileCoords, byte[][] Payloads) BuildScanlineChunks()
+    private static PartState BuildPartState(
+        Lucitex.Core.Semantic.ImagePartDescriptor part,
+        int index,
+        ExrCompressionId compression,
+        ExrTileDesc? tiles,
+        bool isMultiPart)
     {
-        var linesPerChunk = ExrCompressor.NumScanlinesPerChunk(_header.Compression);
-        var chunkCount = (int)((_height + linesPerChunk - 1) / linesPerChunk);
+        var header = ExrDescriptorMapper.ToExrHeader(part, compression) with { Tiles = tiles };
+
+        if (isMultiPart)
+        {
+            header = header with
+            {
+                PartName = header.PartName ?? $"part{index}",
+                PartType = tiles is null ? "scanlineimage" : "tiledimage",
+            };
+        }
+
+        var width = header.DataWindow.Width;
+        var height = header.DataWindow.Height;
+        var rowStride = ExrReader.ComputeChannelOffsets(header.Channels, width).RowStride;
+
+        return new PartState
+        {
+            Header = header,
+            PixelBuffer = new byte[checked(rowStride * height)],
+            RowStrideBytes = rowStride,
+            DataMinX = header.DataWindow.XMin,
+            DataMinY = header.DataWindow.YMin,
+            Width = width,
+            Height = height,
+        };
+    }
+
+    private static (int[] ChunkYs, (int Dx, int Dy)[] TileCoords, byte[][] Payloads) BuildChunksForPart(PartState part)
+    {
+        return part.Header.Tiles is { } tiles
+            ? BuildTiledChunks(part, tiles)
+            : BuildScanlineChunks(part);
+    }
+
+    private static (int[] ChunkYs, (int Dx, int Dy)[] TileCoords, byte[][] Payloads) BuildScanlineChunks(PartState part)
+    {
+        var linesPerChunk = ExrCompressor.NumScanlinesPerChunk(part.Header.Compression);
+        var chunkCount = (int)((part.Height + linesPerChunk - 1) / linesPerChunk);
 
         var payloads = new byte[chunkCount][];
         var ys = new int[chunkCount];
@@ -139,43 +219,43 @@ internal sealed class ExrWriter : IImageWriter
         for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
         {
             var rowStart = chunkIndex * linesPerChunk;
-            var rowsInChunk = Math.Min(linesPerChunk, (int)_height - rowStart);
-            var rawSize = _rowStrideBytes * rowsInChunk;
-            var raw = _pixelBuffer.AsSpan(rowStart * _rowStrideBytes, rawSize);
+            var rowsInChunk = Math.Min(linesPerChunk, (int)part.Height - rowStart);
+            var rawSize = part.RowStrideBytes * rowsInChunk;
+            var raw = part.PixelBuffer.AsSpan(rowStart * part.RowStrideBytes, rawSize);
 
-            payloads[chunkIndex] = ExrCompressor.Compress(_header.Compression, raw);
-            ys[chunkIndex] = (int)_dataMinY + rowStart;
+            payloads[chunkIndex] = ExrCompressor.Compress(part.Header.Compression, raw);
+            ys[chunkIndex] = (int)part.DataMinY + rowStart;
         }
 
         return (ys, [], payloads);
     }
 
-    private (int[] ChunkYs, (int Dx, int Dy)[] TileCoords, byte[][] Payloads) BuildTiledChunks(ExrTileDesc tiles)
+    private static (int[] ChunkYs, (int Dx, int Dy)[] TileCoords, byte[][] Payloads) BuildTiledChunks(PartState part, ExrTileDesc tiles)
     {
-        var (tilesX, tilesY) = ExrTiling.TileGrid(_width, _height, tiles.XSize, tiles.YSize);
+        var (tilesX, tilesY) = ExrTiling.TileGrid(part.Width, part.Height, tiles.XSize, tiles.YSize);
         var chunkCount = tilesX * tilesY;
 
         var payloads = new byte[chunkCount][];
         var coords = new (int Dx, int Dy)[chunkCount];
-        var fullImageOffsets = ExrReader.ComputeChannelOffsets(_header.Channels, _width);
+        var fullImageOffsets = ExrReader.ComputeChannelOffsets(part.Header.Channels, part.Width);
 
         var index = 0;
         for (var dy = 0; dy < tilesY; dy++)
         {
             var y0 = dy * (int)tiles.YSize;
-            var tileHeight = (int)Math.Min(tiles.YSize, _height - y0);
+            var tileHeight = (int)Math.Min(tiles.YSize, part.Height - y0);
 
             for (var dx = 0; dx < tilesX; dx++)
             {
                 var x0 = dx * (int)tiles.XSize;
-                var tileWidth = (int)Math.Min(tiles.XSize, _width - x0);
+                var tileWidth = (int)Math.Min(tiles.XSize, part.Width - x0);
 
-                var tileOffsets = ExrReader.ComputeChannelOffsets(_header.Channels, tileWidth);
+                var tileOffsets = ExrReader.ComputeChannelOffsets(part.Header.Channels, tileWidth);
                 var tileBuffer = new byte[tileOffsets.RowStride * tileHeight];
 
-                GatherTileFromImage(tileBuffer, tileOffsets, fullImageOffsets, x0, y0, tileWidth, tileHeight);
+                GatherTileFromImage(part, tileBuffer, tileOffsets, fullImageOffsets, x0, y0, tileWidth, tileHeight);
 
-                payloads[index] = ExrCompressor.Compress(_header.Compression, tileBuffer);
+                payloads[index] = ExrCompressor.Compress(part.Header.Compression, tileBuffer);
                 coords[index] = (dx, dy);
                 index++;
             }
@@ -184,7 +264,8 @@ internal sealed class ExrWriter : IImageWriter
         return ([], coords, payloads);
     }
 
-    private void GatherTileFromImage(
+    private static void GatherTileFromImage(
+        PartState part,
         byte[] tileBuffer,
         ExrReader.ChannelOffsets tileOffsets,
         ExrReader.ChannelOffsets fullImageOffsets,
@@ -196,14 +277,14 @@ internal sealed class ExrWriter : IImageWriter
         for (var row = 0; row < tileHeight; row++)
         {
             var tileRowBase = row * tileOffsets.RowStride;
-            var imageRowBase = (y0 + row) * _rowStrideBytes;
+            var imageRowBase = (y0 + row) * part.RowStrideBytes;
 
-            for (var c = 0; c < _header.Channels.Count; c++)
+            for (var c = 0; c < part.Header.Channels.Count; c++)
             {
                 var bytesPerSample = tileOffsets.BytesPerSample[c];
                 var length = tileWidth * bytesPerSample;
 
-                var source = _pixelBuffer.AsSpan(imageRowBase + fullImageOffsets.Offsets[c] + (x0 * bytesPerSample), length);
+                var source = part.PixelBuffer.AsSpan(imageRowBase + fullImageOffsets.Offsets[c] + (x0 * bytesPerSample), length);
                 var destination = tileBuffer.AsSpan(tileRowBase + tileOffsets.Offsets[c], length);
 
                 source.CopyTo(destination);

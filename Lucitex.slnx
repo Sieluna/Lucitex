@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Lucitex.Core/Lucitex.Core.csproj" />
     <Project Path="src/Lucitex.Exr/Lucitex.Exr.csproj" />
+    <Project Path="src/Lucitex.Png/Lucitex.Png.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Lucitex.Tests/Lucitex.Tests.csproj" />

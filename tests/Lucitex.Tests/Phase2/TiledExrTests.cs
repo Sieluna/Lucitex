@@ -56,7 +56,7 @@ public class TiledExrTests
     }
 
     [Fact]
-    public void OpenReader_RejectsMipmapTiledFiles()
+    public void Read_RejectsMipmapTiledFiles_ButDescribeStillSucceeds()
     {
         var header = new ExrHeader
         {
@@ -65,16 +65,23 @@ public class TiledExrTests
             DataWindow = new ExrBox2i(0, 0, 15, 15),
             DisplayWindow = new ExrBox2i(0, 0, 15, 15),
             Tiles = new ExrTileDesc(8, 8, ExrTileLevelMode.MipmapLevels, ExrTileRoundingMode.RoundDown),
+            ChunkCount = 1,
         };
 
         using var stream = new MemoryStream();
         var writer = new ExrBinaryWriter(stream);
         ExrHeaderWriter.WriteFileVersion(writer, ExrVersionFlags.Tiled);
         ExrHeaderWriter.WriteHeader(writer, header);
+        writer.WriteInt64(0);
         stream.Position = 0;
 
         var codec = new ExrCodec();
-        var exception = Assert.Throws<ImageFormatException>(() => codec.OpenReader(stream));
+        var reader = codec.OpenReader(stream);
+        var described = reader.Describe();
+        Assert.Single(described.Parts);
+
+        var destination = new byte[16 * 16 * 4];
+        var exception = Assert.Throws<ImageFormatException>(() => reader.Read(FullRegion(16, 16), destination));
         Assert.Contains("MipRipmapTiles", exception.Code);
     }
 }

@@ -1,3 +1,10 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
@@ -13,8 +20,16 @@ bld/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+artifacts/
 
 # NuGet Packages
 *.nupkg
 # NuGet Symbol Packages
 *.snupkg
+
+# vcpkg manifest installed packages
+vcpkg_installed/
+
+# IDE / editor
+.vscode/
+.idea/

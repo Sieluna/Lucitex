@@ -40,7 +40,12 @@ internal sealed class ExrReader : IImageReader
     {
         _stream = stream;
         _limits = limits;
-        _binaryReader = new ExrBinaryReader(stream);
+        if (!stream.CanSeek)
+        {
+            throw new ArgumentException("OpenEXR reader requires a seekable stream.", nameof(stream));
+        }
+
+        _binaryReader = new ExrBinaryReader(stream, checked((int)Math.Min(limits.MaxWorkingSet, int.MaxValue)));
 
         var flags = ExrHeaderReader.ReadFileVersion(_binaryReader, out _);
         _isMultiPart = flags.HasFlag(ExrVersionFlags.MultiPart);
@@ -51,6 +56,7 @@ internal sealed class ExrReader : IImageReader
             throw new ImageFormatException("exr", "MissingAttribute", "The file contains no parts.");
         }
 
+        ValidateHeaders(headers, limits);
         _descriptor = ExrDescriptorMapper.ToImageAssetDescriptor(headers);
 
         var violations = DecodeLimitsValidator.Validate(_descriptor, limits);
@@ -61,9 +67,17 @@ internal sealed class ExrReader : IImageReader
 
         _parts = headers.Select(BuildPartState).ToList();
 
-        foreach (var part in _parts)
+        var chunkCounts = _parts.Select(ComputeChunkCount).ToArray();
+        var totalChunkCount = chunkCounts.Aggregate(0L, (total, count) => checked(total + count));
+        if (totalChunkCount > limits.MaxWorkingSet / sizeof(long))
         {
-            var chunkCount = ComputeChunkCount(part);
+            throw new ImageFormatException("exr", "LimitExceeded", "EXR chunk table exceeds MaxWorkingSet.");
+        }
+
+        for (var partIndex = 0; partIndex < _parts.Count; partIndex++)
+        {
+            var part = _parts[partIndex];
+            var chunkCount = chunkCounts[partIndex];
             var offsets = new long[chunkCount];
             for (var i = 0; i < chunkCount; i++)
             {
@@ -71,6 +85,15 @@ internal sealed class ExrReader : IImageReader
             }
 
             part.ChunkOffsets = offsets;
+        }
+
+        var chunkDataStart = stream.Position;
+        foreach (var offset in _parts.SelectMany(part => part.ChunkOffsets))
+        {
+            if (offset < chunkDataStart || offset > stream.Length - sizeof(int) * 2L)
+            {
+                throw new ImageFormatException("exr", "BadChunkOffset", $"EXR chunk offset {offset} is outside the chunk data range.");
+            }
         }
     }
 
@@ -109,6 +132,11 @@ internal sealed class ExrReader : IImageReader
     {
         if (part.Header.ChunkCount is { } explicitCount)
         {
+            if (explicitCount <= 0)
+            {
+                throw new ImageFormatException("exr", "BadChunkCount", $"EXR chunk count {explicitCount} must be positive.");
+            }
+
             return explicitCount;
         }
 
@@ -116,11 +144,11 @@ internal sealed class ExrReader : IImageReader
         {
             var tiles = part.Header.Tiles!.Value;
             var (tilesX, tilesY) = ExrTiling.TileGrid(part.Width, part.Height, tiles.XSize, tiles.YSize);
-            return tilesX * tilesY;
+            return checked(tilesX * tilesY);
         }
 
         var linesPerChunk = ExrCompressor.NumScanlinesPerChunk(part.Header.Compression);
-        return (int)((part.Height + linesPerChunk - 1) / linesPerChunk);
+        return checked((int)((part.Height + linesPerChunk - 1) / linesPerChunk));
     }
 
     private void EnsureDecoded(PartState part)
@@ -164,13 +192,20 @@ internal sealed class ExrReader : IImageReader
 
         var buffer = new byte[totalBytes];
 
-        if (part.IsTiled)
+        try
         {
-            DecodeTiles(part, buffer);
+            if (part.IsTiled)
+            {
+                DecodeTiles(part, buffer);
+            }
+            else
+            {
+                DecodeScanlines(part, buffer);
+            }
         }
-        else
+        catch (Exception exception) when (ExrFormatErrors.IsMalformed(exception))
         {
-            DecodeScanlines(part, buffer);
+            throw ExrFormatErrors.Wrap(exception, _stream);
         }
 
         part.DecodedPixels = buffer;
@@ -276,9 +311,50 @@ internal sealed class ExrReader : IImageReader
         {
             offsets[i] = running;
             bytesPerSample[i] = channels[i].BytesPerSample;
-            running += (int)width * channels[i].BytesPerSample;
+            running = checked(running + checked((int)width) * channels[i].BytesPerSample);
         }
 
         return new ChannelOffsets(offsets, bytesPerSample, running);
+    }
+
+    private static void ValidateHeaders(IReadOnlyList<ExrHeader> headers, DecodeLimits limits)
+    {
+        if (headers.Count > limits.MaxParts)
+        {
+            throw new ImageFormatException("exr", "LimitExceeded", $"EXR contains {headers.Count} parts, exceeding MaxParts.");
+        }
+
+        foreach (var header in headers)
+        {
+            if (header.DataWindow.Width <= 0 || header.DataWindow.Height <= 0 ||
+                header.DisplayWindow.Width <= 0 || header.DisplayWindow.Height <= 0)
+            {
+                throw new ImageFormatException("exr", "BadWindow", "EXR data and display windows must have positive extents.");
+            }
+
+            if (header.Channels.Count is 0 || header.Channels.Count > limits.MaxChannels)
+            {
+                throw new ImageFormatException("exr", "LimitExceeded", $"EXR channel count {header.Channels.Count} is outside the supported limits.");
+            }
+
+            if (!Enum.IsDefined(header.Compression) || !Enum.IsDefined(header.LineOrder))
+            {
+                throw new ImageFormatException("exr", "BadAttribute", "EXR contains an unknown compression or line-order value.");
+            }
+
+            foreach (var channel in header.Channels)
+            {
+                if (!Enum.IsDefined(channel.PixelType) || channel.XSampling <= 0 || channel.YSampling <= 0)
+                {
+                    throw new ImageFormatException("exr", "BadChannel", $"EXR channel '{channel.Name}' has an invalid type or sampling rate.");
+                }
+            }
+
+            if (header.Tiles is { } tiles &&
+                (tiles.XSize == 0 || tiles.YSize == 0 || !Enum.IsDefined(tiles.LevelMode) || !Enum.IsDefined(tiles.RoundingMode)))
+            {
+                throw new ImageFormatException("exr", "BadTiles", "EXR tile description is invalid.");
+            }
+        }
     }
 }

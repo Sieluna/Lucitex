@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Lucitex.Exr.Format;
 
-internal sealed class ExrBinaryReader(Stream stream)
+internal sealed class ExrBinaryReader(Stream stream, int maxAllocationLength = int.MaxValue)
 {
     public Stream Stream { get; } = stream;
 
@@ -20,6 +20,16 @@ internal sealed class ExrBinaryReader(Stream stream)
 
     public byte[] ReadBytes(int count)
     {
+        if (count < 0 || count > maxAllocationLength)
+        {
+            throw new InvalidDataException($"EXR field length {count} exceeds the allowed maximum of {maxAllocationLength}.");
+        }
+
+        if (Stream.CanSeek && Stream.Length - Stream.Position < count)
+        {
+            throw new EndOfStreamException();
+        }
+
         var buffer = new byte[count];
         Stream.ReadExactly(buffer);
         return buffer;
@@ -53,7 +63,7 @@ internal sealed class ExrBinaryReader(Stream stream)
         return BinaryPrimitives.ReadSingleLittleEndian(buffer);
     }
 
-    public string ReadCString()
+    public string ReadCString(int maxByteLength = 255)
     {
         var bytes = new List<byte>(32);
         while (true)
@@ -65,6 +75,10 @@ internal sealed class ExrBinaryReader(Stream stream)
             }
 
             bytes.Add(b);
+            if (bytes.Count > maxByteLength)
+            {
+                throw new InvalidDataException($"EXR string exceeds the allowed maximum of {maxByteLength} bytes.");
+            }
         }
 
         return Encoding.UTF8.GetString(bytes.ToArray());

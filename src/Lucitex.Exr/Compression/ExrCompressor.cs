@@ -36,10 +36,20 @@ internal static class ExrCompressor
         switch (compression)
         {
             case ExrCompressionId.None:
+                if (compressed.Length != destination.Length)
+                {
+                    throw new InvalidDataException($"Uncompressed EXR chunk has {compressed.Length} bytes; expected {destination.Length}.");
+                }
+
                 compressed.CopyTo(destination);
                 break;
             case ExrCompressionId.Rle:
-                ExrRle.Decompress(compressed, destination);
+                var written = ExrRle.Decompress(compressed, destination);
+                if (written != destination.Length)
+                {
+                    throw new InvalidDataException($"RLE EXR chunk expands to {written} bytes; expected {destination.Length}.");
+                }
+
                 break;
             case ExrCompressionId.Zips:
             case ExrCompressionId.Zip:

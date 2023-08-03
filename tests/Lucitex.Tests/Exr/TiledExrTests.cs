@@ -72,7 +72,9 @@ public class TiledExrTests
         var writer = new ExrBinaryWriter(stream);
         ExrHeaderWriter.WriteFileVersion(writer, ExrVersionFlags.Tiled);
         ExrHeaderWriter.WriteHeader(writer, header);
-        writer.WriteInt64(0);
+        writer.WriteInt64(stream.Position + 8);
+        writer.WriteInt32(0);
+        writer.WriteInt32(0);
         stream.Position = 0;
 
         var codec = new ExrCodec();

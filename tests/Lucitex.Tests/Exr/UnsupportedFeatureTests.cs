@@ -38,9 +38,16 @@ public class UnsupportedFeatureTests
         var linesPerChunk = ExrCompressor.NumScanlinesPerChunk(header.Compression);
         var chunkCount = (int)((height + linesPerChunk - 1) / linesPerChunk);
 
+        var chunkDataStart = stream.Position + (chunkCount * 8L);
         for (var i = 0; i < chunkCount; i++)
         {
-            writer.WriteInt64(0);
+            writer.WriteInt64(chunkDataStart);
+        }
+
+        for (var i = 0; i < chunkCount; i++)
+        {
+            writer.WriteInt32(0);
+            writer.WriteInt32(0);
         }
 
         stream.Position = 0;

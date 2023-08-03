@@ -69,6 +69,11 @@ internal static class ExrRle
             if (control < 0)
             {
                 var count = -control;
+                if (count > input.Length - inPos || count > output.Length - outPos)
+                {
+                    throw new InvalidDataException("EXR RLE literal run exceeds its input or output buffer.");
+                }
+
                 input.Slice(inPos, count).CopyTo(output.Slice(outPos, count));
                 inPos += count;
                 outPos += count;
@@ -76,6 +81,11 @@ internal static class ExrRle
             else
             {
                 var count = control + 1;
+                if (inPos >= input.Length || count > output.Length - outPos)
+                {
+                    throw new InvalidDataException("EXR RLE repeated run exceeds its input or output buffer.");
+                }
+
                 var value = input[inPos];
                 inPos++;
                 output.Slice(outPos, count).Fill(value);

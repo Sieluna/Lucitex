@@ -25,7 +25,17 @@ public sealed class ExrCodec(ExrCompressionId defaultCompression = ExrCompressio
             : FormatProbeResult.NoMatch(Magic.Length);
     }
 
-    public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null) => new ExrReader(stream, limits ?? DecodeLimits.Default);
+    public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null)
+    {
+        try
+        {
+            return new ExrReader(stream, limits ?? DecodeLimits.Default);
+        }
+        catch (Exception exception) when (ExrFormatErrors.IsMalformed(exception))
+        {
+            throw ExrFormatErrors.Wrap(exception, stream);
+        }
+    }
 
     public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) => new ExrWriter(stream, descriptor, defaultCompression, tiles);
 }

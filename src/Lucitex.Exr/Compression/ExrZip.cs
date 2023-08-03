@@ -27,6 +27,10 @@ internal static class ExrZip
         using (var zlib = new ZLibStream(inputStream, CompressionMode.Decompress))
         {
             zlib.ReadExactly(reordered);
+            if (zlib.ReadByte() != -1)
+            {
+                throw new InvalidDataException("EXR ZIP chunk expands beyond its expected size.");
+            }
         }
 
         BytePredictor.Remove(reordered);

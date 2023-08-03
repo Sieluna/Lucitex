@@ -18,3 +18,12 @@ bld/
 *.nupkg
 # NuGet Symbol Packages
 *.snupkg
+
+# Native fuzz oracle (vcxproj + vcpkg)
+tests/Lucitex.Fuzz.Native/vcpkg_installed/
+tests/Lucitex.Fuzz.Native/*.vcxproj.user
+artifacts/
+
+# Project-local docs (never commit these)
+CLAUDE.md
+Plane.md

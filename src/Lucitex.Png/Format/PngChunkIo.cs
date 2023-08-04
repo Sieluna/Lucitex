@@ -23,11 +23,20 @@ internal static class PngChunkIo
         }
     }
 
-    public static PngChunk ReadChunk(Stream stream)
+    public static PngChunk ReadChunk(Stream stream, int maxDataLength = int.MaxValue)
     {
         Span<byte> lengthBytes = stackalloc byte[4];
         stream.ReadExactly(lengthBytes);
         var length = BinaryPrimitives.ReadInt32BigEndian(lengthBytes);
+        if (length < 0 || length > maxDataLength)
+        {
+            throw new ImageFormatException("png", "LimitExceeded", $"Chunk length {length} exceeds the allowed maximum of {maxDataLength}.");
+        }
+
+        if (stream.CanSeek && stream.Length - stream.Position < (long)length + 8)
+        {
+            throw new ImageFormatException("png", "TruncatedChunk", "PNG chunk extends beyond the end of the stream.", stream.Position);
+        }
 
         Span<byte> typeBytes = stackalloc byte[4];
         stream.ReadExactly(typeBytes);

@@ -21,5 +21,5 @@ public readonly record struct PngIhdr(
 
     public int BytesPerPixel => Math.Max(1, (BitsPerPixel + 7) / 8);
 
-    public int RowByteLength(int width) => ((width * BitsPerPixel) + 7) / 8;
+    public int RowByteLength(int width) => checked((int)((checked((long)width * BitsPerPixel) + 7) / 8));
 }

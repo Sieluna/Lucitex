@@ -24,7 +24,17 @@ public sealed class PngCodec : IImageCodec
             : FormatProbeResult.NoMatch(Signature.Length);
     }
 
-    public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null) => new PngReader(stream, limits ?? DecodeLimits.Default);
+    public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null)
+    {
+        try
+        {
+            return new PngReader(stream, limits ?? DecodeLimits.Default);
+        }
+        catch (Exception exception) when (PngFormatErrors.IsMalformed(exception))
+        {
+            throw PngFormatErrors.Wrap(exception, stream);
+        }
+    }
 
     public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) => new PngWriter(stream, descriptor);
 }

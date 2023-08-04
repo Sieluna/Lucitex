@@ -19,7 +19,7 @@ internal sealed class PngReader : IImageReader
     public PngReader(Stream stream, DecodeLimits limits)
     {
         _limits = limits;
-        (_document, _compressedIdat) = PngDocumentReader.Read(stream);
+        (_document, _compressedIdat) = PngDocumentReader.Read(stream, limits);
         _descriptor = PngDescriptorMapper.ToImageAssetDescriptor(_document);
 
         var violations = DecodeLimitsValidator.Validate(_descriptor, limits);
@@ -35,7 +35,14 @@ internal sealed class PngReader : IImageReader
 
     public int Read(WorkRegion region, Span<byte> destination)
     {
-        EnsureDecoded();
+        try
+        {
+            EnsureDecoded();
+        }
+        catch (Exception exception) when (PngFormatErrors.IsMalformed(exception))
+        {
+            throw PngFormatErrors.Wrap(exception, Stream.Null);
+        }
 
         var width = _document.Ihdr.Width;
 
@@ -66,7 +73,8 @@ internal sealed class PngReader : IImageReader
             throw new ImageFormatException("png", "LimitExceeded", $"Decoded size {totalBytes} exceeds MaxDecodedBytes limit of {_limits.MaxDecodedBytes}.");
         }
 
-        var inflated = Inflate(_compressedIdat);
+        var inflatedLength = ExpectedInflatedLength(ihdr);
+        var inflated = InflateExactly(_compressedIdat, inflatedLength);
         var buffer = new byte[totalBytes];
 
         if (ihdr.Interlace == PngInterlaceMethod.None)
@@ -146,12 +154,37 @@ internal sealed class PngReader : IImageReader
         }
     }
 
-    private static byte[] Inflate(byte[] compressed)
+    private static int ExpectedInflatedLength(PngIhdr ihdr)
+    {
+        if (ihdr.Interlace == PngInterlaceMethod.None)
+        {
+            return checked((ihdr.RowByteLength(ihdr.Width) + 1) * ihdr.Height);
+        }
+
+        var length = 0;
+        for (var pass = 0; pass < 7; pass++)
+        {
+            var (width, height) = Adam7.PassDimensions(ihdr.Width, ihdr.Height, pass);
+            if (width > 0 && height > 0)
+            {
+                length = checked(length + ((ihdr.RowByteLength(width) + 1) * height));
+            }
+        }
+
+        return length;
+    }
+
+    private static byte[] InflateExactly(byte[] compressed, int expectedLength)
     {
         using var input = new MemoryStream(compressed);
         using var zlib = new ZLibStream(input, CompressionMode.Decompress);
-        using var output = new MemoryStream();
-        zlib.CopyTo(output);
-        return output.ToArray();
+        var output = new byte[expectedLength];
+        zlib.ReadExactly(output);
+        if (zlib.ReadByte() != -1)
+        {
+            throw new ImageFormatException("png", "BadImageData", "Inflated PNG image data is longer than expected.");
+        }
+
+        return output;
     }
 }

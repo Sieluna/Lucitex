@@ -5,6 +5,7 @@
     <Project Path="src/Lucitex.Png/Lucitex.Png.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Lucitex.Fuzz/Lucitex.Fuzz.csproj" />
     <Project Path="tests/Lucitex.Tests/Lucitex.Tests.csproj" />
   </Folder>
 </Solution>

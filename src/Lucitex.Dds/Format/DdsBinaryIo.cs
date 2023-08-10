@@ -15,8 +15,7 @@ internal sealed class DdsBinaryReader(Stream stream, int maxAllocationLength = i
 
     public byte[] ReadBytes(int count)
     {
-        if (count < 0 || count > maxAllocationLength)
-        {
+        if (count < 0 || count > maxAllocationLength) {
             throw new InvalidDataException($"DDS field length {count} exceeds the allowed maximum of {maxAllocationLength}.");
         }
 

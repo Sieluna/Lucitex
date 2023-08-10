@@ -12,8 +12,7 @@ public sealed class AtomicOutputSession : IDisposable
         TempPath = TargetPath + $".{Guid.NewGuid():N}.tmp";
 
         var directory = Path.GetDirectoryName(TargetPath);
-        if (!string.IsNullOrEmpty(directory))
-        {
+        if (!string.IsNullOrEmpty(directory)) {
             Directory.CreateDirectory(directory);
         }
 
@@ -28,20 +27,17 @@ public sealed class AtomicOutputSession : IDisposable
 
     public void Commit()
     {
-        if (_committed)
-        {
+        if (_committed) {
             throw new InvalidOperationException("The session has already been committed.");
         }
 
         _stream.Flush(flushToDisk: true);
         _stream.Dispose();
 
-        if (File.Exists(TargetPath))
-        {
+        if (File.Exists(TargetPath)) {
             File.Replace(TempPath, TargetPath, destinationBackupFileName: null);
         }
-        else
-        {
+        else {
             File.Move(TempPath, TargetPath);
         }
 
@@ -50,16 +46,13 @@ public sealed class AtomicOutputSession : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
-        {
+        if (_disposed) {
             return;
         }
 
-        if (!_committed)
-        {
+        if (!_committed) {
             _stream.Dispose();
-            if (File.Exists(TempPath))
-            {
+            if (File.Exists(TempPath)) {
                 File.Delete(TempPath);
             }
         }

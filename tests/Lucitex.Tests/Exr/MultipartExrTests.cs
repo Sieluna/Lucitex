@@ -9,8 +9,7 @@ namespace Lucitex.Tests.Exr;
 
 public class MultipartExrTests
 {
-    private static WorkRegion FullRegion(int partIndex, long width, long height) => new()
-    {
+    private static WorkRegion FullRegion(int partIndex, long width, long height) => new() {
         Subresource = new SubresourceId(partIndex, 0, 0, LevelKey.Base),
         Region = ImageBox.FromOrigin(width, height),
     };
@@ -30,8 +29,7 @@ public class MultipartExrTests
         var sources = new byte[asset.Parts.Count][];
         var seed = 1;
 
-        for (var partIndex = 0; partIndex < asset.Parts.Count; partIndex++)
-        {
+        for (var partIndex = 0; partIndex < asset.Parts.Count; partIndex++) {
             var part = asset.Parts[partIndex];
             var width = part.Topology.BaseExtent.Width;
             var height = part.Topology.BaseExtent.Height;
@@ -55,8 +53,7 @@ public class MultipartExrTests
         Assert.Equal("diffuse", described.Parts[0].Name);
         Assert.Equal("specular", described.Parts[1].Name);
 
-        for (var partIndex = 0; partIndex < asset.Parts.Count; partIndex++)
-        {
+        for (var partIndex = 0; partIndex < asset.Parts.Count; partIndex++) {
             var part = asset.Parts[partIndex];
             var width = part.Topology.BaseExtent.Width;
             var height = part.Topology.BaseExtent.Height;
@@ -82,8 +79,7 @@ public class MultipartExrTests
         var sources = new byte[asset.Parts.Count][];
         var seed = 11;
 
-        for (var partIndex = 0; partIndex < asset.Parts.Count; partIndex++)
-        {
+        for (var partIndex = 0; partIndex < asset.Parts.Count; partIndex++) {
             var part = asset.Parts[partIndex];
             var width = part.Topology.BaseExtent.Width;
             var height = part.Topology.BaseExtent.Height;
@@ -102,8 +98,7 @@ public class MultipartExrTests
         stream.Position = 0;
         var reader = codec.OpenReader(stream);
 
-        for (var partIndex = 0; partIndex < asset.Parts.Count; partIndex++)
-        {
+        for (var partIndex = 0; partIndex < asset.Parts.Count; partIndex++) {
             var part = asset.Parts[partIndex];
             var width = part.Topology.BaseExtent.Width;
             var height = part.Topology.BaseExtent.Height;

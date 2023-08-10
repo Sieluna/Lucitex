@@ -10,8 +10,7 @@ namespace Lucitex.Tests.Exr;
 
 public class ExrCodecEndToEndTests
 {
-    private static WorkRegion FullRegion(long width, long height) => new()
-    {
+    private static WorkRegion FullRegion(long width, long height) => new() {
         Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
         Region = ImageBox.FromOrigin(width, height),
     };
@@ -116,11 +115,9 @@ public class ExrCodecEndToEndTests
 
         const int groupSize = 5;
         var y = 0L;
-        while (y < height)
-        {
+        while (y < height) {
             var rows = Math.Min(groupSize, height - y);
-            var region = new WorkRegion
-            {
+            var region = new WorkRegion {
                 Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
                 Region = ImageBox.FromExclusive(0, y, width, y + rows),
             };

@@ -15,8 +15,7 @@ internal static class Bc1Codec
         Span<(byte R, byte G, byte B, byte A)> palette = stackalloc (byte, byte, byte, byte)[4];
         BuildPalette(color0, color1, palette);
 
-        for (var texel = 0; texel < 16; texel++)
-        {
+        for (var texel = 0; texel < 16; texel++) {
             var index = (int)((indices >> (texel * 2)) & 0b11);
             var (r, g, b, a) = palette[index];
             var offset = texel * 4;
@@ -43,14 +42,11 @@ internal static class Bc1Codec
         var color0 = Math.Max(packedA, packedB);
         var color1 = Math.Min(packedA, packedB);
 
-        if (forceOpaqueMode && color0 == color1)
-        {
-            if (color0 == ushort.MaxValue)
-            {
+        if (forceOpaqueMode && color0 == color1) {
+            if (color0 == ushort.MaxValue) {
                 color1--;
             }
-            else
-            {
+            else {
                 color0++;
             }
         }
@@ -62,20 +58,17 @@ internal static class Bc1Codec
         BuildPalette(color0, color1, palette);
 
         uint indices = 0;
-        for (var texel = 0; texel < 16; texel++)
-        {
+        for (var texel = 0; texel < 16; texel++) {
             var offset = texel * 4;
             var best = 0;
             var bestDistance = int.MaxValue;
 
-            for (var i = 0; i < 4; i++)
-            {
+            for (var i = 0; i < 4; i++) {
                 var dr = rgba[offset] - palette[i].R;
                 var dg = rgba[offset + 1] - palette[i].G;
                 var db = rgba[offset + 2] - palette[i].B;
                 var distance = (dr * dr) + (dg * dg) + (db * db);
-                if (distance < bestDistance)
-                {
+                if (distance < bestDistance) {
                     bestDistance = distance;
                     best = i;
                 }
@@ -95,13 +88,11 @@ internal static class Bc1Codec
         palette[0] = (c0.R, c0.G, c0.B, 255);
         palette[1] = (c1.R, c1.G, c1.B, 255);
 
-        if (color0 > color1)
-        {
+        if (color0 > color1) {
             palette[2] = (Lerp2(c0.R, c1.R), Lerp2(c0.G, c1.G), Lerp2(c0.B, c1.B), 255);
             palette[3] = (Lerp1(c0.R, c1.R), Lerp1(c0.G, c1.G), Lerp1(c0.B, c1.B), 255);
         }
-        else
-        {
+        else {
             palette[2] = (Average(c0.R, c1.R), Average(c0.G, c1.G), Average(c0.B, c1.B), 255);
             palette[3] = (0, 0, 0, 0);
         }
@@ -145,19 +136,16 @@ internal static class Bc1Codec
         var bestJ = 1;
         var bestDistance = -1;
 
-        for (var i = 0; i < 16; i++)
-        {
+        for (var i = 0; i < 16; i++) {
             var iOffset = i * 4;
-            for (var j = i + 1; j < 16; j++)
-            {
+            for (var j = i + 1; j < 16; j++) {
                 var jOffset = j * 4;
                 var dr = rgba[iOffset] - rgba[jOffset];
                 var dg = rgba[iOffset + 1] - rgba[jOffset + 1];
                 var db = rgba[iOffset + 2] - rgba[jOffset + 2];
                 var distance = (dr * dr) + (dg * dg) + (db * db);
 
-                if (distance > bestDistance)
-                {
+                if (distance > bestDistance) {
                     bestDistance = distance;
                     bestI = i;
                     bestJ = j;

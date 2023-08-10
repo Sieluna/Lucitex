@@ -16,8 +16,7 @@ return FuzzApplication.Run(args);
 
 internal static class FuzzApplication
 {
-    private static readonly DecodeLimits Limits = new()
-    {
+    private static readonly DecodeLimits s_Limits = new() {
         MaxDimensions = 512,
         MaxPixels = 512 * 512,
         MaxParts = 8,
@@ -31,14 +30,12 @@ internal static class FuzzApplication
 
     public static int Run(string[] args)
     {
-        if (args.Length == 0 || args[0] is "-h" or "--help")
-        {
+        if (args.Length == 0 || args[0] is "-h" or "--help") {
             PrintUsage();
             return args.Length == 0 ? 2 : 0;
         }
 
-        return args[0] switch
-        {
+        return args[0] switch {
             "run" => RunFuzz(args[1..]),
             "replay" => Replay(args[1..]),
             "generate" => Generate(args[1..]),
@@ -53,8 +50,7 @@ internal static class FuzzApplication
         var oracle = ReadStringOption(args, "--oracle");
         var artifacts = ReadStringOption(args, "--artifacts") ?? Path.Combine(AppContext.BaseDirectory, "fuzz-artifacts");
 
-        if (iterations <= 0)
-        {
+        if (iterations <= 0) {
             return UsageError("--iterations must be positive.");
         }
 
@@ -64,41 +60,34 @@ internal static class FuzzApplication
         var disagreements = 0;
         var oracleChecks = 0;
 
-        if (oracle is not null)
-        {
-            foreach (var seed in seeds)
-            {
-                if (!NativeOracle.Accepts(oracle, seed.Format, seed.Bytes))
-                {
+        if (oracle is not null) {
+            foreach (var seed in seeds) {
+                if (!NativeOracle.Accepts(oracle, seed.Format, seed.Bytes)) {
                     Console.Error.WriteLine($"Oracle rejected generated seed '{seed.Name}'.");
                     return 1;
                 }
             }
         }
 
-        for (var iteration = 0; iteration < iterations; iteration++)
-        {
+        for (var iteration = 0; iteration < iterations; iteration++) {
             var seed = seeds[random.Next(seeds.Count)];
             var candidate = Mutator.Mutate(seed.Bytes, random);
             var managed = ManagedDecoder.Decode(seed.Format, candidate);
 
-            if (managed.Crash is not null)
-            {
+            if (managed.Crash is not null) {
                 crashes++;
                 var path = SaveArtifact(artifacts, seed.Format, randomSeed, iteration, candidate);
                 Console.Error.WriteLine($"Crash {managed.Crash.GetType().Name}: {managed.Crash.Message} ({path})");
                 continue;
             }
 
-            if (oracle is null)
-            {
+            if (oracle is null) {
                 continue;
             }
 
             var nativeAccepted = NativeOracle.Accepts(oracle, seed.Format, candidate);
             oracleChecks++;
-            if (nativeAccepted == managed.Accepted)
-            {
+            if (nativeAccepted == managed.Accepted) {
                 continue;
             }
 
@@ -113,14 +102,12 @@ internal static class FuzzApplication
 
     private static int Replay(string[] args)
     {
-        if (args.Length != 2 || !ImageFormatExtensions.TryParse(args[0], out var format))
-        {
+        if (args.Length != 2 || !ImageFormatExtensions.TryParse(args[0], out var format)) {
             return UsageError("replay requires: <png|exr> <path>.");
         }
 
         var result = ManagedDecoder.Decode(format, File.ReadAllBytes(args[1]));
-        if (result.Crash is not null)
-        {
+        if (result.Crash is not null) {
             Console.Error.WriteLine(result.Crash);
             return 1;
         }
@@ -131,14 +118,12 @@ internal static class FuzzApplication
 
     private static int Generate(string[] args)
     {
-        if (args.Length != 1)
-        {
+        if (args.Length != 1) {
             return UsageError("generate requires: <directory>.");
         }
 
         Directory.CreateDirectory(args[0]);
-        foreach (var seed in SeedCorpus.Create())
-        {
+        foreach (var seed in SeedCorpus.Create()) {
             File.WriteAllBytes(Path.Combine(args[0], seed.Name), seed.Bytes);
         }
 
@@ -163,13 +148,11 @@ internal static class FuzzApplication
     private static string? ReadStringOption(string[] args, string name)
     {
         var index = Array.IndexOf(args, name);
-        if (index < 0)
-        {
+        if (index < 0) {
             return null;
         }
 
-        if (index + 1 >= args.Length)
-        {
+        if (index + 1 >= args.Length) {
             throw new ArgumentException($"Missing value for {name}.");
         }
 
@@ -190,7 +173,7 @@ internal static class FuzzApplication
         Console.WriteLine("Lucitex.Fuzz generate <directory>");
     }
 
-    internal static DecodeLimits DecoderLimits => Limits;
+    internal static DecodeLimits DecoderLimits => s_Limits;
 }
 
 internal enum ImageFormat
@@ -203,14 +186,12 @@ internal static class ImageFormatExtensions
 {
     public static bool TryParse(string value, out ImageFormat format)
     {
-        if (string.Equals(value, "png", StringComparison.OrdinalIgnoreCase))
-        {
+        if (string.Equals(value, "png", StringComparison.OrdinalIgnoreCase)) {
             format = ImageFormat.Png;
             return true;
         }
 
-        if (string.Equals(value, "exr", StringComparison.OrdinalIgnoreCase))
-        {
+        if (string.Equals(value, "exr", StringComparison.OrdinalIgnoreCase)) {
             format = ImageFormat.Exr;
             return true;
         }
@@ -226,48 +207,40 @@ internal static class ManagedDecoder
 {
     public static DecodeOutcome Decode(ImageFormat format, byte[] data)
     {
-        try
-        {
+        try {
             using var stream = new MemoryStream(data, writable: false);
             var codec = CreateCodec(format);
             var reader = codec.OpenReader(stream, FuzzApplication.DecoderLimits);
             var descriptor = reader.Describe();
 
-            for (var partIndex = 0; partIndex < descriptor.Parts.Count; partIndex++)
-            {
+            for (var partIndex = 0; partIndex < descriptor.Parts.Count; partIndex++) {
                 var part = descriptor.Parts[partIndex];
                 var byteCount = ComputeByteCount(part);
                 var buffer = new byte[byteCount];
-                var region = new WorkRegion
-                {
+                var region = new WorkRegion {
                     Subresource = new SubresourceId(partIndex, 0, 0, LevelKey.Base),
                     Region = part.Spatial.DataWindow,
                 };
                 var written = reader.Read(region, buffer);
-                if (written != byteCount)
-                {
+                if (written != byteCount) {
                     throw new InvalidOperationException($"Reader returned {written} bytes; expected {byteCount}.");
                 }
             }
 
             return new DecodeOutcome(true, null);
         }
-        catch (ImageFormatException)
-        {
+        catch (ImageFormatException) {
             return new DecodeOutcome(false, null);
         }
-        catch (NotSupportedException)
-        {
+        catch (NotSupportedException) {
             return new DecodeOutcome(false, null);
         }
-        catch (Exception exception)
-        {
+        catch (Exception exception) {
             return new DecodeOutcome(false, exception);
         }
     }
 
-    private static IImageCodec CreateCodec(ImageFormat format) => format switch
-    {
+    private static IImageCodec CreateCodec(ImageFormat format) => format switch {
         ImageFormat.Png => new PngCodec(),
         ImageFormat.Exr => new ExrCodec(),
         _ => throw new ArgumentOutOfRangeException(nameof(format)),
@@ -275,8 +248,7 @@ internal static class ManagedDecoder
 
     private static int ComputeByteCount(ImagePartDescriptor part)
     {
-        long rowBits = part.Representation switch
-        {
+        var rowBits = part.Representation switch {
             IndexedRepresentation indexed => checked(part.Spatial.DataWindow.Width * indexed.IndexType.Bits),
             PlainSampleRepresentation => checked(part.Spatial.DataWindow.Width * part.Channels.Channels.Sum(channel => channel.SampleType.Bits)),
             _ => throw new NotSupportedException($"Fuzz decoder does not support {part.Representation.GetType().Name}."),
@@ -307,14 +279,12 @@ internal static class SeedCorpus
 
     private static ImageAssetDescriptor PngDescriptor(int width, int height, IReadOnlyList<string> names, SampleType sampleType)
     {
-        var channels = names.Select(name => new ChannelDescriptor
-        {
+        var channels = names.Select(name => new ChannelDescriptor {
             Name = name,
             SampleType = sampleType,
             Sampling = SampleGrid.Unit,
         }).ToList();
-        return Asset(width, height, channels, new PlainSampleRepresentation
-        {
+        return Asset(width, height, channels, new PlainSampleRepresentation {
             Planes =
             [
                 new SamplePlaneDescriptor
@@ -333,14 +303,11 @@ internal static class SeedCorpus
         [
             new ChannelDescriptor { Name = "Index", SampleType = SampleType.UNorm4, Sampling = SampleGrid.Unit },
         ],
-        new IndexedRepresentation
-        {
+        new IndexedRepresentation {
             IndexType = SampleType.UNorm4,
-            Palette = new PaletteDescriptor
-            {
+            Palette = new PaletteDescriptor {
                 EntryCount = 16,
-                EntryChannels = new ChannelSchema
-                {
+                EntryChannels = new ChannelSchema {
                     Channels =
                     [
                         new ChannelDescriptor { Name = "R", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit },
@@ -355,10 +322,8 @@ internal static class SeedCorpus
         var palette = Enumerable.Range(0, 16)
             .SelectMany(value => new[] { (byte)(value * 17), (byte)(255 - (value * 17)), (byte)(value * 7) })
             .ToArray();
-        var part = descriptor.Parts[0] with
-        {
-            Metadata = new MetadataCollection
-            {
+        var part = descriptor.Parts[0] with {
+            Metadata = new MetadataCollection {
                 Entries = [new MetadataEntry { Namespace = "png", Name = "PLTE", RawRepresentation = palette }],
             },
         };
@@ -372,16 +337,13 @@ internal static class SeedCorpus
     {
         const int width = 13;
         const int height = 10;
-        var channels = new[] { "R", "G", "B", "A" }.Select(name => new ChannelDescriptor
-        {
+        var channels = new[] { "R", "G", "B", "A" }.Select(name => new ChannelDescriptor {
             Name = name,
             SampleType = SampleType.Float16,
             Sampling = SampleGrid.Unit,
         }).ToList();
-        var descriptor = Asset(width, height, channels, new PlainSampleRepresentation
-        {
-            Planes = channels.Select(channel => new SamplePlaneDescriptor
-            {
+        var descriptor = Asset(width, height, channels, new PlainSampleRepresentation {
+            Planes = channels.Select(channel => new SamplePlaneDescriptor {
                 Channels = [channel.Name],
                 Extent = new Extent3L(width, height, 1),
                 Layout = PlaneLayout.Planar,
@@ -397,18 +359,15 @@ internal static class SeedCorpus
         PayloadRepresentation representation)
     {
         var window = ImageBox.FromOrigin(width, height);
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "image",
-            Spatial = new SpatialDomain
-            {
+            Spatial = new SpatialDomain {
                 DataWindow = window,
                 DisplayWindow = window,
                 Orientation = LogicalOrientation.Identity,
                 Traversal = StorageTraversal.IncreasingY,
             },
-            Topology = new ResourceTopology
-            {
+            Topology = new ResourceTopology {
                 SpatialDimensions = 2,
                 BaseExtent = new Extent3L(width, height, 1),
                 Levels = [new ResolutionLevel { Key = LevelKey.Base, Extent = new Extent3L(width, height, 1) }],
@@ -426,8 +385,7 @@ internal static class SeedCorpus
         new Random(randomSeed).NextBytes(pixels);
         using var stream = new MemoryStream();
         var writer = codec.CreateWriter(stream, descriptor);
-        writer.Write(new WorkRegion
-        {
+        writer.Write(new WorkRegion {
             Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
             Region = descriptor.Parts[0].Spatial.DataWindow,
         }, pixels);
@@ -442,10 +400,8 @@ internal static class Mutator
     {
         var result = source.ToList();
         var operationCount = random.Next(1, 9);
-        for (var operation = 0; operation < operationCount; operation++)
-        {
-            switch (random.Next(5))
-            {
+        for (var operation = 0; operation < operationCount; operation++) {
+            switch (random.Next(5)) {
                 case 0 when result.Count > 0:
                     result[random.Next(result.Count)] ^= (byte)(1 << random.Next(8));
                     break;
@@ -477,11 +433,9 @@ internal static class NativeOracle
     {
         var extension = format == ImageFormat.Png ? "png" : "exr";
         var path = Path.Combine(Path.GetTempPath(), $"lucitex-oracle-{Guid.NewGuid():N}.{extension}");
-        try
-        {
+        try {
             File.WriteAllBytes(path, data);
-            using var process = Process.Start(new ProcessStartInfo
-            {
+            using var process = Process.Start(new ProcessStartInfo {
                 FileName = executable,
                 ArgumentList = { extension, path },
                 UseShellExecute = false,
@@ -490,16 +444,14 @@ internal static class NativeOracle
                 CreateNoWindow = true,
             }) ?? throw new InvalidOperationException($"Could not start native oracle '{executable}'.");
 
-            if (!process.WaitForExit(5_000))
-            {
+            if (!process.WaitForExit(5_000)) {
                 process.Kill(entireProcessTree: true);
                 throw new TimeoutException($"Native oracle timed out while decoding {extension} input.");
             }
 
             return process.ExitCode == 0;
         }
-        finally
-        {
+        finally {
             File.Delete(path);
         }
     }

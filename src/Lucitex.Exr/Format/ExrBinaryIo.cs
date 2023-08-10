@@ -10,8 +10,7 @@ internal sealed class ExrBinaryReader(Stream stream, int maxAllocationLength = i
     public byte ReadByte()
     {
         var value = Stream.ReadByte();
-        if (value < 0)
-        {
+        if (value < 0) {
             throw new EndOfStreamException();
         }
 
@@ -20,13 +19,11 @@ internal sealed class ExrBinaryReader(Stream stream, int maxAllocationLength = i
 
     public byte[] ReadBytes(int count)
     {
-        if (count < 0 || count > maxAllocationLength)
-        {
+        if (count < 0 || count > maxAllocationLength) {
             throw new InvalidDataException($"EXR field length {count} exceeds the allowed maximum of {maxAllocationLength}.");
         }
 
-        if (Stream.CanSeek && Stream.Length - Stream.Position < count)
-        {
+        if (Stream.CanSeek && Stream.Length - Stream.Position < count) {
             throw new EndOfStreamException();
         }
 
@@ -66,17 +63,14 @@ internal sealed class ExrBinaryReader(Stream stream, int maxAllocationLength = i
     public string ReadCString(int maxByteLength = 255)
     {
         var bytes = new List<byte>(32);
-        while (true)
-        {
+        while (true) {
             var b = ReadByte();
-            if (b == 0)
-            {
+            if (b == 0) {
                 break;
             }
 
             bytes.Add(b);
-            if (bytes.Count > maxByteLength)
-            {
+            if (bytes.Count > maxByteLength) {
                 throw new InvalidDataException($"EXR string exceeds the allowed maximum of {maxByteLength} bytes.");
             }
         }

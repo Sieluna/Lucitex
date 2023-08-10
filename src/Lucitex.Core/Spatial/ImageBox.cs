@@ -14,13 +14,11 @@ public readonly record struct ImageBox
 
     public static ImageBox FromExclusive(long minX, long minY, long maxXExclusive, long maxYExclusive)
     {
-        if (maxXExclusive < minX || maxYExclusive < minY)
-        {
+        if (maxXExclusive < minX || maxYExclusive < minY) {
             throw new ArgumentOutOfRangeException(nameof(maxXExclusive), "Box max must not be less than min.");
         }
 
-        return new ImageBox
-        {
+        return new ImageBox {
             MinX = minX,
             MinY = minY,
             MaxXExclusive = maxXExclusive,

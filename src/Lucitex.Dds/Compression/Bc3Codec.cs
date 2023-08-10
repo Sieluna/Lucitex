@@ -11,8 +11,7 @@ internal static class Bc3Codec
 
         Bc1Codec.Decode(block[8..], rgba);
 
-        for (var texel = 0; texel < 16; texel++)
-        {
+        for (var texel = 0; texel < 16; texel++) {
             rgba[(texel * 4) + 3] = alpha[texel];
         }
     }
@@ -20,8 +19,7 @@ internal static class Bc3Codec
     public static void Encode(ReadOnlySpan<byte> rgba, Span<byte> block)
     {
         Span<byte> alpha = stackalloc byte[16];
-        for (var texel = 0; texel < 16; texel++)
-        {
+        for (var texel = 0; texel < 16; texel++) {
             alpha[texel] = rgba[(texel * 4) + 3];
         }
 

@@ -4,7 +4,7 @@ namespace Lucitex.Core.Execution.Buffers;
 
 public sealed class PooledSegmentedBuffer : ILargeBuffer, IDisposable
 {
-    private const int ChunkSize = 1 << 20;
+    private const int k_ChunkSize = 1 << 20;
 
     private readonly List<byte[]> _chunks = [];
     private long _length;
@@ -17,17 +17,15 @@ public sealed class PooledSegmentedBuffer : ILargeBuffer, IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         var remaining = data;
-        while (!remaining.IsEmpty)
-        {
-            var chunkIndex = (int)(_length / ChunkSize);
-            var chunkOffset = (int)(_length % ChunkSize);
+        while (!remaining.IsEmpty) {
+            var chunkIndex = (int)(_length / k_ChunkSize);
+            var chunkOffset = (int)(_length % k_ChunkSize);
 
-            while (_chunks.Count <= chunkIndex)
-            {
-                _chunks.Add(ArrayPool<byte>.Shared.Rent(ChunkSize));
+            while (_chunks.Count <= chunkIndex) {
+                _chunks.Add(ArrayPool<byte>.Shared.Rent(k_ChunkSize));
             }
 
-            var writable = Math.Min(remaining.Length, ChunkSize - chunkOffset);
+            var writable = Math.Min(remaining.Length, k_ChunkSize - chunkOffset);
             remaining[..writable].CopyTo(_chunks[chunkIndex].AsSpan(chunkOffset, writable));
 
             _length += writable;
@@ -39,16 +37,14 @@ public sealed class PooledSegmentedBuffer : ILargeBuffer, IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (offset < 0 || length < 0 || checked(offset + length) > _length)
-        {
+        if (offset < 0 || length < 0 || checked(offset + length) > _length) {
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        var startIndex = (int)(offset / ChunkSize);
-        var startOffset = (int)(offset % ChunkSize);
+        var startIndex = (int)(offset / k_ChunkSize);
+        var startOffset = (int)(offset % k_ChunkSize);
 
-        if (startOffset + length <= ChunkSize)
-        {
+        if (startOffset + length <= k_ChunkSize) {
             return new BufferSegment { Memory = _chunks[startIndex].AsMemory(startOffset, length), Offset = offset };
         }
 
@@ -58,9 +54,8 @@ public sealed class PooledSegmentedBuffer : ILargeBuffer, IDisposable
         var chunkIndex = startIndex;
         var chunkOffset = startOffset;
 
-        while (remaining > 0)
-        {
-            var available = Math.Min(remaining, ChunkSize - chunkOffset);
+        while (remaining > 0) {
+            var available = Math.Min(remaining, k_ChunkSize - chunkOffset);
             _chunks[chunkIndex].AsSpan(chunkOffset, available).CopyTo(buffer.AsSpan(written, available));
 
             written += available;
@@ -74,13 +69,11 @@ public sealed class PooledSegmentedBuffer : ILargeBuffer, IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
-        {
+        if (_disposed) {
             return;
         }
 
-        foreach (var chunk in _chunks)
-        {
+        foreach (var chunk in _chunks) {
             ArrayPool<byte>.Shared.Return(chunk);
         }
 

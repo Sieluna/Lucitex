@@ -19,8 +19,7 @@ public sealed record FormatProbeResult
 
     public string? Variant { get; init; }
 
-    public static FormatProbeResult NoMatch(int requiredBytes) => new()
-    {
+    public static FormatProbeResult NoMatch(int requiredBytes) => new() {
         Format = string.Empty,
         Confidence = ProbeConfidence.None,
         RequiredBytes = requiredBytes,

@@ -9,11 +9,9 @@ public class AtomicOutputSessionTests
     {
         var path = Path.Combine(Path.GetTempPath(), $"lucitex-atomic-{Guid.NewGuid():N}.bin");
 
-        try
-        {
+        try {
             string tempPath;
-            using (var session = new AtomicOutputSession(path))
-            {
+            using (var session = new AtomicOutputSession(path)) {
                 tempPath = session.TempPath;
                 session.Stream.Write([1, 2, 3, 4]);
                 session.Commit();
@@ -23,10 +21,8 @@ public class AtomicOutputSessionTests
             Assert.False(File.Exists(tempPath));
             Assert.Equal(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(path));
         }
-        finally
-        {
-            if (File.Exists(path))
-            {
+        finally {
+            if (File.Exists(path)) {
                 File.Delete(path);
             }
         }
@@ -38,8 +34,7 @@ public class AtomicOutputSessionTests
         var path = Path.Combine(Path.GetTempPath(), $"lucitex-atomic-{Guid.NewGuid():N}.bin");
         string tempPath;
 
-        using (var session = new AtomicOutputSession(path))
-        {
+        using (var session = new AtomicOutputSession(path)) {
             tempPath = session.TempPath;
             session.Stream.Write([9, 9, 9]);
         }
@@ -54,20 +49,16 @@ public class AtomicOutputSessionTests
         var path = Path.Combine(Path.GetTempPath(), $"lucitex-atomic-{Guid.NewGuid():N}.bin");
         File.WriteAllBytes(path, [0, 0, 0]);
 
-        try
-        {
-            using (var session = new AtomicOutputSession(path))
-            {
+        try {
+            using (var session = new AtomicOutputSession(path)) {
                 session.Stream.Write([5, 6, 7]);
                 session.Commit();
             }
 
             Assert.Equal(new byte[] { 5, 6, 7 }, File.ReadAllBytes(path));
         }
-        finally
-        {
-            if (File.Exists(path))
-            {
+        finally {
+            if (File.Exists(path)) {
                 File.Delete(path);
             }
         }

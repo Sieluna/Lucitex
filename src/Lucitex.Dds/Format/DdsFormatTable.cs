@@ -10,8 +10,7 @@ internal readonly record struct DdsFormatInfo(DdsFormatKind Kind, int BytesPerEl
 
 internal static class DdsFormatTable
 {
-    public static DdsFormatInfo Get(DxgiFormat format) => format switch
-    {
+    public static DdsFormatInfo Get(DxgiFormat format) => format switch {
         DxgiFormat.R8Unorm => new DdsFormatInfo(DdsFormatKind.Raw, 1, 1, 1),
         DxgiFormat.R8G8Unorm => new DdsFormatInfo(DdsFormatKind.Raw, 2, 1, 1),
         DxgiFormat.R8G8B8A8Unorm => new DdsFormatInfo(DdsFormatKind.Raw, 4, 1, 1),
@@ -46,8 +45,7 @@ internal static class DdsFormatTable
     public static long RowPitch(DxgiFormat format, long width)
     {
         var info = Get(format);
-        if (info.Kind == DdsFormatKind.Raw)
-        {
+        if (info.Kind == DdsFormatKind.Raw) {
             return checked(width * info.BytesPerElement);
         }
 
@@ -58,8 +56,7 @@ internal static class DdsFormatTable
     public static long SliceBytes(DxgiFormat format, long width, long height)
     {
         var info = Get(format);
-        if (info.Kind == DdsFormatKind.Raw)
-        {
+        if (info.Kind == DdsFormatKind.Raw) {
             return checked(RowPitch(format, width) * height);
         }
 

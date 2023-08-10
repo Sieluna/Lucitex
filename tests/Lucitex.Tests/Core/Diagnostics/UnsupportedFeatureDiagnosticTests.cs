@@ -14,8 +14,7 @@ public class UnsupportedFeatureDiagnosticTests
         var representation = Assert.IsType<DeepRepresentation>(asset.Parts[0].Representation);
         Assert.NotEmpty(representation.SampleChannels.Channels);
 
-        var diagnostic = new UnsupportedFeatureDiagnostic
-        {
+        var diagnostic = new UnsupportedFeatureDiagnostic {
             Feature = "Exr.DeepData",
             Reason = "Deep sample decoding is not implemented in Phase 0.",
         };

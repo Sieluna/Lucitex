@@ -15,8 +15,7 @@ public sealed class ExrCodec(ExrCompressionId defaultCompression = ExrCompressio
 
     public FormatProbeResult Probe(ReadOnlySpan<byte> header)
     {
-        if (header.Length < Magic.Length)
-        {
+        if (header.Length < Magic.Length) {
             return FormatProbeResult.NoMatch(Magic.Length);
         }
 
@@ -27,12 +26,10 @@ public sealed class ExrCodec(ExrCompressionId defaultCompression = ExrCompressio
 
     public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null)
     {
-        try
-        {
+        try {
             return new ExrReader(stream, limits ?? DecodeLimits.Default);
         }
-        catch (Exception exception) when (ExrFormatErrors.IsMalformed(exception))
-        {
+        catch (Exception exception) when (ExrFormatErrors.IsMalformed(exception)) {
             throw ExrFormatErrors.Wrap(exception, stream);
         }
     }

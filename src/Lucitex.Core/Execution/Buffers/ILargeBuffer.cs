@@ -11,7 +11,7 @@ public readonly struct BufferSegment
 
 public interface ILargeBuffer
 {
-    long Length { get; }
+    public long Length { get; }
 
-    BufferSegment GetSegment(long offset, int length);
+    public BufferSegment GetSegment(long offset, int length);
 }

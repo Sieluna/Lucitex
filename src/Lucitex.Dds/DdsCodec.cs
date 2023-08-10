@@ -14,8 +14,7 @@ public sealed class DdsCodec : IImageCodec
 
     public FormatProbeResult Probe(ReadOnlySpan<byte> header)
     {
-        if (header.Length < Magic.Length)
-        {
+        if (header.Length < Magic.Length) {
             return FormatProbeResult.NoMatch(Magic.Length);
         }
 

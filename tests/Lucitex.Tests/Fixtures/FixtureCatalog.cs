@@ -5,8 +5,7 @@ namespace Lucitex.Tests.Fixtures;
 public static class FixtureCatalog
 {
     public static IReadOnlyDictionary<string, Func<ImageAssetDescriptor>> All { get; } =
-        new Dictionary<string, Func<ImageAssetDescriptor>>
-        {
+        new Dictionary<string, Func<ImageAssetDescriptor>> {
             ["exr.simpleRgba"] = ExrFixtures.SimpleRgba,
             ["exr.mixedHalfFloat"] = ExrFixtures.MixedHalfFloat,
             ["exr.subsampledChannels"] = ExrFixtures.SubsampledChannels,
@@ -40,8 +39,7 @@ public static class FixtureCatalog
     public static TheoryData<string> Keys()
     {
         var data = new TheoryData<string>();
-        foreach (var key in All.Keys)
-        {
+        foreach (var key in All.Keys) {
             data.Add(key);
         }
 

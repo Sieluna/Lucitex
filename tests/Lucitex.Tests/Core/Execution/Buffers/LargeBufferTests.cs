@@ -7,8 +7,7 @@ public class LargeBufferTests
     private static byte[] MakeData(int length)
     {
         var data = new byte[length];
-        for (var i = 0; i < length; i++)
-        {
+        for (var i = 0; i < length; i++) {
             data[i] = (byte)(i % 256);
         }
 
@@ -93,8 +92,7 @@ public class LargeBufferTests
         var path = Path.Combine(Path.GetTempPath(), $"lucitex-buffer-{Guid.NewGuid():N}.bin");
         File.WriteAllBytes(path, data);
 
-        try
-        {
+        try {
             using var buffer = new MappedFileBuffer(path);
 
             Assert.Equal(data.Length, buffer.Length);
@@ -103,8 +101,7 @@ public class LargeBufferTests
 
             Assert.True(data.AsSpan(1000, 2000).SequenceEqual(segment.Memory.Span));
         }
-        finally
-        {
+        finally {
             File.Delete(path);
         }
     }
@@ -119,8 +116,7 @@ public class LargeBufferTests
 
         public override long Length => throw new NotSupportedException();
 
-        public override long Position
-        {
+        public override long Position {
             get => throw new NotSupportedException();
             set => throw new NotSupportedException();
         }

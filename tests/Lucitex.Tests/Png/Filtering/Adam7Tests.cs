@@ -15,8 +15,7 @@ public class Adam7Tests
     public void PassDimensions_SumOfPassPixelCounts_EqualsTotalPixelCount(int width, int height)
     {
         var total = 0L;
-        for (var pass = 0; pass < 7; pass++)
-        {
+        for (var pass = 0; pass < 7; pass++) {
             var (passWidth, passHeight) = Adam7.PassDimensions(width, height, pass);
             total += (long)passWidth * passHeight;
         }
@@ -38,8 +37,7 @@ public class Adam7Tests
             (8, 4),
         ];
 
-        for (var pass = 0; pass < 7; pass++)
-        {
+        for (var pass = 0; pass < 7; pass++) {
             var actual = Adam7.PassDimensions(8, 8, pass);
             Assert.Equal(expected[pass], actual);
         }
@@ -51,8 +49,7 @@ public class Adam7Tests
         var (width, height) = Adam7.PassDimensions(1, 1, 0);
         Assert.Equal((1, 1), (width, height));
 
-        for (var pass = 1; pass < 7; pass++)
-        {
+        for (var pass = 1; pass < 7; pass++) {
             var (w, h) = Adam7.PassDimensions(1, 1, pass);
             Assert.True(w == 0 || h == 0);
         }

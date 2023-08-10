@@ -4,21 +4,19 @@ namespace Lucitex.Dds.Format;
 
 internal static class DdsHeaderReader
 {
-    private const uint Magic = 0x20534444;
-    private const uint HeaderSize = 124;
+    private const uint k_Magic = 0x20534444;
+    private const uint k_HeaderSize = 124;
 
     public static DdsHeader Read(DdsBinaryReader reader)
     {
         var magic = reader.ReadUInt32();
-        if (magic != Magic)
-        {
+        if (magic != k_Magic) {
             throw new ImageFormatException("dds", "BadMagic", "Stream does not start with the DDS magic number.");
         }
 
         var dwSize = reader.ReadUInt32();
-        if (dwSize != HeaderSize)
-        {
-            throw new ImageFormatException("dds", "BadHeader", $"DDS header size {dwSize} is invalid; expected {HeaderSize}.");
+        if (dwSize != k_HeaderSize) {
+            throw new ImageFormatException("dds", "BadHeader", $"DDS header size {dwSize} is invalid; expected {k_HeaderSize}.");
         }
 
         var flags = (DdsHeaderFlags)reader.ReadUInt32();
@@ -37,8 +35,7 @@ internal static class DdsHeaderReader
         reader.ReadUInt32();
         reader.ReadUInt32();
 
-        if (width == 0 || height == 0)
-        {
+        if (width == 0 || height == 0) {
             throw new ImageFormatException("dds", "BadHeader", "DDS width and height must be positive.");
         }
 
@@ -55,8 +52,7 @@ internal static class DdsHeaderReader
         var isCubemap = isCubemapLegacy;
         var alphaMode = D3d10AlphaMode.Unknown;
 
-        if (pixelFormat.Flags.HasFlag(DdsPixelFormatFlags.FourCC) && pixelFormat.FourCC == DdsLegacyFormats.Dx10)
-        {
+        if (pixelFormat.Flags.HasFlag(DdsPixelFormatFlags.FourCC) && pixelFormat.FourCC == DdsLegacyFormats.Dx10) {
             var dx10 = ReadDxt10Header(reader);
             format = dx10.Format;
             dimension = dx10.Dimension;
@@ -64,20 +60,17 @@ internal static class DdsHeaderReader
             isCubemap = dx10.MiscFlag.HasFlag(D3d10ResourceMiscFlag.TextureCube);
             alphaMode = dx10.AlphaMode;
         }
-        else
-        {
+        else {
             format = ResolveLegacyFormat(pixelFormat);
             arraySize = 1;
             dimension = hasDepth ? D3d10ResourceDimension.Texture3D : D3d10ResourceDimension.Texture2D;
         }
 
-        if (isCubemap && dimension == D3d10ResourceDimension.Unknown)
-        {
+        if (isCubemap && dimension == D3d10ResourceDimension.Unknown) {
             dimension = D3d10ResourceDimension.Texture2D;
         }
 
-        return new DdsHeader
-        {
+        return new DdsHeader {
             Width = width,
             Height = height,
             Depth = effectiveDepth,
@@ -92,8 +85,7 @@ internal static class DdsHeaderReader
 
     private static DxgiFormat ResolveLegacyFormat(DdsPixelFormat pixelFormat)
     {
-        if (pixelFormat.Flags.HasFlag(DdsPixelFormatFlags.FourCC))
-        {
+        if (pixelFormat.Flags.HasFlag(DdsPixelFormatFlags.FourCC)) {
             return DdsLegacyFormats.FromFourCc(pixelFormat.FourCC)
                 ?? throw new ImageFormatException("dds", "Unsupported.Dds.LegacyFourCC", $"Unrecognized legacy DDS FourCC 0x{pixelFormat.FourCC:X8}.");
         }
@@ -105,8 +97,7 @@ internal static class DdsHeaderReader
     private static DdsPixelFormat ReadPixelFormat(DdsBinaryReader reader)
     {
         var size = reader.ReadUInt32();
-        if (size != DdsPixelFormat.StructSize)
-        {
+        if (size != DdsPixelFormat.StructSize) {
             throw new ImageFormatException("dds", "BadHeader", $"DDS_PIXELFORMAT size {size} is invalid; expected {DdsPixelFormat.StructSize}.");
         }
 

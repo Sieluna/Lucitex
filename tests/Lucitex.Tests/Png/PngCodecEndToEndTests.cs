@@ -9,8 +9,7 @@ namespace Lucitex.Tests.Png;
 
 public class PngCodecEndToEndTests
 {
-    private static WorkRegion FullRegion(long width, long height) => new()
-    {
+    private static WorkRegion FullRegion(long width, long height) => new() {
         Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
         Region = ImageBox.FromOrigin(width, height),
     };
@@ -84,17 +83,14 @@ public class PngCodecEndToEndTests
     {
         var asset = PngFixtures.Palette4Bit();
         var paletteBytes = new byte[16 * 3];
-        for (var i = 0; i < 16; i++)
-        {
+        for (var i = 0; i < 16; i++) {
             paletteBytes[(i * 3) + 0] = (byte)(i * 16);
             paletteBytes[(i * 3) + 1] = (byte)(255 - (i * 16));
             paletteBytes[(i * 3) + 2] = (byte)i;
         }
 
-        var partWithPalette = asset.Parts[0] with
-        {
-            Metadata = new MetadataCollection
-            {
+        var partWithPalette = asset.Parts[0] with {
+            Metadata = new MetadataCollection {
                 Entries = [new MetadataEntry { Namespace = "png", Name = "PLTE", RawRepresentation = paletteBytes }],
             },
         };

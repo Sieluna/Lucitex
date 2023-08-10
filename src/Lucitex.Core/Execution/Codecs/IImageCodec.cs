@@ -4,13 +4,13 @@ namespace Lucitex.Core.Execution.Codecs;
 
 public interface IImageCodec
 {
-    string FormatId { get; }
+    public string FormatId { get; }
 
-    IReadOnlyList<string> Extensions { get; }
+    public IReadOnlyList<string> Extensions { get; }
 
-    FormatProbeResult Probe(ReadOnlySpan<byte> header);
+    public FormatProbeResult Probe(ReadOnlySpan<byte> header);
 
-    IImageReader OpenReader(Stream stream, DecodeLimits? limits = null);
+    public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null);
 
-    IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor);
+    public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor);
 }

@@ -9,43 +9,35 @@ internal static class DdsLegacyFormats
 
     public static DxgiFormat? FromFourCc(uint fourCc)
     {
-        if (fourCc == FourCc('D', 'X', 'T', '1'))
-        {
+        if (fourCc == FourCc('D', 'X', 'T', '1')) {
             return DxgiFormat.Bc1Unorm;
         }
 
-        if (fourCc == FourCc('D', 'X', 'T', '2') || fourCc == FourCc('D', 'X', 'T', '3'))
-        {
+        if (fourCc == FourCc('D', 'X', 'T', '2') || fourCc == FourCc('D', 'X', 'T', '3')) {
             return DxgiFormat.Bc2Unorm;
         }
 
-        if (fourCc == FourCc('D', 'X', 'T', '4') || fourCc == FourCc('D', 'X', 'T', '5'))
-        {
+        if (fourCc == FourCc('D', 'X', 'T', '4') || fourCc == FourCc('D', 'X', 'T', '5')) {
             return DxgiFormat.Bc3Unorm;
         }
 
-        if (fourCc == FourCc('A', 'T', 'I', '1') || fourCc == FourCc('B', 'C', '4', 'U'))
-        {
+        if (fourCc == FourCc('A', 'T', 'I', '1') || fourCc == FourCc('B', 'C', '4', 'U')) {
             return DxgiFormat.Bc4Unorm;
         }
 
-        if (fourCc == FourCc('B', 'C', '4', 'S'))
-        {
+        if (fourCc == FourCc('B', 'C', '4', 'S')) {
             return DxgiFormat.Bc4Snorm;
         }
 
-        if (fourCc == FourCc('A', 'T', 'I', '2') || fourCc == FourCc('B', 'C', '5', 'U'))
-        {
+        if (fourCc == FourCc('A', 'T', 'I', '2') || fourCc == FourCc('B', 'C', '5', 'U')) {
             return DxgiFormat.Bc5Unorm;
         }
 
-        if (fourCc == FourCc('B', 'C', '5', 'S'))
-        {
+        if (fourCc == FourCc('B', 'C', '5', 'S')) {
             return DxgiFormat.Bc5Snorm;
         }
 
-        return fourCc switch
-        {
+        return fourCc switch {
             36 => DxgiFormat.R16G16B16A16Unorm,
             111 => DxgiFormat.R16Float,
             112 => DxgiFormat.R16G16Float,
@@ -59,15 +51,13 @@ internal static class DdsLegacyFormats
 
     public static DxgiFormat? FromBitMasks(DdsPixelFormat pf)
     {
-        if (!pf.Flags.HasFlag(DdsPixelFormatFlags.Rgb))
-        {
+        if (!pf.Flags.HasFlag(DdsPixelFormatFlags.Rgb)) {
             return null;
         }
 
         var hasAlpha = pf.Flags.HasFlag(DdsPixelFormatFlags.AlphaPixels);
 
-        return (pf.RgbBitCount, pf.RBitMask, pf.GBitMask, pf.BBitMask, hasAlpha ? pf.ABitMask : 0u) switch
-        {
+        return (pf.RgbBitCount, pf.RBitMask, pf.GBitMask, pf.BBitMask, hasAlpha ? pf.ABitMask : 0u) switch {
             (32, 0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000) => DxgiFormat.R8G8B8A8Unorm,
             (32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000) => DxgiFormat.B8G8R8A8Unorm,
             (32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0) => DxgiFormat.B8G8R8X8Unorm,

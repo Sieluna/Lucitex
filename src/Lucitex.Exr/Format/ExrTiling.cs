@@ -6,11 +6,9 @@ internal static class ExrTiling
     {
         var size = fullSize;
 
-        for (var i = 0; i < level; i++)
-        {
+        for (var i = 0; i < level; i++) {
             size = rounding == ExrTileRoundingMode.RoundDown ? size / 2 : (size + 1) / 2;
-            if (size < 1)
-            {
+            if (size < 1) {
                 size = 1;
             }
         }

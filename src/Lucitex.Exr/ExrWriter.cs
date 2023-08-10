@@ -33,13 +33,11 @@ internal sealed class ExrWriter : IImageWriter
 
     public ExrWriter(Stream stream, ImageAssetDescriptor descriptor, ExrCompressionId compression, ExrTileDesc? tiles)
     {
-        if (!ExrCompressor.IsSupported(compression))
-        {
+        if (!ExrCompressor.IsSupported(compression)) {
             throw new NotSupportedException($"EXR compression '{compression}' is not implemented for writing.");
         }
 
-        if (tiles is { LevelMode: not ExrTileLevelMode.OneLevel })
-        {
+        if (tiles is { LevelMode: not ExrTileLevelMode.OneLevel }) {
             throw new NotSupportedException("Writing mipmapped/ripmapped tiled EXR files is not supported yet.");
         }
 
@@ -51,8 +49,7 @@ internal sealed class ExrWriter : IImageWriter
             .ToList();
     }
 
-    public WriterExecutionContract Contract { get; } = new()
-    {
+    public WriterExecutionContract Contract { get; } = new() {
         RequiresDescriptorUpfront = true,
         RequiresDimensionsUpfront = true,
         WriteGranularity = new Extent3I(1, 1, 1),
@@ -67,8 +64,7 @@ internal sealed class ExrWriter : IImageWriter
     {
         var part = _parts[region.Subresource.Part];
 
-        if (region.Region.MinX != part.DataMinX || region.Region.MaxXExclusive != part.DataMinX + part.Width)
-        {
+        if (region.Region.MinX != part.DataMinX || region.Region.MaxXExclusive != part.DataMinX + part.Width) {
             throw new NotSupportedException("Partial-row EXR writes are not supported yet.");
         }
 
@@ -81,8 +77,7 @@ internal sealed class ExrWriter : IImageWriter
 
     public void Finish()
     {
-        if (_finished)
-        {
+        if (_finished) {
             return;
         }
 
@@ -91,13 +86,11 @@ internal sealed class ExrWriter : IImageWriter
         var flags = _isMultiPart ? ExrVersionFlags.MultiPart : (_parts[0].Header.Tiles is null ? ExrVersionFlags.None : ExrVersionFlags.Tiled);
         ExrHeaderWriter.WriteFileVersion(headerWriter, flags);
 
-        foreach (var part in _parts)
-        {
+        foreach (var part in _parts) {
             ExrHeaderWriter.WriteHeader(headerWriter, part.Header);
         }
 
-        if (_isMultiPart)
-        {
+        if (_isMultiPart) {
             headerWriter.WriteByte(0);
         }
 
@@ -109,14 +102,12 @@ internal sealed class ExrWriter : IImageWriter
         var running = chunkDataStart;
         var offsetTables = new long[_parts.Count][];
 
-        for (var partIndex = 0; partIndex < _parts.Count; partIndex++)
-        {
+        for (var partIndex = 0; partIndex < _parts.Count; partIndex++) {
             var (_, _, payloads) = perPartChunks[partIndex];
             var offsets = new long[payloads.Length];
             var perChunkHeaderBytes = (_isMultiPart ? 4 : 0) + (_parts[partIndex].Header.Tiles is null ? 8 : 20);
 
-            for (var i = 0; i < payloads.Length; i++)
-            {
+            for (var i = 0; i < payloads.Length; i++) {
                 offsets[i] = running;
                 running += perChunkHeaderBytes + payloads[i].Length;
             }
@@ -127,35 +118,28 @@ internal sealed class ExrWriter : IImageWriter
         _stream.Write(headerBytes);
         var outWriter = new ExrBinaryWriter(_stream);
 
-        foreach (var offsets in offsetTables)
-        {
-            foreach (var offset in offsets)
-            {
+        foreach (var offsets in offsetTables) {
+            foreach (var offset in offsets) {
                 outWriter.WriteInt64(offset);
             }
         }
 
-        for (var partIndex = 0; partIndex < _parts.Count; partIndex++)
-        {
+        for (var partIndex = 0; partIndex < _parts.Count; partIndex++) {
             var (chunkYs, tileCoords, payloads) = perPartChunks[partIndex];
             var isTiled = _parts[partIndex].Header.Tiles is not null;
 
-            for (var i = 0; i < payloads.Length; i++)
-            {
-                if (_isMultiPart)
-                {
+            for (var i = 0; i < payloads.Length; i++) {
+                if (_isMultiPart) {
                     outWriter.WriteInt32(partIndex);
                 }
 
-                if (isTiled)
-                {
+                if (isTiled) {
                     outWriter.WriteInt32(tileCoords[i].Dx);
                     outWriter.WriteInt32(tileCoords[i].Dy);
                     outWriter.WriteInt32(0);
                     outWriter.WriteInt32(0);
                 }
-                else
-                {
+                else {
                     outWriter.WriteInt32(chunkYs[i]);
                 }
 
@@ -176,10 +160,8 @@ internal sealed class ExrWriter : IImageWriter
     {
         var header = ExrDescriptorMapper.ToExrHeader(part, compression) with { Tiles = tiles };
 
-        if (isMultiPart)
-        {
-            header = header with
-            {
+        if (isMultiPart) {
+            header = header with {
                 PartName = header.PartName ?? $"part{index}",
                 PartType = tiles is null ? "scanlineimage" : "tiledimage",
             };
@@ -189,8 +171,7 @@ internal sealed class ExrWriter : IImageWriter
         var height = header.DataWindow.Height;
         var rowStride = ExrReader.ComputeChannelOffsets(header.Channels, width).RowStride;
 
-        return new PartState
-        {
+        return new PartState {
             Header = header,
             PixelBuffer = new byte[checked(rowStride * height)],
             RowStrideBytes = rowStride,
@@ -216,8 +197,7 @@ internal sealed class ExrWriter : IImageWriter
         var payloads = new byte[chunkCount][];
         var ys = new int[chunkCount];
 
-        for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
-        {
+        for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
             var rowStart = chunkIndex * linesPerChunk;
             var rowsInChunk = Math.Min(linesPerChunk, (int)part.Height - rowStart);
             var rawSize = part.RowStrideBytes * rowsInChunk;
@@ -240,13 +220,11 @@ internal sealed class ExrWriter : IImageWriter
         var fullImageOffsets = ExrReader.ComputeChannelOffsets(part.Header.Channels, part.Width);
 
         var index = 0;
-        for (var dy = 0; dy < tilesY; dy++)
-        {
+        for (var dy = 0; dy < tilesY; dy++) {
             var y0 = dy * (int)tiles.YSize;
             var tileHeight = (int)Math.Min(tiles.YSize, part.Height - y0);
 
-            for (var dx = 0; dx < tilesX; dx++)
-            {
+            for (var dx = 0; dx < tilesX; dx++) {
                 var x0 = dx * (int)tiles.XSize;
                 var tileWidth = (int)Math.Min(tiles.XSize, part.Width - x0);
 
@@ -274,13 +252,11 @@ internal sealed class ExrWriter : IImageWriter
         int tileWidth,
         int tileHeight)
     {
-        for (var row = 0; row < tileHeight; row++)
-        {
+        for (var row = 0; row < tileHeight; row++) {
             var tileRowBase = row * tileOffsets.RowStride;
             var imageRowBase = (y0 + row) * part.RowStrideBytes;
 
-            for (var c = 0; c < part.Header.Channels.Count; c++)
-            {
+            for (var c = 0; c < part.Header.Channels.Count; c++) {
                 var bytesPerSample = tileOffsets.BytesPerSample[c];
                 var length = tileWidth * bytesPerSample;
 

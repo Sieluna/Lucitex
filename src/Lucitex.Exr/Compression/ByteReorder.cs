@@ -9,11 +9,9 @@ internal static class ByteReorder
         var t2 = half;
         var s = 0;
 
-        while (s < data.Length)
-        {
+        while (s < data.Length) {
             destination[t1++] = data[s++];
-            if (s < data.Length)
-            {
+            if (s < data.Length) {
                 destination[t2++] = data[s++];
             }
         }
@@ -26,11 +24,9 @@ internal static class ByteReorder
         var t2 = half;
         var s = 0;
 
-        while (s < data.Length)
-        {
+        while (s < data.Length) {
             destination[s++] = data[t1++];
-            if (s < data.Length)
-            {
+            if (s < data.Length) {
                 destination[s++] = data[t2++];
             }
         }

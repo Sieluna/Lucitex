@@ -23,8 +23,7 @@ internal sealed class PngReader : IImageReader
         _descriptor = PngDescriptorMapper.ToImageAssetDescriptor(_document);
 
         var violations = DecodeLimitsValidator.Validate(_descriptor, limits);
-        if (violations.Count > 0)
-        {
+        if (violations.Count > 0) {
             throw new ImageFormatException("png", "LimitExceeded", string.Join("; ", violations.Select(v => v.Message)));
         }
 
@@ -35,19 +34,16 @@ internal sealed class PngReader : IImageReader
 
     public int Read(WorkRegion region, Span<byte> destination)
     {
-        try
-        {
+        try {
             EnsureDecoded();
         }
-        catch (Exception exception) when (PngFormatErrors.IsMalformed(exception))
-        {
+        catch (Exception exception) when (PngFormatErrors.IsMalformed(exception)) {
             throw PngFormatErrors.Wrap(exception, Stream.Null);
         }
 
         var width = _document.Ihdr.Width;
 
-        if (region.Region.MinX != 0 || region.Region.MaxXExclusive != width)
-        {
+        if (region.Region.MinX != 0 || region.Region.MaxXExclusive != width) {
             throw new NotSupportedException("Partial-row PNG reads are not supported yet.");
         }
 
@@ -61,15 +57,13 @@ internal sealed class PngReader : IImageReader
 
     private void EnsureDecoded()
     {
-        if (_decodedPixels is not null)
-        {
+        if (_decodedPixels is not null) {
             return;
         }
 
         var ihdr = _document.Ihdr;
         var totalBytes = checked((long)_rowStrideBytes * ihdr.Height);
-        if (totalBytes > _limits.MaxDecodedBytes)
-        {
+        if (totalBytes > _limits.MaxDecodedBytes) {
             throw new ImageFormatException("png", "LimitExceeded", $"Decoded size {totalBytes} exceeds MaxDecodedBytes limit of {_limits.MaxDecodedBytes}.");
         }
 
@@ -77,12 +71,10 @@ internal sealed class PngReader : IImageReader
         var inflated = InflateExactly(_compressedIdat, inflatedLength);
         var buffer = new byte[totalBytes];
 
-        if (ihdr.Interlace == PngInterlaceMethod.None)
-        {
+        if (ihdr.Interlace == PngInterlaceMethod.None) {
             DecodeNonInterlaced(ihdr, inflated, buffer);
         }
-        else
-        {
+        else {
             DecodeAdam7(ihdr, inflated, buffer);
         }
 
@@ -95,8 +87,7 @@ internal sealed class PngReader : IImageReader
         var bpp = ihdr.BytesPerPixel;
         var position = 0;
 
-        for (var y = 0; y < ihdr.Height; y++)
-        {
+        for (var y = 0; y < ihdr.Height; y++) {
             var filterType = (PngFilterType)inflated[position++];
             var row = buffer.AsSpan(y * rowBytes, rowBytes);
             inflated.AsSpan(position, rowBytes).CopyTo(row);
@@ -115,11 +106,9 @@ internal sealed class PngReader : IImageReader
         var finalRowBytes = ihdr.RowByteLength(ihdr.Width);
         var position = 0;
 
-        for (var passIndex = 0; passIndex < 7; passIndex++)
-        {
+        for (var passIndex = 0; passIndex < 7; passIndex++) {
             var (passWidth, passHeight) = Adam7.PassDimensions(ihdr.Width, ihdr.Height, passIndex);
-            if (passWidth == 0 || passHeight == 0)
-            {
+            if (passWidth == 0 || passHeight == 0) {
                 continue;
             }
 
@@ -127,8 +116,7 @@ internal sealed class PngReader : IImageReader
             var passRowBytes = ihdr.RowByteLength(passWidth);
             var previousPassRow = Array.Empty<byte>();
 
-            for (var py = 0; py < passHeight; py++)
-            {
+            for (var py = 0; py < passHeight; py++) {
                 var filterType = (PngFilterType)inflated[position++];
                 var currentRow = new byte[passRowBytes];
                 inflated.AsSpan(position, passRowBytes).CopyTo(currentRow);
@@ -139,11 +127,9 @@ internal sealed class PngReader : IImageReader
                 var y = yStart + (py * yStep);
                 var finalRow = buffer.AsSpan(y * finalRowBytes, finalRowBytes);
 
-                for (var px = 0; px < passWidth; px++)
-                {
+                for (var px = 0; px < passWidth; px++) {
                     var x = xStart + (px * xStep);
-                    for (var s = 0; s < samplesPerPixel; s++)
-                    {
+                    for (var s = 0; s < samplesPerPixel; s++) {
                         var value = PngBitPacking.ReadSample(currentRow, (px * samplesPerPixel) + s, bitDepth);
                         PngBitPacking.WriteSample(finalRow, (x * samplesPerPixel) + s, bitDepth, value);
                     }
@@ -156,17 +142,14 @@ internal sealed class PngReader : IImageReader
 
     private static int ExpectedInflatedLength(PngIhdr ihdr)
     {
-        if (ihdr.Interlace == PngInterlaceMethod.None)
-        {
+        if (ihdr.Interlace == PngInterlaceMethod.None) {
             return checked((ihdr.RowByteLength(ihdr.Width) + 1) * ihdr.Height);
         }
 
         var length = 0;
-        for (var pass = 0; pass < 7; pass++)
-        {
+        for (var pass = 0; pass < 7; pass++) {
             var (width, height) = Adam7.PassDimensions(ihdr.Width, ihdr.Height, pass);
-            if (width > 0 && height > 0)
-            {
+            if (width > 0 && height > 0) {
                 length = checked(length + ((ihdr.RowByteLength(width) + 1) * height));
             }
         }
@@ -180,8 +163,7 @@ internal sealed class PngReader : IImageReader
         using var zlib = new ZLibStream(input, CompressionMode.Decompress);
         var output = new byte[expectedLength];
         zlib.ReadExactly(output);
-        if (zlib.ReadByte() != -1)
-        {
+        if (zlib.ReadByte() != -1) {
             throw new ImageFormatException("png", "BadImageData", "Inflated PNG image data is longer than expected.");
         }
 

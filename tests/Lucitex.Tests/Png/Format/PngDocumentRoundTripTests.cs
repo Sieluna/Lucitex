@@ -4,8 +4,7 @@ namespace Lucitex.Tests.Png.Format;
 
 public class PngDocumentRoundTripTests
 {
-    private static PngDocument BuildDocument() => new()
-    {
+    private static PngDocument BuildDocument() => new() {
         Ihdr = new PngIhdr(16, 8, 8, PngColorType.Indexed, PngInterlaceMethod.None),
         Palette =
         [
@@ -16,8 +15,7 @@ public class PngDocumentRoundTripTests
         TransparencyData = [255, 128, 0],
         Gamma = 0.45455f,
         SrgbRenderingIntent = 0,
-        Chromaticities = new PngChromaticities
-        {
+        Chromaticities = new PngChromaticities {
             White = new PngChromaticity(0.3127, 0.3290),
             Red = new PngChromaticity(0.6400, 0.3300),
             Green = new PngChromaticity(0.3000, 0.6000),

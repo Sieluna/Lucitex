@@ -29,20 +29,16 @@ internal static class PngDocumentReader
         var sawIdat = false;
         var sawIend = false;
 
-        while (true)
-        {
+        while (true) {
             var chunk = PngChunkIo.ReadChunk(stream, maxChunkLength);
 
-            if (!sawIhdr && chunk.Type != "IHDR")
-            {
+            if (!sawIhdr && chunk.Type != "IHDR") {
                 throw new ImageFormatException("png", "BadChunkOrder", "IHDR must be the first PNG chunk.");
             }
 
-            switch (chunk.Type)
-            {
+            switch (chunk.Type) {
                 case "IHDR":
-                    if (sawIhdr)
-                    {
+                    if (sawIhdr) {
                         throw new ImageFormatException("png", "DuplicateChunk", "PNG contains more than one IHDR chunk.");
                     }
 
@@ -77,8 +73,7 @@ internal static class PngDocumentReader
                     textEntries.Add(ParseITxt(chunk.Data));
                     break;
                 case "IDAT":
-                    if (idatBuffer.Length + chunk.Data.Length > limits.MaxWorkingSet)
-                    {
+                    if (idatBuffer.Length + chunk.Data.Length > limits.MaxWorkingSet) {
                         throw new ImageFormatException("png", "LimitExceeded", "Compressed PNG image data exceeds MaxWorkingSet.");
                     }
 
@@ -86,8 +81,7 @@ internal static class PngDocumentReader
                     sawIdat = true;
                     break;
                 case "IEND":
-                    if (chunk.Data.Length != 0)
-                    {
+                    if (chunk.Data.Length != 0) {
                         throw new ImageFormatException("png", "BadChunk", "IEND chunk must be empty.");
                     }
 
@@ -98,34 +92,28 @@ internal static class PngDocumentReader
                     break;
             }
 
-            if (chunk.Type != "IDAT")
-            {
+            if (chunk.Type != "IDAT") {
                 metadataBytes = checked(metadataBytes + chunk.Data.Length);
-                if (metadataBytes > limits.MaxMetadataBytes)
-                {
+                if (metadataBytes > limits.MaxMetadataBytes) {
                     throw new ImageFormatException("png", "LimitExceeded", "PNG metadata exceeds MaxMetadataBytes.");
                 }
             }
         }
 
-        done:
-        if (ihdr is null)
-        {
+    done:
+        if (ihdr is null) {
             throw new ImageFormatException("png", "MissingChunk", "The file is missing the required IHDR chunk.");
         }
 
-        if (!sawIdat || !sawIend)
-        {
+        if (!sawIdat || !sawIend) {
             throw new ImageFormatException("png", "MissingChunk", "The file is missing required IDAT or IEND data.");
         }
 
-        if (ihdr.Value.ColorType == PngColorType.Indexed && palette.Count == 0)
-        {
+        if (ihdr.Value.ColorType == PngColorType.Indexed && palette.Count == 0) {
             throw new ImageFormatException("png", "MissingChunk", "Indexed-color images require a PLTE chunk.");
         }
 
-        var document = new PngDocument
-        {
+        var document = new PngDocument {
             Ihdr = ihdr.Value,
             Palette = palette,
             TransparencyData = transparency,
@@ -143,8 +131,7 @@ internal static class PngDocumentReader
 
     private static PngIhdr ParseIhdr(byte[] data)
     {
-        if (data.Length != 13)
-        {
+        if (data.Length != 13) {
             throw new ImageFormatException("png", "BadChunk", "IHDR chunk must be 13 bytes.");
         }
 
@@ -156,13 +143,11 @@ internal static class PngDocumentReader
         var filterMethod = data[11];
         var interlace = (PngInterlaceMethod)data[12];
 
-        if (width <= 0 || height <= 0)
-        {
+        if (width <= 0 || height <= 0) {
             throw new ImageFormatException("png", "BadIhdr", "PNG width and height must be positive.");
         }
 
-        var validBitDepth = colorType switch
-        {
+        var validBitDepth = colorType switch {
             PngColorType.Grayscale => bitDepth is 1 or 2 or 4 or 8 or 16,
             PngColorType.Truecolor => bitDepth is 8 or 16,
             PngColorType.Indexed => bitDepth is 1 or 2 or 4 or 8,
@@ -170,23 +155,19 @@ internal static class PngDocumentReader
             PngColorType.TruecolorAlpha => bitDepth is 8 or 16,
             _ => false,
         };
-        if (!validBitDepth)
-        {
+        if (!validBitDepth) {
             throw new ImageFormatException("png", "BadIhdr", $"Bit depth {bitDepth} is invalid for PNG color type {(byte)colorType}.");
         }
 
-        if (compressionMethod != 0)
-        {
+        if (compressionMethod != 0) {
             throw new ImageFormatException("png", "Unsupported.Png.CompressionMethod", $"Unknown IHDR compression method {compressionMethod}.");
         }
 
-        if (filterMethod != 0)
-        {
+        if (filterMethod != 0) {
             throw new ImageFormatException("png", "Unsupported.Png.FilterMethod", $"Unknown IHDR filter method {filterMethod}.");
         }
 
-        if (interlace is not PngInterlaceMethod.None and not PngInterlaceMethod.Adam7)
-        {
+        if (interlace is not PngInterlaceMethod.None and not PngInterlaceMethod.Adam7) {
             throw new ImageFormatException("png", "BadIhdr", $"Unknown PNG interlace method {(byte)interlace}.");
         }
 
@@ -195,14 +176,12 @@ internal static class PngDocumentReader
 
     private static IReadOnlyList<PngPaletteEntry> ParsePalette(byte[] data)
     {
-        if (data.Length is 0 or > 768 || data.Length % 3 != 0)
-        {
+        if (data.Length is 0 or > 768 || data.Length % 3 != 0) {
             throw new ImageFormatException("png", "BadChunk", "PLTE length must be a non-zero multiple of three with at most 256 entries.");
         }
 
         var entries = new List<PngPaletteEntry>(data.Length / 3);
-        for (var i = 0; i + 2 < data.Length; i += 3)
-        {
+        for (var i = 0; i + 2 < data.Length; i += 3) {
             entries.Add(new PngPaletteEntry(data[i], data[i + 1], data[i + 2]));
         }
 
@@ -211,8 +190,7 @@ internal static class PngDocumentReader
 
     private static PngChromaticities ParseChromaticities(byte[] data)
     {
-        if (data.Length != 32)
-        {
+        if (data.Length != 32) {
             throw new ImageFormatException("png", "BadChunk", "cHRM chunk must be 32 bytes.");
         }
 
@@ -220,8 +198,7 @@ internal static class PngDocumentReader
             BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(offset, 4)) / 100000.0,
             BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(offset + 4, 4)) / 100000.0);
 
-        return new PngChromaticities
-        {
+        return new PngChromaticities {
             White = Read(0),
             Red = Read(8),
             Green = Read(16),
@@ -232,15 +209,13 @@ internal static class PngDocumentReader
     private static (string Name, byte[] Profile) ParseIccp(byte[] data)
     {
         var nameEnd = Array.IndexOf(data, (byte)0);
-        if (nameEnd is < 1 or > 79 || nameEnd + 2 > data.Length)
-        {
+        if (nameEnd is < 1 or > 79 || nameEnd + 2 > data.Length) {
             throw new ImageFormatException("png", "BadChunk", "iCCP contains an invalid profile name or payload.");
         }
         var name = Encoding.Latin1.GetString(data, 0, nameEnd);
         var compressionMethod = data[nameEnd + 1];
 
-        if (compressionMethod != 0)
-        {
+        if (compressionMethod != 0) {
             throw new ImageFormatException("png", "Unsupported.Png.IccCompression", $"Unknown iCCP compression method {compressionMethod}.");
         }
 
@@ -261,8 +236,7 @@ internal static class PngDocumentReader
     {
         var keywordEnd = Array.IndexOf(data, (byte)0);
         ValidateKeywordEnd(keywordEnd, data.Length - 1, "zTXt");
-        if (data[keywordEnd + 1] != 0)
-        {
+        if (data[keywordEnd + 1] != 0) {
             throw new ImageFormatException("png", "Unsupported.Png.TextCompression", $"Unknown text compression method {data[keywordEnd + 1]}.");
         }
         var keyword = Encoding.Latin1.GetString(data, 0, keywordEnd);
@@ -283,15 +257,13 @@ internal static class PngDocumentReader
         var compressionMethod = data[offset++];
 
         var languageEnd = Array.IndexOf(data, (byte)0, offset);
-        if (languageEnd < offset)
-        {
+        if (languageEnd < offset) {
             throw new ImageFormatException("png", "BadChunk", "iTXt is missing the language terminator.");
         }
         offset = languageEnd + 1;
 
         var translatedKeywordEnd = Array.IndexOf(data, (byte)0, offset);
-        if (translatedKeywordEnd < offset)
-        {
+        if (translatedKeywordEnd < offset) {
             throw new ImageFormatException("png", "BadChunk", "iTXt is missing the translated-keyword terminator.");
         }
         offset = translatedKeywordEnd + 1;
@@ -306,16 +278,14 @@ internal static class PngDocumentReader
 
     private static void ValidateKeywordEnd(int keywordEnd, int maximum, string chunkType)
     {
-        if (keywordEnd is < 1 or > 79 || keywordEnd > maximum)
-        {
+        if (keywordEnd is < 1 or > 79 || keywordEnd > maximum) {
             throw new ImageFormatException("png", "BadChunk", $"{chunkType} contains an invalid keyword.");
         }
     }
 
     private static byte[] Inflate(byte[] compressed, byte compressionMethod = 0)
     {
-        if (compressionMethod != 0)
-        {
+        if (compressionMethod != 0) {
             throw new ImageFormatException("png", "Unsupported.Png.TextCompression", $"Unknown text compression method {compressionMethod}.");
         }
 

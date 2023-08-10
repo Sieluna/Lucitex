@@ -18,28 +18,23 @@ public class Adam7DecodeTests
 
         using var inflated = new MemoryStream();
 
-        for (var passIndex = 0; passIndex < 7; passIndex++)
-        {
+        for (var passIndex = 0; passIndex < 7; passIndex++) {
             var (passWidth, passHeight) = Adam7.PassDimensions(ihdr.Width, ihdr.Height, passIndex);
-            if (passWidth == 0 || passHeight == 0)
-            {
+            if (passWidth == 0 || passHeight == 0) {
                 continue;
             }
 
             var (xStart, yStart, xStep, yStep) = Adam7.Passes[passIndex];
             var passRowBytes = ihdr.RowByteLength(passWidth);
 
-            for (var py = 0; py < passHeight; py++)
-            {
+            for (var py = 0; py < passHeight; py++) {
                 var y = yStart + (py * yStep);
                 var finalRow = finalPixels.AsSpan(y * finalRowBytes, finalRowBytes);
                 var passRow = new byte[passRowBytes];
 
-                for (var px = 0; px < passWidth; px++)
-                {
+                for (var px = 0; px < passWidth; px++) {
                     var x = xStart + (px * xStep);
-                    for (var s = 0; s < samplesPerPixel; s++)
-                    {
+                    for (var s = 0; s < samplesPerPixel; s++) {
                         var value = PngBitPacking.ReadSample(finalRow, (x * samplesPerPixel) + s, bitDepth);
                         PngBitPacking.WriteSample(passRow, (px * samplesPerPixel) + s, bitDepth, value);
                     }
@@ -51,8 +46,7 @@ public class Adam7DecodeTests
         }
 
         using var compressed = new MemoryStream();
-        using (var zlib = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
-        {
+        using (var zlib = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true)) {
             zlib.Write(inflated.ToArray());
         }
 
@@ -82,8 +76,7 @@ public class Adam7DecodeTests
         Assert.Equal(9, described.Parts[0].Topology.BaseExtent.Height);
 
         var destination = new byte[finalPixels.Length];
-        var region = new WorkRegion
-        {
+        var region = new WorkRegion {
             Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
             Region = ImageBox.FromOrigin(ihdr.Width, ihdr.Height),
         };
@@ -111,8 +104,7 @@ public class Adam7DecodeTests
         var reader = codec.OpenReader(stream);
 
         var destination = new byte[finalPixels.Length];
-        var region = new WorkRegion
-        {
+        var region = new WorkRegion {
             Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
             Region = ImageBox.FromOrigin(ihdr.Width, ihdr.Height),
         };

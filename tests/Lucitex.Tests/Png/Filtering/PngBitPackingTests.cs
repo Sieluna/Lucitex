@@ -18,14 +18,12 @@ public class PngBitPackingTests
         var row = new byte[rowBytes];
 
         var expected = new uint[sampleCount];
-        for (var i = 0; i < sampleCount; i++)
-        {
+        for (var i = 0; i < sampleCount; i++) {
             expected[i] = (uint)(i % (maxValue + 1));
             PngBitPacking.WriteSample(row, i, bitDepth, expected[i]);
         }
 
-        for (var i = 0; i < sampleCount; i++)
-        {
+        for (var i = 0; i < sampleCount; i++) {
             Assert.Equal(expected[i], PngBitPacking.ReadSample(row, i, bitDepth));
         }
     }

@@ -19,13 +19,11 @@ public sealed class MappedFileBuffer : ILargeBuffer, IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (offset < 0 || length < 0 || checked(offset + length) > Length)
-        {
+        if (offset < 0 || length < 0 || checked(offset + length) > Length) {
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        if (length == 0)
-        {
+        if (length == 0) {
             return new BufferSegment { Memory = Memory<byte>.Empty, Offset = offset };
         }
 
@@ -38,8 +36,7 @@ public sealed class MappedFileBuffer : ILargeBuffer, IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
-        {
+        if (_disposed) {
             return;
         }
 

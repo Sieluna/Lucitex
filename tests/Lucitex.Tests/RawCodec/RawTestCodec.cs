@@ -20,8 +20,7 @@ public sealed class RawTestCodec : IImageCodec
 
     public FormatProbeResult Probe(ReadOnlySpan<byte> header)
     {
-        if (header.Length < Magic.Length)
-        {
+        if (header.Length < Magic.Length) {
             return FormatProbeResult.NoMatch(Magic.Length);
         }
 
@@ -36,8 +35,7 @@ public sealed class RawTestCodec : IImageCodec
     public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) =>
         new RawTestWriter(stream, descriptor);
 
-    internal static int SampleByteSize(SampleType type) => type.Bits switch
-    {
+    internal static int SampleByteSize(SampleType type) => type.Bits switch {
         <= 8 => 1,
         <= 16 => 2,
         <= 32 => 4,
@@ -60,8 +58,7 @@ internal sealed class RawTestReader : IImageReader
 
         Span<byte> magic = stackalloc byte[4];
         stream.ReadExactly(magic);
-        if (!magic.SequenceEqual("RAW1"u8))
-        {
+        if (!magic.SequenceEqual("RAW1"u8)) {
             throw new Lucitex.Core.Execution.ImageFormatException("raw-test", "BadMagic", "Stream is not a raw-test asset.");
         }
 
@@ -74,8 +71,7 @@ internal sealed class RawTestReader : IImageReader
         _descriptor = DescriptorJsonSerializer.Deserialize(Encoding.UTF8.GetString(jsonBytes));
 
         var violations = DecodeLimitsValidator.Validate(_descriptor, limits);
-        if (violations.Count > 0)
-        {
+        if (violations.Count > 0) {
             throw new Lucitex.Core.Execution.ImageFormatException(
                 "raw-test",
                 "LimitExceeded",
@@ -97,8 +93,7 @@ internal sealed class RawTestReader : IImageReader
         var rowBytes = checked((int)(region.Region.Width * _bytesPerTexel));
         var written = 0;
 
-        for (var y = region.Region.MinY; y < region.Region.MaxYExclusive; y++)
-        {
+        for (var y = region.Region.MinY; y < region.Region.MaxYExclusive; y++) {
             var rowOffset = _dataStart + ((y * _width) + region.Region.MinX) * _bytesPerTexel;
             _stream.Position = rowOffset;
             _stream.ReadExactly(destination.Slice(written, rowBytes));
@@ -118,8 +113,7 @@ internal sealed class RawTestWriter : IImageWriter
 
     public RawTestWriter(Stream stream, ImageAssetDescriptor descriptor)
     {
-        if (!stream.CanSeek)
-        {
+        if (!stream.CanSeek) {
             throw new ArgumentException("raw-test writer requires a seekable stream.", nameof(stream));
         }
 
@@ -149,8 +143,7 @@ internal sealed class RawTestWriter : IImageWriter
         _dataStart = stream.Position;
     }
 
-    public WriterExecutionContract Contract { get; } = new()
-    {
+    public WriterExecutionContract Contract { get; } = new() {
         RequiresDescriptorUpfront = true,
         RequiresDimensionsUpfront = true,
         WriteGranularity = new Extent3I(1, 1, 1),
@@ -166,8 +159,7 @@ internal sealed class RawTestWriter : IImageWriter
         var rowBytes = checked((int)(region.Region.Width * _bytesPerTexel));
         var rowCount = region.Region.Height;
 
-        for (var i = 0; i < rowCount; i++)
-        {
+        for (var i = 0; i < rowCount; i++) {
             var y = region.Region.MinY + i;
             var rowOffset = _dataStart + ((y * _width) + region.Region.MinX) * _bytesPerTexel;
             _stream.Position = rowOffset;

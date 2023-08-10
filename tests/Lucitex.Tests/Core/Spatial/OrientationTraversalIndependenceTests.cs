@@ -28,10 +28,8 @@ public class OrientationTraversalIndependenceTests
         ];
 
         var data = new TheoryData<LogicalOrientation, StorageTraversal>();
-        foreach (var orientation in orientations)
-        {
-            foreach (var traversal in traversals)
-            {
+        foreach (var orientation in orientations) {
+            foreach (var traversal in traversals) {
                 data.Add(orientation, traversal);
             }
         }
@@ -47,8 +45,7 @@ public class OrientationTraversalIndependenceTests
     {
         var window = ImageBox.FromOrigin(4, 4);
 
-        var domain = new SpatialDomain
-        {
+        var domain = new SpatialDomain {
             DataWindow = window,
             DisplayWindow = window,
             Orientation = orientation,
@@ -63,8 +60,7 @@ public class OrientationTraversalIndependenceTests
     public void ChangingTraversal_DoesNotAlterOrientation()
     {
         var window = ImageBox.FromOrigin(4, 4);
-        var domain = new SpatialDomain
-        {
+        var domain = new SpatialDomain {
             DataWindow = window,
             DisplayWindow = window,
             Orientation = LogicalOrientation.Rotate90,

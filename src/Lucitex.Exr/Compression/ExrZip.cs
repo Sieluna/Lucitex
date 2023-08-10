@@ -11,8 +11,7 @@ internal static class ExrZip
         BytePredictor.Apply(reordered);
 
         using var output = new MemoryStream();
-        using (var zlib = new ZLibStream(output, CompressionLevel.Optimal, leaveOpen: true))
-        {
+        using (var zlib = new ZLibStream(output, CompressionLevel.Optimal, leaveOpen: true)) {
             zlib.Write(reordered);
         }
 
@@ -24,11 +23,9 @@ internal static class ExrZip
         var reordered = new byte[output.Length];
 
         using (var inputStream = new MemoryStream(input.ToArray()))
-        using (var zlib = new ZLibStream(inputStream, CompressionMode.Decompress))
-        {
+        using (var zlib = new ZLibStream(inputStream, CompressionMode.Decompress)) {
             zlib.ReadExactly(reordered);
-            if (zlib.ReadByte() != -1)
-            {
+            if (zlib.ReadByte() != -1) {
                 throw new InvalidDataException("EXR ZIP chunk expands beyond its expected size.");
             }
         }

@@ -2,9 +2,9 @@ namespace Lucitex.Core.Execution.Codecs;
 
 public interface IImageWriter
 {
-    WriterExecutionContract Contract { get; }
+    public WriterExecutionContract Contract { get; }
 
-    void Write(WorkRegion region, ReadOnlySpan<byte> data);
+    public void Write(WorkRegion region, ReadOnlySpan<byte> data);
 
-    void Finish();
+    public void Finish();
 }

@@ -5,7 +5,7 @@ namespace Lucitex.Tests.Core;
 
 public class CoreHasNoCodecSpecificTypesTests
 {
-    private static readonly string[] ForbiddenSubstrings =
+    private static readonly string[] s_ForbiddenSubstrings =
     [
         "Exr", "Png", "Dds", "Ktx", "Hdr", "Jpeg", "Jpg", "Tiff", "Tga", "Bmp", "Webp", "Gif", "Dpx", "Astc", "Etc2",
     ];
@@ -16,7 +16,7 @@ public class CoreHasNoCodecSpecificTypesTests
         var assembly = typeof(ImageAssetDescriptor).Assembly;
 
         var offenders = assembly.GetExportedTypes()
-            .Where(type => ForbiddenSubstrings.Any(forbidden =>
+            .Where(type => s_ForbiddenSubstrings.Any(forbidden =>
                 type.Name.Contains(forbidden, StringComparison.OrdinalIgnoreCase)))
             .Select(type => type.FullName)
             .ToList();

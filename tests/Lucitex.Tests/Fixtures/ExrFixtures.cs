@@ -11,22 +11,19 @@ public static class ExrFixtures
     private static SpatialDomain Window(long width, long height, long minX = 0, long minY = 0)
     {
         var window = ImageBox.FromExclusive(minX, minY, minX + width, minY + height);
-        return new SpatialDomain
-        {
+        return new SpatialDomain {
             DataWindow = window,
             DisplayWindow = window,
         };
     }
 
-    private static ResourceTopology FlatTopology(long width, long height) => new()
-    {
+    private static ResourceTopology FlatTopology(long width, long height) => new() {
         SpatialDimensions = 2,
         BaseExtent = new Extent3L(width, height, 1),
         Levels = [new ResolutionLevel { Key = LevelKey.Base, Extent = new Extent3L(width, height, 1) }],
     };
 
-    private static ChannelDescriptor Channel(string name, SampleType sampleType, Int3? step = null) => new()
-    {
+    private static ChannelDescriptor Channel(string name, SampleType sampleType, Int3? step = null) => new() {
         Name = name,
         SampleType = sampleType,
         Sampling = new SampleGrid { Origin = Long3.Zero, Step = step ?? Int3.One },
@@ -36,13 +33,11 @@ public static class ExrFixtures
     {
         const long width = 64, height = 32;
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "rgba",
             Spatial = Window(width, height),
             Topology = FlatTopology(width, height),
-            Channels = new ChannelSchema
-            {
+            Channels = new ChannelSchema {
                 Channels =
                 [
                     Channel("R", SampleType.Float16),
@@ -51,8 +46,7 @@ public static class ExrFixtures
                     Channel("A", SampleType.Float16),
                 ],
             },
-            Representation = new PlainSampleRepresentation
-            {
+            Representation = new PlainSampleRepresentation {
                 Planes =
                 [
                     new SamplePlaneDescriptor
@@ -72,13 +66,11 @@ public static class ExrFixtures
     {
         const long width = 16, height = 16;
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "beauty",
             Spatial = Window(width, height),
             Topology = FlatTopology(width, height),
-            Channels = new ChannelSchema
-            {
+            Channels = new ChannelSchema {
                 Channels =
                 [
                     Channel("R", SampleType.Float16),
@@ -88,8 +80,7 @@ public static class ExrFixtures
                     Channel("id", SampleType.UInt32),
                 ],
             },
-            Representation = new PlainSampleRepresentation
-            {
+            Representation = new PlainSampleRepresentation {
                 Planes =
                 [
                     new SamplePlaneDescriptor { Channels = ["R", "G", "B"], Extent = new Extent3L(width, height, 1) },
@@ -106,13 +97,11 @@ public static class ExrFixtures
     {
         const long width = 32, height = 32;
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "yc",
             Spatial = Window(width, height),
             Topology = FlatTopology(width, height),
-            Channels = new ChannelSchema
-            {
+            Channels = new ChannelSchema {
                 Channels =
                 [
                     Channel("Y", SampleType.Float16),
@@ -120,8 +109,7 @@ public static class ExrFixtures
                     Channel("BY", SampleType.Float16, new Int3(2, 2, 1)),
                 ],
             },
-            Representation = new PlainSampleRepresentation
-            {
+            Representation = new PlainSampleRepresentation {
                 Planes =
                 [
                     new SamplePlaneDescriptor { Channels = ["Y"], Extent = new Extent3L(width, height, 1) },
@@ -138,20 +126,17 @@ public static class ExrFixtures
     {
         const long width = 8, height = 8;
 
-        ImagePartDescriptor MakePart(string name, string channel) => new()
-        {
+        ImagePartDescriptor MakePart(string name, string channel) => new() {
             Name = name,
             Spatial = Window(width, height),
             Topology = FlatTopology(width, height),
             Channels = new ChannelSchema { Channels = [Channel(channel, SampleType.Float16)] },
-            Representation = new PlainSampleRepresentation
-            {
+            Representation = new PlainSampleRepresentation {
                 Planes = [new SamplePlaneDescriptor { Channels = [channel], Extent = new Extent3L(width, height, 1) }],
             },
         };
 
-        return new ImageAssetDescriptor
-        {
+        return new ImageAssetDescriptor {
             Parts =
             [
                 MakePart("diffuse", "diffuse.R"),
@@ -164,8 +149,7 @@ public static class ExrFixtures
     {
         const long width = 4, height = 4;
 
-        var topology = new ResourceTopology
-        {
+        var topology = new ResourceTopology {
             SpatialDimensions = 2,
             BaseExtent = new Extent3L(width, height, 1),
             Levels =
@@ -177,14 +161,12 @@ public static class ExrFixtures
             ],
         };
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "ripmap",
             Spatial = Window(width, height),
             Topology = topology,
             Channels = new ChannelSchema { Channels = [Channel("R", SampleType.Float16)] },
-            Representation = new PlainSampleRepresentation
-            {
+            Representation = new PlainSampleRepresentation {
                 Planes = [new SamplePlaneDescriptor { Channels = ["R"], Extent = new Extent3L(width, height, 1) }],
             },
         };
@@ -197,14 +179,12 @@ public static class ExrFixtures
         var window = ImageBox.FromExclusive(-10, -5, 10, 5);
         const long width = 20, height = 10;
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "shifted",
             Spatial = new SpatialDomain { DataWindow = window, DisplayWindow = window },
             Topology = FlatTopology(width, height),
             Channels = new ChannelSchema { Channels = [Channel("R", SampleType.Float32)] },
-            Representation = new PlainSampleRepresentation
-            {
+            Representation = new PlainSampleRepresentation {
                 Planes = [new SamplePlaneDescriptor { Channels = ["R"], Extent = new Extent3L(width, height, 1) }],
             },
         };
@@ -216,13 +196,11 @@ public static class ExrFixtures
     {
         const long width = 8, height = 8;
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "deep",
             Spatial = Window(width, height),
             Topology = FlatTopology(width, height),
-            Channels = new ChannelSchema
-            {
+            Channels = new ChannelSchema {
                 Channels =
                 [
                     Channel("R", SampleType.Float32),
@@ -231,10 +209,8 @@ public static class ExrFixtures
                     Channel("A", SampleType.Float32),
                 ],
             },
-            Representation = new DeepRepresentation
-            {
-                SampleChannels = new ChannelSchema
-                {
+            Representation = new DeepRepresentation {
+                SampleChannels = new ChannelSchema {
                     Channels =
                     [
                         Channel("R", SampleType.Float32),

@@ -17,8 +17,7 @@ internal static class PngChunkIo
         Span<byte> buffer = stackalloc byte[8];
         stream.ReadExactly(buffer);
 
-        if (!buffer.SequenceEqual(Signature))
-        {
+        if (!buffer.SequenceEqual(Signature)) {
             throw new ImageFormatException("png", "BadSignature", "Stream does not start with the PNG signature.");
         }
     }
@@ -28,13 +27,11 @@ internal static class PngChunkIo
         Span<byte> lengthBytes = stackalloc byte[4];
         stream.ReadExactly(lengthBytes);
         var length = BinaryPrimitives.ReadInt32BigEndian(lengthBytes);
-        if (length < 0 || length > maxDataLength)
-        {
+        if (length < 0 || length > maxDataLength) {
             throw new ImageFormatException("png", "LimitExceeded", $"Chunk length {length} exceeds the allowed maximum of {maxDataLength}.");
         }
 
-        if (stream.CanSeek && stream.Length - stream.Position < (long)length + 8)
-        {
+        if (stream.CanSeek && stream.Length - stream.Position < (long)length + 8) {
             throw new ImageFormatException("png", "TruncatedChunk", "PNG chunk extends beyond the end of the stream.", stream.Position);
         }
 
@@ -50,8 +47,7 @@ internal static class PngChunkIo
         var expectedCrc = BinaryPrimitives.ReadUInt32BigEndian(crcBytes);
 
         var actualCrc = Crc32.Compute(typeBytes, data);
-        if (actualCrc != expectedCrc)
-        {
+        if (actualCrc != expectedCrc) {
             throw new ImageFormatException("png", "BadChunkCrc", $"CRC mismatch for chunk '{type}'.");
         }
 

@@ -28,8 +28,7 @@ public static class DescriptorJsonSerializer
         var document = JsonSerializer.Deserialize<DescriptorDocument>(json, Options)
             ?? throw new JsonException("Descriptor document was null.");
 
-        if (document.SchemaVersion != DescriptorDocument.CurrentSchemaVersion)
-        {
+        if (document.SchemaVersion != DescriptorDocument.CurrentSchemaVersion) {
             throw new JsonException($"Unsupported descriptor schema version '{document.SchemaVersion}'.");
         }
 
@@ -38,8 +37,7 @@ public static class DescriptorJsonSerializer
 
     private static JsonSerializerOptions CreateOptions()
     {
-        var options = new JsonSerializerOptions
-        {
+        var options = new JsonSerializerOptions {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

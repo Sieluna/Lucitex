@@ -7,8 +7,7 @@ public readonly record struct PngIhdr(
     PngColorType ColorType,
     PngInterlaceMethod Interlace)
 {
-    public int SamplesPerPixel => ColorType switch
-    {
+    public int SamplesPerPixel => ColorType switch {
         PngColorType.Grayscale => 1,
         PngColorType.Truecolor => 3,
         PngColorType.Indexed => 1,

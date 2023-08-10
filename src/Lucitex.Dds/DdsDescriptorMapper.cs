@@ -14,8 +14,7 @@ internal static class DdsDescriptorMapper
     {
         var window = ImageBox.FromOrigin(header.Width, header.Height);
 
-        var spatial = new SpatialDomain
-        {
+        var spatial = new SpatialDomain {
             DataWindow = window,
             DisplayWindow = window,
             Orientation = LogicalOrientation.Identity,
@@ -29,16 +28,14 @@ internal static class DdsDescriptorMapper
         var w = (long)header.Width;
         var h = (long)header.Height;
         var d = spatialDimensions == 3 ? (long)header.Depth : 1;
-        for (var mip = 0; mip < header.MipMapCount; mip++)
-        {
+        for (var mip = 0; mip < header.MipMapCount; mip++) {
             levels.Add(new ResolutionLevel { Key = LevelKey.Mip(mip), Extent = new Extent3L(w, h, d) });
             w = Math.Max(1, w / 2);
             h = Math.Max(1, h / 2);
             d = Math.Max(1, d / 2);
         }
 
-        var topology = new ResourceTopology
-        {
+        var topology = new ResourceTopology {
             SpatialDimensions = spatialDimensions,
             BaseExtent = baseExtent,
             ArrayElementCount = (int)header.ArraySize,
@@ -48,8 +45,7 @@ internal static class DdsDescriptorMapper
 
         var (channels, representation) = DescribeFormat(header.Format, header.Width, header.Height);
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "texture",
             Spatial = spatial,
             Topology = topology,
@@ -66,8 +62,7 @@ internal static class DdsDescriptorMapper
         var format = DeriveFormat(part);
         var dimension = part.Topology.SpatialDimensions == 3 ? D3d10ResourceDimension.Texture3D : D3d10ResourceDimension.Texture2D;
 
-        return new DdsHeader
-        {
+        return new DdsHeader {
             Width = (uint)part.Topology.BaseExtent.Width,
             Height = (uint)part.Topology.BaseExtent.Height,
             Depth = dimension == D3d10ResourceDimension.Texture3D ? (uint)part.Topology.BaseExtent.Depth : 1,
@@ -83,8 +78,7 @@ internal static class DdsDescriptorMapper
     {
         var extent = new Extent3L(width, height, 1);
 
-        return format switch
-        {
+        return format switch {
             DxgiFormat.R8Unorm => RawPlane(extent, ("R", SampleType.UNorm8)),
             DxgiFormat.R8G8Unorm => RawPlane(extent, ("R", SampleType.UNorm8), ("G", SampleType.UNorm8)),
             DxgiFormat.R8G8B8A8Unorm => RawPlane(extent, ("R", SampleType.UNorm8), ("G", SampleType.UNorm8), ("B", SampleType.UNorm8), ("A", SampleType.UNorm8)),
@@ -119,12 +113,9 @@ internal static class DdsDescriptorMapper
 
     private static DxgiFormat DeriveFormat(ImagePartDescriptor part)
     {
-        if (part.Representation is EncodedElementRepresentation encoded)
-        {
-            if (encoded.Class == EncodedElementClass.BlockCompressed)
-            {
-                return encoded.Format.Name switch
-                {
+        if (part.Representation is EncodedElementRepresentation encoded) {
+            if (encoded.Class == EncodedElementClass.BlockCompressed) {
+                return encoded.Format.Name switch {
                     nameof(EncodedFormatId.Bc1) => DxgiFormat.Bc1Unorm,
                     nameof(EncodedFormatId.Bc2) => DxgiFormat.Bc2Unorm,
                     nameof(EncodedFormatId.Bc3) => DxgiFormat.Bc3Unorm,
@@ -136,8 +127,7 @@ internal static class DdsDescriptorMapper
                 };
             }
 
-            return encoded.Format.Name switch
-            {
+            return encoded.Format.Name switch {
                 nameof(EncodedFormatId.R10G10B10A2) => DxgiFormat.R10G10B10A2Unorm,
                 nameof(EncodedFormatId.R11G11B10Float) => DxgiFormat.R11G11B10Float,
                 _ => throw new NotSupportedException($"Encoded format '{encoded.Format}' has no DDS equivalent."),
@@ -147,8 +137,7 @@ internal static class DdsDescriptorMapper
         var names = part.Channels.Channels.Select(c => c.Name.FullName).ToList();
         var sampleType = part.Channels.Channels[0].SampleType;
 
-        return (names, sampleType) switch
-        {
+        return (names, sampleType) switch {
             (["R"], { Kind: ScalarKind.UnsignedInt, Bits: 8 }) => DxgiFormat.R8Unorm,
             (["R", "G"], { Kind: ScalarKind.UnsignedInt, Bits: 8 }) => DxgiFormat.R8G8Unorm,
             (["R", "G", "B", "A"], { Kind: ScalarKind.UnsignedInt, Bits: 8 }) => DxgiFormat.R8G8B8A8Unorm,
@@ -168,16 +157,14 @@ internal static class DdsDescriptorMapper
 
     private static (ChannelSchema, PayloadRepresentation) RawPlane(Extent3L extent, params (string Name, SampleType Type)[] channels)
     {
-        var descriptors = channels.Select(c => new ChannelDescriptor
-        {
+        var descriptors = channels.Select(c => new ChannelDescriptor {
             Name = c.Name,
             Semantic = ChannelSemanticFor(c.Name),
             SampleType = c.Type,
             Sampling = SampleGrid.Unit,
         }).ToList();
 
-        var plane = new SamplePlaneDescriptor
-        {
+        var plane = new SamplePlaneDescriptor {
             Channels = channels.Select(c => (ChannelPath)c.Name).ToList(),
             Extent = extent,
             Layout = PlaneLayout.Interleaved,
@@ -188,16 +175,14 @@ internal static class DdsDescriptorMapper
 
     private static (ChannelSchema, PayloadRepresentation) Packed(EncodedFormatId format, (string Name, SampleType Type)[] channels, PackedField[] fields)
     {
-        var descriptors = channels.Select(c => new ChannelDescriptor
-        {
+        var descriptors = channels.Select(c => new ChannelDescriptor {
             Name = c.Name,
             Semantic = ChannelSemanticFor(c.Name),
             SampleType = c.Type,
             Sampling = SampleGrid.Unit,
         }).ToList();
 
-        var representation = new EncodedElementRepresentation
-        {
+        var representation = new EncodedElementRepresentation {
             Format = format,
             TexelExtentPerElement = new Extent3I(1, 1, 1),
             BitsPerElement = fields.Sum(f => f.Bits),
@@ -210,16 +195,14 @@ internal static class DdsDescriptorMapper
 
     private static (ChannelSchema, PayloadRepresentation) BlockCompressed(EncodedFormatId format, int bitsPerBlock, string[] channelNames)
     {
-        var descriptors = channelNames.Select(name => new ChannelDescriptor
-        {
+        var descriptors = channelNames.Select(name => new ChannelDescriptor {
             Name = name,
             Semantic = ChannelSemanticFor(name),
             SampleType = SampleType.UNorm8,
             Sampling = SampleGrid.Unit,
         }).ToList();
 
-        var representation = new EncodedElementRepresentation
-        {
+        var representation = new EncodedElementRepresentation {
             Format = format,
             TexelExtentPerElement = new Extent3I(4, 4, 1),
             BitsPerElement = bitsPerBlock,
@@ -229,8 +212,7 @@ internal static class DdsDescriptorMapper
         return (new ChannelSchema { Channels = descriptors }, representation);
     }
 
-    private static ChannelSemantic ChannelSemanticFor(string name) => name switch
-    {
+    private static ChannelSemantic ChannelSemanticFor(string name) => name switch {
         "R" => ChannelSemantic.Red,
         "G" => ChannelSemantic.Green,
         "B" => ChannelSemantic.Blue,

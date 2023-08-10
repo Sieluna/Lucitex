@@ -4,8 +4,7 @@ namespace Lucitex.Tests.Exr.Format;
 
 public class HeaderRoundTripTests
 {
-    private static ExrHeader BuildHeader() => new()
-    {
+    private static ExrHeader BuildHeader() => new() {
         Channels =
         [
             new ExrChannelInfo { Name = "A", PixelType = ExrPixelType.Half },
@@ -44,8 +43,7 @@ public class HeaderRoundTripTests
         Assert.Equal(2, version);
 
         Assert.Equal(header.Channels.Count, roundTripped.Channels.Count);
-        for (var i = 0; i < header.Channels.Count; i++)
-        {
+        for (var i = 0; i < header.Channels.Count; i++) {
             Assert.Equal(header.Channels[i].Name, roundTripped.Channels[i].Name);
             Assert.Equal(header.Channels[i].PixelType, roundTripped.Channels[i].PixelType);
             Assert.Equal(header.Channels[i].XSampling, roundTripped.Channels[i].XSampling);
@@ -77,8 +75,7 @@ public class HeaderRoundTripTests
     [Fact]
     public void ReadHeader_DecodesTiledFlagAndTileDescriptor()
     {
-        var header = BuildHeader() with
-        {
+        var header = BuildHeader() with {
             Tiles = new ExrTileDesc(64, 64, ExrTileLevelMode.MipmapLevels, ExrTileRoundingMode.RoundUp),
         };
 

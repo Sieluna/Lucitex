@@ -14,8 +14,7 @@ public sealed class PngCodec : IImageCodec
 
     public FormatProbeResult Probe(ReadOnlySpan<byte> header)
     {
-        if (header.Length < Signature.Length)
-        {
+        if (header.Length < Signature.Length) {
             return FormatProbeResult.NoMatch(Signature.Length);
         }
 
@@ -26,12 +25,10 @@ public sealed class PngCodec : IImageCodec
 
     public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null)
     {
-        try
-        {
+        try {
             return new PngReader(stream, limits ?? DecodeLimits.Default);
         }
-        catch (Exception exception) when (PngFormatErrors.IsMalformed(exception))
-        {
+        catch (Exception exception) when (PngFormatErrors.IsMalformed(exception)) {
             throw PngFormatErrors.Wrap(exception, stream);
         }
     }

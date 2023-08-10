@@ -4,11 +4,11 @@ namespace Lucitex.Exr.Format;
 
 internal static class ExrHeaderWriter
 {
-    private const int MagicNumber = 20000630;
+    private const int k_MagicNumber = 20000630;
 
     public static void WriteFileVersion(ExrBinaryWriter writer, ExrVersionFlags flags, int versionNumber = 2)
     {
-        writer.WriteInt32(MagicNumber);
+        writer.WriteInt32(k_MagicNumber);
         writer.WriteInt32(versionNumber | (int)flags);
     }
 
@@ -21,28 +21,23 @@ internal static class ExrHeaderWriter
         WriteByteAttribute(writer, "lineOrder", "lineOrder", (byte)header.LineOrder);
         WriteFloatAttribute(writer, "pixelAspectRatio", header.PixelAspectRatio);
 
-        if (header.Tiles is { } tiles)
-        {
+        if (header.Tiles is { } tiles) {
             WriteTileDescAttribute(writer, tiles);
         }
 
-        if (header.PartName is { } partName)
-        {
+        if (header.PartName is { } partName) {
             WriteStringAttribute(writer, "name", partName);
         }
 
-        if (header.PartType is { } partType)
-        {
+        if (header.PartType is { } partType) {
             WriteStringAttribute(writer, "type", partType);
         }
 
-        if (header.ChunkCount is { } chunkCount)
-        {
+        if (header.ChunkCount is { } chunkCount) {
             WriteIntAttribute(writer, "chunkCount", chunkCount);
         }
 
-        foreach (var attribute in header.UnknownAttributes)
-        {
+        foreach (var attribute in header.UnknownAttributes) {
             writer.WriteCString(attribute.Name);
             writer.WriteCString(attribute.Type);
             writer.WriteInt32(attribute.Value.Length);
@@ -55,8 +50,7 @@ internal static class ExrHeaderWriter
     private static void WriteChannelsAttribute(ExrBinaryWriter writer, IReadOnlyList<ExrChannelInfo> channels)
     {
         var size = 1;
-        foreach (var channel in channels)
-        {
+        foreach (var channel in channels) {
             size += Encoding.UTF8.GetByteCount(channel.Name) + 1 + 4 + 1 + 3 + 4 + 4;
         }
 
@@ -65,8 +59,7 @@ internal static class ExrHeaderWriter
         writer.WriteInt32(size);
 
         Span<byte> reserved = stackalloc byte[3];
-        foreach (var channel in channels)
-        {
+        foreach (var channel in channels) {
             writer.WriteCString(channel.Name);
             writer.WriteInt32((int)channel.PixelType);
             writer.WriteByte((byte)(channel.PLinear ? 1 : 0));

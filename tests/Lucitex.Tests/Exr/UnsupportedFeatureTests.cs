@@ -8,16 +8,14 @@ namespace Lucitex.Tests.Exr;
 
 public class UnsupportedFeatureTests
 {
-    private static ExrHeader BuildMinimalHeader(ExrCompressionId compression = ExrCompressionId.None) => new()
-    {
+    private static ExrHeader BuildMinimalHeader(ExrCompressionId compression = ExrCompressionId.None) => new() {
         Channels = [new ExrChannelInfo { Name = "R", PixelType = ExrPixelType.Float }],
         Compression = compression,
         DataWindow = new ExrBox2i(0, 0, 3, 3),
         DisplayWindow = new ExrBox2i(0, 0, 3, 3),
     };
 
-    private static WorkRegion FullRegion(long width, long height) => new()
-    {
+    private static WorkRegion FullRegion(long width, long height) => new() {
         Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
         Region = ImageBox.FromOrigin(width, height),
     };
@@ -29,8 +27,7 @@ public class UnsupportedFeatureTests
         ExrHeaderWriter.WriteFileVersion(writer, flags);
         ExrHeaderWriter.WriteHeader(writer, header);
 
-        if (flags.HasFlag(ExrVersionFlags.MultiPart))
-        {
+        if (flags.HasFlag(ExrVersionFlags.MultiPart)) {
             writer.WriteByte(0);
         }
 
@@ -39,13 +36,11 @@ public class UnsupportedFeatureTests
         var chunkCount = (int)((height + linesPerChunk - 1) / linesPerChunk);
 
         var chunkDataStart = stream.Position + (chunkCount * 8L);
-        for (var i = 0; i < chunkCount; i++)
-        {
+        for (var i = 0; i < chunkCount; i++) {
             writer.WriteInt64(chunkDataStart);
         }
 
-        for (var i = 0; i < chunkCount; i++)
-        {
+        for (var i = 0; i < chunkCount; i++) {
             writer.WriteInt32(0);
             writer.WriteInt32(0);
         }

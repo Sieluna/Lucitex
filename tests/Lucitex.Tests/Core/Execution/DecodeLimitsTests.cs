@@ -8,8 +8,7 @@ public class DecodeLimitsTests
     [Fact]
     public void Validate_AcceptsFixturesWithinDefaultLimits()
     {
-        foreach (var build in FixtureCatalog.All.Values)
-        {
+        foreach (var build in FixtureCatalog.All.Values) {
             var asset = build();
             var violations = DecodeLimitsValidator.Validate(asset, DecodeLimits.Default);
 
@@ -21,8 +20,7 @@ public class DecodeLimitsTests
     public void Validate_FlagsExcessiveDimensions()
     {
         var asset = DdsFixtures.Rgba8();
-        var oversized = asset with
-        {
+        var oversized = asset with {
             Parts =
             [
                 asset.Parts[0] with

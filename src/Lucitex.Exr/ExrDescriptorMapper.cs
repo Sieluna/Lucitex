@@ -11,7 +11,7 @@ namespace Lucitex.Exr;
 
 internal static class ExrDescriptorMapper
 {
-    private const string MetadataNamespace = "exr";
+    private const string k_MetadataNamespace = "exr";
 
     public static ImageAssetDescriptor ToImageAssetDescriptor(IReadOnlyList<ExrHeader> headers) =>
         new() { Parts = headers.Select(ToImagePartDescriptor).ToList() };
@@ -26,8 +26,7 @@ internal static class ExrDescriptorMapper
             header.DisplayWindow.XMin, header.DisplayWindow.YMin,
             header.DisplayWindow.XMax, header.DisplayWindow.YMax);
 
-        var spatial = new SpatialDomain
-        {
+        var spatial = new SpatialDomain {
             DataWindow = dataWindow,
             DisplayWindow = displayWindow,
             Orientation = LogicalOrientation.Identity,
@@ -38,29 +37,25 @@ internal static class ExrDescriptorMapper
         var channelDescriptors = new List<ChannelDescriptor>();
         var planes = new List<SamplePlaneDescriptor>();
 
-        foreach (var channel in header.Channels)
-        {
+        foreach (var channel in header.Channels) {
             var planeWidth = (dataWindow.Width + channel.XSampling - 1) / channel.XSampling;
             var planeHeight = (dataWindow.Height + channel.YSampling - 1) / channel.YSampling;
 
-            channelDescriptors.Add(new ChannelDescriptor
-            {
+            channelDescriptors.Add(new ChannelDescriptor {
                 Name = channel.Name,
                 Semantic = ToSemantic(channel.Name),
                 SampleType = ToSampleType(channel.PixelType),
                 Sampling = new SampleGrid { Origin = Long3.Zero, Step = new Int3(channel.XSampling, channel.YSampling, 1) },
             });
 
-            planes.Add(new SamplePlaneDescriptor
-            {
+            planes.Add(new SamplePlaneDescriptor {
                 Channels = [channel.Name],
                 Extent = new Extent3L(planeWidth, planeHeight, 1),
                 Layout = PlaneLayout.Planar,
             });
         }
 
-        var topology = new ResourceTopology
-        {
+        var topology = new ResourceTopology {
             SpatialDimensions = 2,
             BaseExtent = new Extent3L(dataWindow.Width, dataWindow.Height, 1),
             Levels = [new ResolutionLevel { Key = LevelKey.Base, Extent = new Extent3L(dataWindow.Width, dataWindow.Height, 1) }],
@@ -70,8 +65,7 @@ internal static class ExrDescriptorMapper
             ? new AlphaDescriptor { Mode = AlphaMode.Straight }
             : null;
 
-        return new ImagePartDescriptor
-        {
+        return new ImagePartDescriptor {
             Name = header.PartName,
             Spatial = spatial,
             Topology = topology,
@@ -91,8 +85,7 @@ internal static class ExrDescriptorMapper
         var displayWindow = ToExrBox2i(part.Spatial.DisplayWindow);
 
         var channels = part.Channels.Channels
-            .Select(c => new ExrChannelInfo
-            {
+            .Select(c => new ExrChannelInfo {
                 Name = c.Name.FullName,
                 PixelType = ToPixelType(c.SampleType),
                 XSampling = c.Sampling.Step.X,
@@ -101,8 +94,7 @@ internal static class ExrDescriptorMapper
             .OrderBy(c => c.Name, StringComparer.Ordinal)
             .ToList();
 
-        return new ExrHeader
-        {
+        return new ExrHeader {
             Channels = channels,
             Compression = compression,
             DataWindow = dataWindow,
@@ -116,9 +108,8 @@ internal static class ExrDescriptorMapper
     private static MetadataCollection ToMetadata(ExrHeader header)
     {
         var entries = header.UnknownAttributes
-            .Select(attribute => new MetadataEntry
-            {
-                Namespace = MetadataNamespace,
+            .Select(attribute => new MetadataEntry {
+                Namespace = k_MetadataNamespace,
                 Name = attribute.Name,
                 TypedValue = new StringMetadataValue(attribute.Type),
                 RawRepresentation = attribute.Value,
@@ -131,40 +122,35 @@ internal static class ExrDescriptorMapper
     private static ExrBox2i ToExrBox2i(ImageBox box) =>
         new((int)box.MinX, (int)box.MinY, (int)(box.MaxXExclusive - 1), (int)(box.MaxYExclusive - 1));
 
-    private static StorageTraversal ToStorageTraversal(ExrLineOrder lineOrder) => lineOrder switch
-    {
+    private static StorageTraversal ToStorageTraversal(ExrLineOrder lineOrder) => lineOrder switch {
         ExrLineOrder.IncreasingY => StorageTraversal.IncreasingY,
         ExrLineOrder.DecreasingY => StorageTraversal.DecreasingY,
         ExrLineOrder.RandomY => StorageTraversal.Random,
         _ => StorageTraversal.CodecDefined,
     };
 
-    private static ExrLineOrder ToLineOrder(StorageTraversal traversal) => traversal switch
-    {
+    private static ExrLineOrder ToLineOrder(StorageTraversal traversal) => traversal switch {
         StorageTraversal.IncreasingY => ExrLineOrder.IncreasingY,
         StorageTraversal.DecreasingY => ExrLineOrder.DecreasingY,
         StorageTraversal.Random => ExrLineOrder.RandomY,
         _ => ExrLineOrder.IncreasingY,
     };
 
-    private static SampleType ToSampleType(ExrPixelType pixelType) => pixelType switch
-    {
+    private static SampleType ToSampleType(ExrPixelType pixelType) => pixelType switch {
         ExrPixelType.UInt => SampleType.UInt32,
         ExrPixelType.Half => SampleType.Float16,
         ExrPixelType.Float => SampleType.Float32,
         _ => throw new ArgumentOutOfRangeException(nameof(pixelType)),
     };
 
-    private static ExrPixelType ToPixelType(SampleType sampleType) => sampleType switch
-    {
+    private static ExrPixelType ToPixelType(SampleType sampleType) => sampleType switch {
         { Kind: ScalarKind.UnsignedInt, Bits: 32 } => ExrPixelType.UInt,
         { Kind: ScalarKind.Float, Bits: 16 } => ExrPixelType.Half,
         { Kind: ScalarKind.Float, Bits: 32 } => ExrPixelType.Float,
         _ => throw new NotSupportedException($"Sample type {sampleType} has no EXR pixel type equivalent."),
     };
 
-    private static ChannelSemantic ToSemantic(string channelName) => channelName switch
-    {
+    private static ChannelSemantic ToSemantic(string channelName) => channelName switch {
         "R" => ChannelSemantic.Red,
         "G" => ChannelSemantic.Green,
         "B" => ChannelSemantic.Blue,

@@ -18,8 +18,7 @@ internal sealed class DdsReader : IImageReader
 
     public DdsReader(Stream stream, DecodeLimits limits)
     {
-        if (!stream.CanSeek)
-        {
+        if (!stream.CanSeek) {
             throw new ArgumentException("DDS reader requires a seekable stream.", nameof(stream));
         }
 
@@ -29,8 +28,7 @@ internal sealed class DdsReader : IImageReader
         _descriptor = DdsDescriptorMapper.ToImageAssetDescriptor(_header);
 
         var violations = DecodeLimitsValidator.Validate(_descriptor, limits);
-        if (violations.Count > 0)
-        {
+        if (violations.Count > 0) {
             throw new ImageFormatException("dds", "LimitExceeded", string.Join("; ", violations.Select(v => v.Message)));
         }
 
@@ -43,8 +41,7 @@ internal sealed class DdsReader : IImageReader
         var h = (long)_header.Height;
         var d = _header.Dimension == D3d10ResourceDimension.Texture3D ? (long)_header.Depth : 1;
 
-        for (var mip = 0; mip < _header.MipMapCount; mip++)
-        {
+        for (var mip = 0; mip < _header.MipMapCount; mip++) {
             var sliceBytes = DdsFormatTable.SliceBytes(_header.Format, w, h);
             var levelBytes = checked(sliceBytes * d);
             _levelByteSizes[mip] = levelBytes;
@@ -59,14 +56,12 @@ internal sealed class DdsReader : IImageReader
         _itemByteSize = running;
 
         var totalBytes = checked(_itemByteSize * _itemCount);
-        if (totalBytes > limits.MaxDecodedBytes)
-        {
+        if (totalBytes > limits.MaxDecodedBytes) {
             throw new ImageFormatException("dds", "LimitExceeded", $"DDS pixel data is {totalBytes} bytes, exceeding MaxDecodedBytes.");
         }
 
         _dataStart = stream.Position;
-        if (stream.Length - _dataStart < totalBytes)
-        {
+        if (stream.Length - _dataStart < totalBytes) {
             throw new ImageFormatException("dds", "TruncatedData", "DDS stream is shorter than the pixel data declared by its header.");
         }
     }
@@ -79,22 +74,19 @@ internal sealed class DdsReader : IImageReader
         var item = ItemIndex(subresource.ArrayElement, subresource.Face);
         var mip = subresource.Level.X;
 
-        if ((uint)mip >= _header.MipMapCount)
-        {
+        if ((uint)mip >= _header.MipMapCount) {
             throw new ArgumentOutOfRangeException(nameof(region), "DDS mip level is out of range.");
         }
 
         var level = _descriptor.Parts[0].Topology.Levels[mip];
         var expectedRegion = Core.Spatial.ImageBox.FromOrigin(level.Extent.Width, level.Extent.Height);
         if (region.Region.MinX != expectedRegion.MinX || region.Region.MinY != expectedRegion.MinY ||
-            region.Region.MaxXExclusive != expectedRegion.MaxXExclusive || region.Region.MaxYExclusive != expectedRegion.MaxYExclusive)
-        {
+            region.Region.MaxXExclusive != expectedRegion.MaxXExclusive || region.Region.MaxYExclusive != expectedRegion.MaxYExclusive) {
             throw new NotSupportedException("Partial DDS subresource reads are not supported yet.");
         }
 
         var levelBytes = _levelByteSizes[mip];
-        if (destination.Length < levelBytes)
-        {
+        if (destination.Length < levelBytes) {
             throw new ArgumentException("Destination buffer is too small for this DDS subresource.", nameof(destination));
         }
 

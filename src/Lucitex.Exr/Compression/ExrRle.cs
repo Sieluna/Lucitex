@@ -2,13 +2,12 @@ namespace Lucitex.Exr.Compression;
 
 internal static class ExrRle
 {
-    private const int MinRunLength = 3;
-    private const int MaxRunLength = 127;
+    private const int k_MinRunLength = 3;
+    private const int k_MaxRunLength = 127;
 
     public static byte[] Compress(ReadOnlySpan<byte> input)
     {
-        if (input.Length == 0)
-        {
+        if (input.Length == 0) {
             return [];
         }
 
@@ -18,34 +17,28 @@ internal static class ExrRle
         var runEnd = 1;
         var inLength = input.Length;
 
-        while (runStart < inLength)
-        {
+        while (runStart < inLength) {
             while (runEnd < inLength &&
                    input[runStart] == input[runEnd] &&
-                   runEnd - runStart - 1 < MaxRunLength)
-            {
+                   runEnd - runStart - 1 < k_MaxRunLength) {
                 runEnd++;
             }
 
-            if (runEnd - runStart >= MinRunLength)
-            {
+            if (runEnd - runStart >= k_MinRunLength) {
                 output[outPos++] = unchecked((byte)(sbyte)((runEnd - runStart) - 1));
                 output[outPos++] = input[runStart];
                 runStart = runEnd;
             }
-            else
-            {
+            else {
                 while (runEnd < inLength &&
                        ((runEnd + 1 >= inLength || input[runEnd] != input[runEnd + 1]) ||
                         (runEnd + 2 >= inLength || input[runEnd + 1] != input[runEnd + 2])) &&
-                       runEnd - runStart < MaxRunLength)
-                {
+                       runEnd - runStart < k_MaxRunLength) {
                     runEnd++;
                 }
 
                 output[outPos++] = unchecked((byte)(sbyte)(runStart - runEnd));
-                while (runStart < runEnd)
-                {
+                while (runStart < runEnd) {
                     output[outPos++] = input[runStart++];
                 }
             }
@@ -61,16 +54,13 @@ internal static class ExrRle
         var inPos = 0;
         var outPos = 0;
 
-        while (inPos < input.Length)
-        {
+        while (inPos < input.Length) {
             var control = unchecked((sbyte)input[inPos]);
             inPos++;
 
-            if (control < 0)
-            {
+            if (control < 0) {
                 var count = -control;
-                if (count > input.Length - inPos || count > output.Length - outPos)
-                {
+                if (count > input.Length - inPos || count > output.Length - outPos) {
                     throw new InvalidDataException("EXR RLE literal run exceeds its input or output buffer.");
                 }
 
@@ -78,11 +68,9 @@ internal static class ExrRle
                 inPos += count;
                 outPos += count;
             }
-            else
-            {
+            else {
                 var count = control + 1;
-                if (inPos >= input.Length || count > output.Length - outPos)
-                {
+                if (inPos >= input.Length || count > output.Length - outPos) {
                     throw new InvalidDataException("EXR RLE repeated run exceeds its input or output buffer.");
                 }
 

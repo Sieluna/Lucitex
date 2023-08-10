@@ -11,38 +11,31 @@ internal static class PngDocumentWriter
         PngChunkIo.WriteSignature(stream);
         WriteIhdr(stream, document.Ihdr);
 
-        if (document.Chromaticities is { } chromaticities)
-        {
+        if (document.Chromaticities is { } chromaticities) {
             WriteChromaticities(stream, chromaticities);
         }
 
-        if (document.Gamma is { } gamma)
-        {
+        if (document.Gamma is { } gamma) {
             WriteGamma(stream, gamma);
         }
 
-        if (document.SrgbRenderingIntent is { } intent)
-        {
+        if (document.SrgbRenderingIntent is { } intent) {
             PngChunkIo.WriteChunk(stream, "sRGB", [intent]);
         }
 
-        if (document.IccProfile is { } iccProfile)
-        {
+        if (document.IccProfile is { } iccProfile) {
             WriteIccp(stream, document.IccProfileName ?? "icc", iccProfile);
         }
 
-        if (document.Palette.Count > 0)
-        {
+        if (document.Palette.Count > 0) {
             WritePalette(stream, document.Palette);
         }
 
-        if (document.TransparencyData is { } transparency)
-        {
+        if (document.TransparencyData is { } transparency) {
             PngChunkIo.WriteChunk(stream, "tRNS", transparency);
         }
 
-        foreach (var text in document.TextEntries)
-        {
+        foreach (var text in document.TextEntries) {
             WriteText(stream, text);
         }
 
@@ -67,8 +60,7 @@ internal static class PngDocumentWriter
     private static void WritePalette(Stream stream, IReadOnlyList<PngPaletteEntry> palette)
     {
         var data = new byte[palette.Count * 3];
-        for (var i = 0; i < palette.Count; i++)
-        {
+        for (var i = 0; i < palette.Count; i++) {
             data[(i * 3) + 0] = palette[i].R;
             data[(i * 3) + 1] = palette[i].G;
             data[(i * 3) + 2] = palette[i].B;
@@ -109,8 +101,7 @@ internal static class PngDocumentWriter
         buffer.WriteByte(0);
         buffer.WriteByte(0);
 
-        using (var zlib = new ZLibStream(buffer, CompressionLevel.Optimal, leaveOpen: true))
-        {
+        using (var zlib = new ZLibStream(buffer, CompressionLevel.Optimal, leaveOpen: true)) {
             zlib.Write(profile);
         }
 

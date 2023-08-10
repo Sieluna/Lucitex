@@ -2,46 +2,40 @@ namespace Lucitex.Dds.Format;
 
 internal static class DdsHeaderWriter
 {
-    private const uint Magic = 0x20534444;
-    private const uint HeaderSize = 124;
+    private const uint k_Magic = 0x20534444;
+    private const uint k_HeaderSize = 124;
 
     public static void Write(DdsBinaryWriter writer, DdsHeader header)
     {
         var flags = DdsHeaderFlags.Caps | DdsHeaderFlags.Height | DdsHeaderFlags.Width | DdsHeaderFlags.PixelFormat;
-        if (header.MipMapCount > 1)
-        {
+        if (header.MipMapCount > 1) {
             flags |= DdsHeaderFlags.MipMapCount;
         }
 
-        if (header.Dimension == D3d10ResourceDimension.Texture3D)
-        {
+        if (header.Dimension == D3d10ResourceDimension.Texture3D) {
             flags |= DdsHeaderFlags.Depth;
         }
 
         var caps = DdsCaps.Texture;
-        if (header.MipMapCount > 1 || header.IsCubemap || header.ArraySize > 1)
-        {
+        if (header.MipMapCount > 1 || header.IsCubemap || header.ArraySize > 1) {
             caps |= DdsCaps.Complex;
         }
 
-        if (header.MipMapCount > 1)
-        {
+        if (header.MipMapCount > 1) {
             caps |= DdsCaps.Mipmap;
         }
 
         var caps2 = DdsCaps2.None;
-        if (header.IsCubemap)
-        {
+        if (header.IsCubemap) {
             caps2 |= DdsCaps2.CubemapAllFaces;
         }
 
-        if (header.Dimension == D3d10ResourceDimension.Texture3D)
-        {
+        if (header.Dimension == D3d10ResourceDimension.Texture3D) {
             caps2 |= DdsCaps2.Volume;
         }
 
-        writer.WriteUInt32(Magic);
-        writer.WriteUInt32(HeaderSize);
+        writer.WriteUInt32(k_Magic);
+        writer.WriteUInt32(k_HeaderSize);
         writer.WriteUInt32((uint)flags);
         writer.WriteUInt32(header.Height);
         writer.WriteUInt32(header.Width);

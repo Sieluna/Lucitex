@@ -9,21 +9,18 @@ namespace Lucitex.Tests.Fixtures;
 
 public static class PngFixtures
 {
-    private static SpatialDomain Window(long width, long height) => new()
-    {
+    private static SpatialDomain Window(long width, long height) => new() {
         DataWindow = ImageBox.FromOrigin(width, height),
         DisplayWindow = ImageBox.FromOrigin(width, height),
     };
 
-    private static ResourceTopology FlatTopology(long width, long height) => new()
-    {
+    private static ResourceTopology FlatTopology(long width, long height) => new() {
         SpatialDimensions = 2,
         BaseExtent = new Extent3L(width, height, 1),
         Levels = [new ResolutionLevel { Key = LevelKey.Base, Extent = new Extent3L(width, height, 1) }],
     };
 
-    private static ChannelDescriptor Channel(string name, SampleType sampleType) => new()
-    {
+    private static ChannelDescriptor Channel(string name, SampleType sampleType) => new() {
         Name = name,
         SampleType = sampleType,
         Sampling = SampleGrid.Unit,
@@ -33,13 +30,11 @@ public static class PngFixtures
     {
         const long width = 32, height = 32;
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "image",
             Spatial = Window(width, height),
             Topology = FlatTopology(width, height),
-            Channels = new ChannelSchema
-            {
+            Channels = new ChannelSchema {
                 Channels =
                 [
                     Channel("R", SampleType.UNorm8),
@@ -48,8 +43,7 @@ public static class PngFixtures
                     Channel("A", SampleType.UNorm8),
                 ],
             },
-            Representation = new PlainSampleRepresentation
-            {
+            Representation = new PlainSampleRepresentation {
                 Planes = [new SamplePlaneDescriptor { Channels = ["R", "G", "B", "A"], Extent = new Extent3L(width, height, 1) }],
             },
             Color = new ColorEncoding { Transfer = TransferFunction.Srgb },
@@ -63,13 +57,11 @@ public static class PngFixtures
     {
         const long width = 16, height = 16;
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "image",
             Spatial = Window(width, height),
             Topology = FlatTopology(width, height),
-            Channels = new ChannelSchema
-            {
+            Channels = new ChannelSchema {
                 Channels =
                 [
                     Channel("R", SampleType.UNorm16),
@@ -77,8 +69,7 @@ public static class PngFixtures
                     Channel("B", SampleType.UNorm16),
                 ],
             },
-            Representation = new PlainSampleRepresentation
-            {
+            Representation = new PlainSampleRepresentation {
                 Planes = [new SamplePlaneDescriptor { Channels = ["R", "G", "B"], Extent = new Extent3L(width, height, 1) }],
             },
             Color = new ColorEncoding { Transfer = TransferFunction.Linear },
@@ -91,14 +82,12 @@ public static class PngFixtures
     {
         const long width = 24, height = 8;
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "image",
             Spatial = Window(width, height),
             Topology = FlatTopology(width, height),
             Channels = new ChannelSchema { Channels = [Channel("Y", SampleType.UNorm1)] },
-            Representation = new PlainSampleRepresentation
-            {
+            Representation = new PlainSampleRepresentation {
                 Planes = [new SamplePlaneDescriptor { Channels = ["Y"], Extent = new Extent3L(width, height, 1) }],
             },
         };
@@ -110,20 +99,16 @@ public static class PngFixtures
     {
         const long width = 16, height = 16;
 
-        var part = new ImagePartDescriptor
-        {
+        var part = new ImagePartDescriptor {
             Name = "image",
             Spatial = Window(width, height),
             Topology = FlatTopology(width, height),
             Channels = new ChannelSchema { Channels = [Channel("Index", SampleType.UNorm4)] },
-            Representation = new IndexedRepresentation
-            {
+            Representation = new IndexedRepresentation {
                 IndexType = SampleType.UNorm4,
-                Palette = new PaletteDescriptor
-                {
+                Palette = new PaletteDescriptor {
                     EntryCount = 16,
-                    EntryChannels = new ChannelSchema
-                    {
+                    EntryChannels = new ChannelSchema {
                         Channels =
                         [
                             Channel("R", SampleType.UNorm8),

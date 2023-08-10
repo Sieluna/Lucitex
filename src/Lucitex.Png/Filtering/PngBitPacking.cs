@@ -4,8 +4,7 @@ internal static class PngBitPacking
 {
     public static uint ReadSample(ReadOnlySpan<byte> row, int sampleIndex, int bitDepth)
     {
-        switch (bitDepth)
-        {
+        switch (bitDepth) {
             case 8:
                 return row[sampleIndex];
             case 16:
@@ -22,8 +21,7 @@ internal static class PngBitPacking
 
     public static void WriteSample(Span<byte> row, int sampleIndex, int bitDepth, uint value)
     {
-        switch (bitDepth)
-        {
+        switch (bitDepth) {
             case 8:
                 row[sampleIndex] = (byte)value;
                 break;

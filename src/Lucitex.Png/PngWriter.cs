@@ -23,8 +23,7 @@ internal sealed class PngWriter : IImageWriter
         _pixelBuffer = new byte[checked((long)_rowStrideBytes * _document.Ihdr.Height)];
     }
 
-    public WriterExecutionContract Contract { get; } = new()
-    {
+    public WriterExecutionContract Contract { get; } = new() {
         RequiresDescriptorUpfront = true,
         RequiresDimensionsUpfront = true,
         WriteGranularity = new Extent3I(1, 1, 1),
@@ -39,8 +38,7 @@ internal sealed class PngWriter : IImageWriter
     {
         var width = _document.Ihdr.Width;
 
-        if (region.Region.MinX != 0 || region.Region.MaxXExclusive != width)
-        {
+        if (region.Region.MinX != 0 || region.Region.MaxXExclusive != width) {
             throw new NotSupportedException("Partial-row PNG writes are not supported yet.");
         }
 
@@ -53,15 +51,13 @@ internal sealed class PngWriter : IImageWriter
 
     public void Finish()
     {
-        if (_finished)
-        {
+        if (_finished) {
             return;
         }
 
         using var filtered = new MemoryStream();
 
-        for (var y = 0; y < _document.Ihdr.Height; y++)
-        {
+        for (var y = 0; y < _document.Ihdr.Height; y++) {
             var row = _pixelBuffer.AsSpan(y * _rowStrideBytes, _rowStrideBytes);
             filtered.WriteByte((byte)PngFilterType.None);
             filtered.Write(row);
@@ -76,8 +72,7 @@ internal sealed class PngWriter : IImageWriter
     private static byte[] Deflate(byte[] data)
     {
         using var output = new MemoryStream();
-        using (var zlib = new ZLibStream(output, CompressionLevel.Optimal, leaveOpen: true))
-        {
+        using (var zlib = new ZLibStream(output, CompressionLevel.Optimal, leaveOpen: true)) {
             zlib.Write(data);
         }
 

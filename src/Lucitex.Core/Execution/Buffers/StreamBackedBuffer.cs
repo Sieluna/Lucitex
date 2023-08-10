@@ -6,8 +6,7 @@ public sealed class StreamBackedBuffer : ILargeBuffer
 
     public StreamBackedBuffer(Stream stream)
     {
-        if (!stream.CanSeek || !stream.CanRead)
-        {
+        if (!stream.CanSeek || !stream.CanRead) {
             throw new ArgumentException("Stream must be seekable and readable.", nameof(stream));
         }
 
@@ -18,8 +17,7 @@ public sealed class StreamBackedBuffer : ILargeBuffer
 
     public BufferSegment GetSegment(long offset, int length)
     {
-        if (offset < 0 || length < 0 || checked(offset + length) > Length)
-        {
+        if (offset < 0 || length < 0 || checked(offset + length) > Length) {
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
@@ -27,11 +25,9 @@ public sealed class StreamBackedBuffer : ILargeBuffer
         _stream.Position = offset;
 
         var read = 0;
-        while (read < length)
-        {
+        while (read < length) {
             var count = _stream.Read(buffer, read, length - read);
-            if (count == 0)
-            {
+            if (count == 0) {
                 throw new EndOfStreamException();
             }
 

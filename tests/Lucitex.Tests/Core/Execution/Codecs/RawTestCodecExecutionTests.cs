@@ -13,8 +13,7 @@ public class RawTestCodecExecutionTests
     private static byte[] MakeSourceData(long width, long height, int bytesPerTexel)
     {
         var data = new byte[width * height * bytesPerTexel];
-        for (var i = 0; i < data.Length; i++)
-        {
+        for (var i = 0; i < data.Length; i++) {
             data[i] = (byte)(i % 251);
         }
 
@@ -34,28 +33,23 @@ public class RawTestCodecExecutionTests
         var codec = new RawTestCodec();
 
         var path = Path.Combine(Path.GetTempPath(), $"lucitex-rawtest-{Guid.NewGuid():N}.rawtest");
-        try
-        {
-            using (var session = new AtomicOutputSession(path))
-            {
+        try {
+            using (var session = new AtomicOutputSession(path)) {
                 var writer = codec.CreateWriter(session.Stream, asset);
 
                 var regions = Enumerable.Range(0, (int)height)
-                    .Select(y => new WorkRegion
-                    {
+                    .Select(y => new WorkRegion {
                         Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
                         Region = ImageBox.FromExclusive(0, y, width, y + 1),
                     })
                     .ToList();
 
                 var sync = new object();
-                ExecutionScheduler.Run(regions, region =>
-                {
+                ExecutionScheduler.Run(regions, region => {
                     var rowBytes = (int)(width * bytesPerTexel);
                     var rowOffset = (int)(region.Region.MinY * rowBytes);
 
-                    lock (sync)
-                    {
+                    lock (sync) {
                         writer.Write(region, source.AsSpan(rowOffset, rowBytes));
                     }
                 });
@@ -75,8 +69,7 @@ public class RawTestCodecExecutionTests
             Assert.Equal(height, describedAsset.Parts[0].Topology.BaseExtent.Height);
 
             var destination = new byte[source.Length];
-            var fullRegion = new WorkRegion
-            {
+            var fullRegion = new WorkRegion {
                 Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
                 Region = ImageBox.FromOrigin(width, height),
             };
@@ -85,10 +78,8 @@ public class RawTestCodecExecutionTests
             Assert.Equal(source.Length, readCount);
             Assert.Equal(source, destination);
         }
-        finally
-        {
-            if (File.Exists(path))
-            {
+        finally {
+            if (File.Exists(path)) {
                 File.Delete(path);
             }
         }
@@ -108,8 +99,7 @@ public class RawTestCodecExecutionTests
 
         using var stream = new MemoryStream();
         var writer = codec.CreateWriter(stream, asset);
-        var fullRegion = new WorkRegion
-        {
+        var fullRegion = new WorkRegion {
             Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
             Region = ImageBox.FromOrigin(width, height),
         };
@@ -119,8 +109,7 @@ public class RawTestCodecExecutionTests
         stream.Position = 0;
         var reader = codec.OpenReader(stream);
 
-        var subRegion = new WorkRegion
-        {
+        var subRegion = new WorkRegion {
             Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
             Region = ImageBox.FromExclusive(4, 4, 12, 8),
         };
@@ -131,8 +120,7 @@ public class RawTestCodecExecutionTests
         reader.Read(subRegion, destination);
 
         var rowBytes = (int)(subWidth * bytesPerTexel);
-        for (var row = 0; row < subHeight; row++)
-        {
+        for (var row = 0; row < subHeight; row++) {
             var sourceRowStart = (int)(((subRegion.Region.MinY + row) * width) + subRegion.Region.MinX) * bytesPerTexel;
             var expected = source.AsSpan(sourceRowStart, rowBytes);
             var actual = destination.AsSpan(row * rowBytes, rowBytes);

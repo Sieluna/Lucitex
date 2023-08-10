@@ -9,8 +9,7 @@ namespace Lucitex.Tests.Exr;
 
 public class TiledExrTests
 {
-    private static WorkRegion FullRegion(long width, long height) => new()
-    {
+    private static WorkRegion FullRegion(long width, long height) => new() {
         Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
         Region = ImageBox.FromOrigin(width, height),
     };
@@ -58,8 +57,7 @@ public class TiledExrTests
     [Fact]
     public void Read_RejectsMipmapTiledFiles_ButDescribeStillSucceeds()
     {
-        var header = new ExrHeader
-        {
+        var header = new ExrHeader {
             Channels = [new ExrChannelInfo { Name = "R", PixelType = ExrPixelType.Float }],
             Compression = ExrCompressionId.None,
             DataWindow = new ExrBox2i(0, 0, 15, 15),

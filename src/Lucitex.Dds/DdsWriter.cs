@@ -28,8 +28,7 @@ internal sealed class DdsWriter : IImageWriter
         var h = (long)_header.Height;
         var d = _header.Dimension == D3d10ResourceDimension.Texture3D ? (long)_header.Depth : 1;
 
-        for (var mip = 0; mip < _header.MipMapCount; mip++)
-        {
+        for (var mip = 0; mip < _header.MipMapCount; mip++) {
             var sliceBytes = DdsFormatTable.SliceBytes(_header.Format, w, h);
             _levelByteSizes[mip] = checked(sliceBytes * d);
 
@@ -41,8 +40,7 @@ internal sealed class DdsWriter : IImageWriter
         _levelBuffers = new byte[_itemCount * _header.MipMapCount][];
     }
 
-    public WriterExecutionContract Contract { get; } = new()
-    {
+    public WriterExecutionContract Contract { get; } = new() {
         RequiresDescriptorUpfront = true,
         RequiresDimensionsUpfront = true,
         WriteGranularity = new Extent3I(1, 1, 1),
@@ -59,8 +57,7 @@ internal sealed class DdsWriter : IImageWriter
         var item = ItemIndex(subresource.ArrayElement, subresource.Face);
         var mip = subresource.Level.X;
 
-        if ((uint)mip >= _header.MipMapCount)
-        {
+        if ((uint)mip >= _header.MipMapCount) {
             throw new ArgumentOutOfRangeException(nameof(region), "DDS mip level is out of range.");
         }
 
@@ -72,18 +69,15 @@ internal sealed class DdsWriter : IImageWriter
 
     public void Finish()
     {
-        if (_finished)
-        {
+        if (_finished) {
             return;
         }
 
         var binaryWriter = new DdsBinaryWriter(_stream);
         DdsHeaderWriter.Write(binaryWriter, _header);
 
-        for (var item = 0; item < _itemCount; item++)
-        {
-            for (var mip = 0; mip < _header.MipMapCount; mip++)
-            {
+        for (var item = 0; item < _itemCount; item++) {
+            for (var mip = 0; mip < _header.MipMapCount; mip++) {
                 var index = (item * _header.MipMapCount) + mip;
                 var buffer = _levelBuffers[index] ?? new byte[_levelByteSizes[mip]];
                 binaryWriter.WriteBytes(buffer);

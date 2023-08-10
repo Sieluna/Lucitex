@@ -12,8 +12,7 @@ public sealed record ExrChannelInfo
 
     public int YSampling { get; init; } = 1;
 
-    public int BytesPerSample => PixelType switch
-    {
+    public int BytesPerSample => PixelType switch {
         ExrPixelType.UInt => 4,
         ExrPixelType.Half => 2,
         ExrPixelType.Float => 4,

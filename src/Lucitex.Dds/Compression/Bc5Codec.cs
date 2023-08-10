@@ -12,8 +12,7 @@ internal static class Bc5Codec
         Bc4Codec.Decode(block[..8], red);
         Bc4Codec.Decode(block[8..], green);
 
-        for (var texel = 0; texel < 16; texel++)
-        {
+        for (var texel = 0; texel < 16; texel++) {
             rg[texel * 2] = red[texel];
             rg[(texel * 2) + 1] = green[texel];
         }
@@ -24,8 +23,7 @@ internal static class Bc5Codec
         Span<byte> red = stackalloc byte[16];
         Span<byte> green = stackalloc byte[16];
 
-        for (var texel = 0; texel < 16; texel++)
-        {
+        for (var texel = 0; texel < 16; texel++) {
             red[texel] = rg[texel * 2];
             green[texel] = rg[(texel * 2) + 1];
         }

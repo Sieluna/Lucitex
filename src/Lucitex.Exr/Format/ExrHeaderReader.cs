@@ -4,13 +4,12 @@ namespace Lucitex.Exr.Format;
 
 internal static class ExrHeaderReader
 {
-    private const int MagicNumber = 20000630;
+    private const int k_MagicNumber = 20000630;
 
     public static ExrVersionFlags ReadFileVersion(ExrBinaryReader reader, out int versionNumber)
     {
         var magic = reader.ReadInt32();
-        if (magic != MagicNumber)
-        {
+        if (magic != k_MagicNumber) {
             throw new ImageFormatException("exr", "BadMagic", "Stream does not start with the OpenEXR magic number.");
         }
 
@@ -24,14 +23,12 @@ internal static class ExrHeaderReader
 
     public static List<ExrHeader> ReadHeaderList(ExrBinaryReader reader, bool isMultiPart)
     {
-        if (!isMultiPart)
-        {
+        if (!isMultiPart) {
             return [ReadHeader(reader)];
         }
 
         var headers = new List<ExrHeader>();
-        while (TryReadHeader(reader) is { } header)
-        {
+        while (TryReadHeader(reader) is { } header) {
             headers.Add(header);
         }
 
@@ -53,13 +50,10 @@ internal static class ExrHeaderReader
         var unknown = new List<ExrRawAttribute>();
         var isFirstAttribute = true;
 
-        while (true)
-        {
+        while (true) {
             var name = reader.ReadCString();
-            if (name.Length == 0)
-            {
-                if (isFirstAttribute)
-                {
+            if (name.Length == 0) {
+                if (isFirstAttribute) {
                     return null;
                 }
 
@@ -71,8 +65,7 @@ internal static class ExrHeaderReader
             var type = reader.ReadCString();
             var size = reader.ReadInt32();
 
-            switch (name)
-            {
+            switch (name) {
                 case "channels" when type == "chlist":
                     channels = ReadChannelList(reader);
                     break;
@@ -109,28 +102,23 @@ internal static class ExrHeaderReader
             }
         }
 
-        if (channels is null)
-        {
+        if (channels is null) {
             throw new ImageFormatException("exr", "MissingAttribute", "Header is missing the required 'channels' attribute.");
         }
 
-        if (compression is null)
-        {
+        if (compression is null) {
             throw new ImageFormatException("exr", "MissingAttribute", "Header is missing the required 'compression' attribute.");
         }
 
-        if (dataWindow is null)
-        {
+        if (dataWindow is null) {
             throw new ImageFormatException("exr", "MissingAttribute", "Header is missing the required 'dataWindow' attribute.");
         }
 
-        if (displayWindow is null)
-        {
+        if (displayWindow is null) {
             throw new ImageFormatException("exr", "MissingAttribute", "Header is missing the required 'displayWindow' attribute.");
         }
 
-        return new ExrHeader
-        {
+        return new ExrHeader {
             Channels = channels,
             Compression = compression.Value,
             DataWindow = dataWindow.Value,
@@ -149,11 +137,9 @@ internal static class ExrHeaderReader
     {
         var channels = new List<ExrChannelInfo>();
 
-        while (true)
-        {
+        while (true) {
             var name = reader.ReadCString();
-            if (name.Length == 0)
-            {
+            if (name.Length == 0) {
                 break;
             }
 
@@ -163,8 +149,7 @@ internal static class ExrHeaderReader
             var xSampling = reader.ReadInt32();
             var ySampling = reader.ReadInt32();
 
-            channels.Add(new ExrChannelInfo
-            {
+            channels.Add(new ExrChannelInfo {
                 Name = name,
                 PixelType = pixelType,
                 PLinear = pLinear,

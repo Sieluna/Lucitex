@@ -1,0 +1,33 @@
+namespace Lucitex.Ktx2.Format;
+
+public enum VkFormat : uint
+{
+    Undefined = 0,
+    R8Unorm = 9,
+    R8G8Unorm = 16,
+    R8G8B8A8Unorm = 37,
+    B8G8R8A8Unorm = 44,
+    A2B10G10R10Unorm = 64,
+    R16Unorm = 70,
+    R16Sfloat = 76,
+    R16G16Unorm = 77,
+    R16G16Sfloat = 83,
+    R16G16B16A16Unorm = 91,
+    R16G16B16A16Sfloat = 97,
+    R32Sfloat = 100,
+    R32G32Sfloat = 103,
+    R32G32B32A32Sfloat = 109,
+    B10G11R11Ufloat = 122,
+    E5B9G9R9Ufloat = 123,
+    Bc1RgbUnormBlock = 131,
+    Bc1RgbaUnormBlock = 133,
+    Bc2UnormBlock = 135,
+    Bc3UnormBlock = 137,
+    Bc4UnormBlock = 139,
+    Bc4SnormBlock = 140,
+    Bc5UnormBlock = 141,
+    Bc5SnormBlock = 142,
+    Bc6HUfloatBlock = 143,
+    Bc6HSfloatBlock = 144,
+    Bc7UnormBlock = 145,
+}

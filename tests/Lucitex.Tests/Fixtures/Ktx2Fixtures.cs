@@ -75,6 +75,42 @@ public static class Ktx2Fixtures
         return new ImageAssetDescriptor { Parts = [part] };
     }
 
+    public static ImageAssetDescriptor MipmappedTexture()
+    {
+        const long width = 32, height = 32;
+
+        var levels = new List<ResolutionLevel>();
+        var w = width;
+        var h = height;
+        var mip = 0;
+        while (true) {
+            levels.Add(new ResolutionLevel { Key = LevelKey.Mip(mip), Extent = new Extent3L(w, h, 1) });
+            if (w == 1 && h == 1) {
+                break;
+            }
+
+            w = Math.Max(1, w / 2);
+            h = Math.Max(1, h / 2);
+            mip++;
+        }
+
+        var part = new ImagePartDescriptor {
+            Name = "texture",
+            Spatial = Window(width, height),
+            Topology = new ResourceTopology {
+                SpatialDimensions = 2,
+                BaseExtent = new Extent3L(width, height, 1),
+                Levels = levels,
+            },
+            Channels = new ChannelSchema { Channels = [Channel("R", SampleType.UNorm8)] },
+            Representation = new PlainSampleRepresentation {
+                Planes = [new SamplePlaneDescriptor { Channels = ["R"], Extent = new Extent3L(width, height, 1) }],
+            },
+        };
+
+        return new ImageAssetDescriptor { Parts = [part] };
+    }
+
     public static ImageAssetDescriptor CubemapArray()
     {
         const long size = 32;

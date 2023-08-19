@@ -4,6 +4,7 @@
   "builtin-baseline": "b61e5146d2e883945beda481ca4ab42fd3c287f5",
   "dependencies": [
     "libpng",
-    "openexr"
+    "openexr",
+    "ktx"
   ]
 }

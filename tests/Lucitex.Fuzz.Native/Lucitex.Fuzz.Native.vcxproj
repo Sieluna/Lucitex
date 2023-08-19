@@ -64,6 +64,9 @@
            how OpenEXR's own CMake package exposes Imath's include dir; vcpkg's raw MSBuild
            integration only adds the top-level include dir, so add Imath's subfolder by hand. -->
       <AdditionalIncludeDirectories>vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\include\Imath;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- ktx.h defaults its exported symbols to dllimport on Windows unless KHRONOS_STATIC is
+           defined, which only makes sense when linking the static ktx.lib built by this triplet. -->
+      <PreprocessorDefinitions>KHRONOS_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">

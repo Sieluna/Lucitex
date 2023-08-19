@@ -1,6 +1,8 @@
 #include <OpenEXR/ImfRgbaFile.h>
+#include <ktx.h>
 #include <png.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -72,13 +74,35 @@ bool validate_exr(const char* path)
         return false;
     }
 }
+
+bool validate_ktx2(const char* path)
+{
+    ktxTexture2* texture = nullptr;
+    const auto result = ktxTexture2_CreateFromNamedFile(path, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &texture);
+    if (result != KTX_SUCCESS)
+    {
+        return false;
+    }
+
+    const auto width = static_cast<std::uint64_t>(texture->baseWidth);
+    const auto height = static_cast<std::uint64_t>(texture->baseHeight);
+    const auto depth = static_cast<std::uint64_t>(std::max<ktx_uint32_t>(1, texture->baseDepth));
+    const auto layers = static_cast<std::uint64_t>(std::max<ktx_uint32_t>(1, texture->numLayers));
+    const auto faces = static_cast<std::uint64_t>(std::max<ktx_uint32_t>(1, texture->numFaces));
+
+    const auto accepted = width > 0 && height > 0 && width <= 65536 && height <= 65536 &&
+        (width * height * depth * layers * faces) <= max_decoded_bytes;
+
+    ktxTexture_Destroy(ktxTexture(texture));
+    return accepted;
+}
 }
 
 int main(int argc, char** argv)
 {
     if (argc != 3)
     {
-        std::cerr << "usage: lucitex_native_oracle <png|exr> <path>\n";
+        std::cerr << "usage: lucitex_native_oracle <png|exr|ktx2> <path>\n";
         return 64;
     }
 
@@ -90,6 +114,11 @@ int main(int argc, char** argv)
     if (std::strcmp(argv[1], "exr") == 0)
     {
         return validate_exr(argv[2]) ? 0 : 1;
+    }
+
+    if (std::strcmp(argv[1], "ktx2") == 0)
+    {
+        return validate_ktx2(argv[2]) ? 0 : 1;
     }
 
     std::cerr << "unknown format\n";

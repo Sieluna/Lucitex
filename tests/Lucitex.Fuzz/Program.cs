@@ -10,6 +10,7 @@ using Lucitex.Core.Spatial;
 using Lucitex.Core.Topology;
 using Lucitex.Exr;
 using Lucitex.Exr.Format;
+using Lucitex.Ktx2;
 using Lucitex.Png;
 
 return FuzzApplication.Run(args);
@@ -103,7 +104,7 @@ internal static class FuzzApplication
     private static int Replay(string[] args)
     {
         if (args.Length != 2 || !ImageFormatExtensions.TryParse(args[0], out var format)) {
-            return UsageError("replay requires: <png|exr> <path>.");
+            return UsageError("replay requires: <png|exr|ktx2> <path>.");
         }
 
         var result = ManagedDecoder.Decode(format, File.ReadAllBytes(args[1]));
@@ -133,7 +134,7 @@ internal static class FuzzApplication
     private static string SaveArtifact(string directory, ImageFormat format, int seed, int iteration, byte[] data)
     {
         Directory.CreateDirectory(directory);
-        var extension = format == ImageFormat.Png ? "png" : "exr";
+        var extension = format.Extension();
         var path = Path.Combine(directory, $"{extension}-{seed:x8}-{iteration:D8}.{extension}");
         File.WriteAllBytes(path, data);
         return path;
@@ -169,7 +170,7 @@ internal static class FuzzApplication
     private static void PrintUsage()
     {
         Console.WriteLine("Lucitex.Fuzz run [--iterations N] [--seed N] [--oracle PATH] [--artifacts DIR]");
-        Console.WriteLine("Lucitex.Fuzz replay <png|exr> <path>");
+        Console.WriteLine("Lucitex.Fuzz replay <png|exr|ktx2> <path>");
         Console.WriteLine("Lucitex.Fuzz generate <directory>");
     }
 
@@ -180,6 +181,7 @@ internal enum ImageFormat
 {
     Png,
     Exr,
+    Ktx2,
 }
 
 internal static class ImageFormatExtensions
@@ -196,9 +198,21 @@ internal static class ImageFormatExtensions
             return true;
         }
 
+        if (string.Equals(value, "ktx2", StringComparison.OrdinalIgnoreCase)) {
+            format = ImageFormat.Ktx2;
+            return true;
+        }
+
         format = default;
         return false;
     }
+
+    public static string Extension(this ImageFormat format) => format switch {
+        ImageFormat.Png => "png",
+        ImageFormat.Exr => "exr",
+        ImageFormat.Ktx2 => "ktx2",
+        _ => throw new ArgumentOutOfRangeException(nameof(format)),
+    };
 }
 
 internal readonly record struct DecodeOutcome(bool Accepted, Exception? Crash);
@@ -243,6 +257,7 @@ internal static class ManagedDecoder
     private static IImageCodec CreateCodec(ImageFormat format) => format switch {
         ImageFormat.Png => new PngCodec(),
         ImageFormat.Exr => new ExrCodec(),
+        ImageFormat.Ktx2 => new Ktx2Codec(),
         _ => throw new ArgumentOutOfRangeException(nameof(format)),
     };
 
@@ -273,6 +288,8 @@ internal static class SeedCorpus
             new("rgba-none.exr", ImageFormat.Exr, WriteExr(ExrCompressionId.None, 5)),
             new("rgba-rle.exr", ImageFormat.Exr, WriteExr(ExrCompressionId.Rle, 6)),
             new("rgba-zip.exr", ImageFormat.Exr, WriteExr(ExrCompressionId.Zip, 7)),
+            new("rgba8.ktx2", ImageFormat.Ktx2, WriteKtx2Rgba8(12, 9, 8)),
+            new("r32f.ktx2", ImageFormat.Ktx2, WriteKtx2R32Float(11, 6, 9)),
         };
         return seeds;
     }
@@ -350,6 +367,39 @@ internal static class SeedCorpus
             }).ToList(),
         });
         return Write(new ExrCodec(compression), descriptor, width * height * channels.Count * 2, randomSeed);
+    }
+
+    private static byte[] WriteKtx2Rgba8(int width, int height, int randomSeed)
+    {
+        var channels = new[] { "R", "G", "B", "A" }.Select(name => new ChannelDescriptor {
+            Name = name,
+            SampleType = SampleType.UNorm8,
+            Sampling = SampleGrid.Unit,
+        }).ToList();
+        var descriptor = Asset(width, height, channels, new PlainSampleRepresentation {
+            Planes =
+            [
+                new SamplePlaneDescriptor
+                {
+                    Channels = channels.Select(channel => (ChannelPath)channel.Name).ToList(),
+                    Extent = new Extent3L(width, height, 1),
+                    Layout = PlaneLayout.Interleaved,
+                },
+            ],
+        });
+        return Write(new Ktx2Codec(), descriptor, width * height * 4, randomSeed);
+    }
+
+    private static byte[] WriteKtx2R32Float(int width, int height, int randomSeed)
+    {
+        var channels = new List<ChannelDescriptor>
+        {
+            new() { Name = "R", SampleType = SampleType.Float32, Sampling = SampleGrid.Unit },
+        };
+        var descriptor = Asset(width, height, channels, new PlainSampleRepresentation {
+            Planes = [new SamplePlaneDescriptor { Channels = ["R"], Extent = new Extent3L(width, height, 1), Layout = PlaneLayout.Interleaved }],
+        });
+        return Write(new Ktx2Codec(), descriptor, width * height * 4, randomSeed);
     }
 
     private static ImageAssetDescriptor Asset(
@@ -431,7 +481,7 @@ internal static class NativeOracle
 {
     public static bool Accepts(string executable, ImageFormat format, byte[] data)
     {
-        var extension = format == ImageFormat.Png ? "png" : "exr";
+        var extension = format.Extension();
         var path = Path.Combine(Path.GetTempPath(), $"lucitex-oracle-{Guid.NewGuid():N}.{extension}");
         try {
             File.WriteAllBytes(path, data);

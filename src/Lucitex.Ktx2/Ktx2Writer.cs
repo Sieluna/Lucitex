@@ -123,7 +123,7 @@ internal sealed class Ktx2Writer : IImageWriter
 
         writer.WriteUInt32((uint)dfdOffset);
         writer.WriteUInt32((uint)dfd.Length);
-        writer.WriteUInt32((uint)kvdOffset);
+        writer.WriteUInt32((uint)(kvd.Length > 0 ? kvdOffset : 0));
         writer.WriteUInt32((uint)kvd.Length);
         writer.WriteUInt64(0);
         writer.WriteUInt64(0);

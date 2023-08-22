@@ -10,9 +10,14 @@ namespace Lucitex.Ktx2.Format;
 //
 // This is a best-effort rendering of the KDF "basic" model (colorModel = KHR_DF_MODEL_RGBSDA
 // for uncompressed formats) and, for block-compressed formats, a single opaque sample spanning
-// the whole block rather than a full per-channel breakdown. It has not been cross-checked
-// against a real KTX2 validator (none was available in this environment) — treat the exact
-// color-model IDs used for compressed formats as approximate, not spec-verified.
+// the whole block rather than a full per-channel breakdown.
+//
+// The raw/uncompressed path is cross-checked against libktx (the Khronos reference
+// implementation) via tests/Lucitex.Fuzz.Native's ktx2 oracle. The block-compressed color-model
+// IDs are not exercised that way yet — Lucitex's own BC1-BC7 kernels have no cross-platform
+// reference to validate their block content against, so BC-compressed KTX2 files are excluded
+// from oracle testing for now, and their DFD color-model IDs remain approximate, not
+// spec-verified.
 internal static class Ktx2DfdWriter
 {
     private const byte k_ColorModelRgbsda = 1;
@@ -24,8 +29,8 @@ internal static class Ktx2DfdWriter
     private const byte k_ColorModelBc6H = 133;
     private const byte k_ColorModelBc7 = 134;
 
-    private const byte k_ChannelTypeFloat = 0x40;
-    private const byte k_ChannelTypeSigned = 0x80;
+    private const byte k_ChannelTypeSigned = 0x40;
+    private const byte k_ChannelTypeFloat = 0x80;
 
     public static byte[] Write(VkFormat format, IReadOnlyList<(string Name, int BitLength, bool Float, bool Signed)>? uncompressedChannels)
     {
@@ -86,8 +91,9 @@ internal static class Ktx2DfdWriter
         const int headerSize = 24;
         var blockSize = headerSize + (sampleCount * 16);
 
+        const uint versionNumber = 2;
         writer.WriteUInt32(0);
-        writer.WriteUInt32(((uint)2 << 16) | (uint)blockSize);
+        writer.WriteUInt32(((uint)blockSize << 16) | versionNumber);
 
         writer.Stream.WriteByte(colorModel);
         writer.Stream.WriteByte(1);

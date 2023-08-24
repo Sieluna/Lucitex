@@ -1,5 +1,7 @@
 using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
+using Lucitex.Core.Representation;
+using Lucitex.Core.Sampling;
 using Lucitex.Core.Semantic;
 using Lucitex.Ktx2.Format;
 
@@ -12,6 +14,24 @@ public sealed class Ktx2Codec : IImageCodec
     public string FormatId => "ktx2";
 
     public IReadOnlyList<string> Extensions { get; } = [".ktx2"];
+
+    // Same caveat as DdsCodec.Capabilities: Read/Write operate on already-encoded element bytes
+    // for every EncodedElementRepresentation, so SupportedEncodedFormats is what the container can
+    // structurally carry, not what a conversion pipeline can produce from decoded samples.
+    public CodecCapabilities Capabilities { get; } = new() {
+        SupportedSampleTypes = [SampleType.UNorm8, SampleType.UNorm16, SampleType.Float16, SampleType.Float32],
+        SupportedEncodedFormats =
+        [
+            EncodedFormatId.R10G10B10A2, EncodedFormatId.R11G11B10Float, EncodedFormatId.Rgb9E5,
+            EncodedFormatId.Bc1, EncodedFormatId.Bc2, EncodedFormatId.Bc3, EncodedFormatId.Bc4, EncodedFormatId.Bc5, EncodedFormatId.Bc6H, EncodedFormatId.Bc7,
+        ],
+        SupportsIndexed = false,
+        SupportsDeep = false,
+        SupportsMultiplePartsPerAsset = false,
+        SupportsArbitraryChannelNames = false,
+        SupportsOrientationMetadata = false,
+        MaxChannelsPerPart = 4,
+    };
 
     public FormatProbeResult Probe(ReadOnlySpan<byte> header)
     {

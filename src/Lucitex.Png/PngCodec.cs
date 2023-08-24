@@ -1,5 +1,6 @@
 using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
+using Lucitex.Core.Sampling;
 using Lucitex.Core.Semantic;
 
 namespace Lucitex.Png;
@@ -11,6 +12,17 @@ public sealed class PngCodec : IImageCodec
     public string FormatId => "png";
 
     public IReadOnlyList<string> Extensions { get; } = [".png"];
+
+    public CodecCapabilities Capabilities { get; } = new() {
+        SupportedSampleTypes = [SampleType.UNorm1, SampleType.UNorm2, SampleType.UNorm4, SampleType.UNorm8, SampleType.UNorm16],
+        SampleByteOrder = SampleByteOrder.BigEndian,
+        SupportsIndexed = true,
+        SupportsDeep = false,
+        SupportsMultiplePartsPerAsset = false,
+        SupportsArbitraryChannelNames = false,
+        SupportsOrientationMetadata = false,
+        MaxChannelsPerPart = 4,
+    };
 
     public FormatProbeResult Probe(ReadOnlySpan<byte> header)
     {

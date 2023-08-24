@@ -8,6 +8,8 @@ public interface IImageCodec
 
     public IReadOnlyList<string> Extensions { get; }
 
+    public CodecCapabilities Capabilities { get; }
+
     public FormatProbeResult Probe(ReadOnlySpan<byte> header);
 
     public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null);

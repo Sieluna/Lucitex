@@ -18,6 +18,22 @@ public sealed class RawTestCodec : IImageCodec
 
     public IReadOnlyList<string> Extensions { get; } = [".rawtest"];
 
+    public CodecCapabilities Capabilities { get; } = new() {
+        SupportedSampleTypes =
+        [
+            SampleType.UInt8, SampleType.UInt16, SampleType.UInt32,
+            SampleType.UNorm1, SampleType.UNorm2, SampleType.UNorm4, SampleType.UNorm8, SampleType.UNorm16,
+            SampleType.SNorm8, SampleType.SNorm16,
+            SampleType.Float16, SampleType.Float32,
+        ],
+        SupportsIndexed = true,
+        SupportsDeep = false,
+        SupportsMultiplePartsPerAsset = true,
+        SupportsArbitraryChannelNames = true,
+        SupportsOrientationMetadata = false,
+        MaxChannelsPerPart = int.MaxValue,
+    };
+
     public FormatProbeResult Probe(ReadOnlySpan<byte> header)
     {
         if (header.Length < Magic.Length) {

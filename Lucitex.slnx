@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Lucitex.Conversion/Lucitex.Conversion.csproj" />
     <Project Path="src/Lucitex.Core/Lucitex.Core.csproj" />
     <Project Path="src/Lucitex.Dds/Lucitex.Dds.csproj" />
     <Project Path="src/Lucitex.Exr/Lucitex.Exr.csproj" />

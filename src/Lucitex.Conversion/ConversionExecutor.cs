@@ -1,8 +1,10 @@
 using Lucitex.Conversion.Kernels;
+using Lucitex.Core.Color;
 using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
 using Lucitex.Core.Representation;
 using Lucitex.Core.Sampling;
+using Lucitex.Core.Spatial;
 using Lucitex.Core.Topology;
 
 namespace Lucitex.Conversion;
@@ -20,11 +22,14 @@ namespace Lucitex.Conversion;
 // rowRelativeBase(c) is the cumulative size of everything before it in plane/channel declaration order.
 //
 // Scope: a single whole-window WorkRegion per part (no chunked/streaming reads yet), and only
-// SelectChannels/ConvertSampleType steps are implemented - Execute throws NotSupportedException with
-// the step name for anything else, so a gap here is loud rather than silently wrong.
+// SelectChannels/ConvertSampleType/PremultiplyAlpha/UnpremultiplyAlpha/ApplyOrientation/ColorTransform
+// steps are implemented - Execute throws NotSupportedException with the step name for anything else,
+// so a gap here is loud rather than silently wrong.
 public static class ConversionExecutor
 {
     private readonly record struct ChannelLocation(int RowRelativeBase, int PerPixelStride, int BytesPerSample);
+
+    private static readonly HashSet<string> s_ColorChannelNames = ["R", "G", "B", "Y"];
 
     public static void Execute(ConversionPlan plan, IImageReader source, SampleByteOrder sourceByteOrder, IImageWriter target, SampleByteOrder targetByteOrder)
     {
@@ -34,7 +39,8 @@ public static class ConversionExecutor
             var targetPart = plan.TargetDescriptor.Parts[i];
 
             foreach (var step in partPlan.Steps) {
-                if (step is not (SelectPartStep or SelectChannelsStep or ConvertSampleTypeStep or DropMetadataStep or PreserveMetadataStep)) {
+                if (step is not (SelectPartStep or SelectChannelsStep or ConvertSampleTypeStep or PremultiplyAlphaStep or UnpremultiplyAlphaStep
+                    or ApplyOrientationStep or ColorTransformStep or DropMetadataStep or PreserveMetadataStep)) {
                     throw new NotSupportedException($"ConversionExecutor does not support {step.GetType().Name} yet.");
                 }
             }
@@ -77,6 +83,65 @@ public static class ConversionExecutor
                     var floats = new float[pixelCount];
                     SampleTypeConversionKernel.ToFloat32(raw, channel.SampleType, sourceByteOrder, floats);
                     floatChannels[channelName] = floats;
+                }
+            }
+
+            foreach (var step in partPlan.Steps) {
+                switch (step) {
+                    case ApplyOrientationStep orientationStep: {
+                            var reoriented = new Dictionary<ChannelPath, float[]>();
+                            var newWidth = width;
+                            var newHeight = height;
+                            foreach (var (name, values) in floatChannels) {
+                                var destination = new float[values.Length];
+                                (newWidth, newHeight) = OrientationKernel.ApplyToIdentity(values, width, height, orientationStep.From, destination);
+                                reoriented[name] = destination;
+                            }
+
+                            floatChannels = reoriented;
+                            width = newWidth;
+                            height = newHeight;
+                            pixelCount = width * height;
+                            region = region with { Region = ImageBox.FromOrigin(width, height) };
+                            break;
+                        }
+
+                    case PremultiplyAlphaStep when floatChannels.TryGetValue("A", out var alpha):
+                        foreach (var (name, values) in floatChannels) {
+                            if (s_ColorChannelNames.Contains(name.FullName)) {
+                                AlphaKernel.Premultiply(values, alpha);
+                            }
+                        }
+
+                        break;
+
+                    case UnpremultiplyAlphaStep when floatChannels.TryGetValue("A", out var alpha):
+                        foreach (var (name, values) in floatChannels) {
+                            if (s_ColorChannelNames.Contains(name.FullName)) {
+                                AlphaKernel.Unpremultiply(values, alpha);
+                            }
+                        }
+
+                        break;
+
+                    case ColorTransformStep colorStep:
+                        foreach (var (name, values) in floatChannels) {
+                            if (!s_ColorChannelNames.Contains(name.FullName)) {
+                                continue;
+                            }
+
+                            if (colorStep is { From: TransferFunction.Linear, To: TransferFunction.Srgb }) {
+                                ColorTransformKernel.LinearToSrgb(values);
+                            }
+                            else if (colorStep is { From: TransferFunction.Srgb, To: TransferFunction.Linear }) {
+                                ColorTransformKernel.SrgbToLinear(values);
+                            }
+                            else {
+                                throw new NotSupportedException($"ConversionExecutor does not support a color transform from {colorStep.From} to {colorStep.To}.");
+                            }
+                        }
+
+                        break;
                 }
             }
 

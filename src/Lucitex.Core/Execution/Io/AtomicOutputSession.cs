@@ -34,12 +34,7 @@ public sealed class AtomicOutputSession : IDisposable
         _stream.Flush(flushToDisk: true);
         _stream.Dispose();
 
-        if (File.Exists(TargetPath)) {
-            File.Replace(TempPath, TargetPath, destinationBackupFileName: null);
-        }
-        else {
-            File.Move(TempPath, TargetPath);
-        }
+        File.Move(TempPath, TargetPath, overwrite: true);
 
         _committed = true;
     }

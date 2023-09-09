@@ -15,17 +15,17 @@ public sealed record DescriptorDocument
 
 public static class DescriptorJsonSerializer
 {
-    public static readonly JsonSerializerOptions Options = CreateOptions();
+    public static JsonSerializerOptions Options => DescriptorJsonContext.Default.Options;
 
     public static string Serialize(ImageAssetDescriptor asset)
     {
         var document = new DescriptorDocument { Asset = asset };
-        return JsonSerializer.Serialize(document, Options);
+        return JsonSerializer.Serialize(document, DescriptorJsonContext.Default.DescriptorDocument);
     }
 
     public static ImageAssetDescriptor Deserialize(string json)
     {
-        var document = JsonSerializer.Deserialize<DescriptorDocument>(json, Options)
+        var document = JsonSerializer.Deserialize(json, DescriptorJsonContext.Default.DescriptorDocument)
             ?? throw new JsonException("Descriptor document was null.");
 
         if (document.SchemaVersion != DescriptorDocument.CurrentSchemaVersion) {
@@ -34,17 +34,12 @@ public static class DescriptorJsonSerializer
 
         return document.Asset;
     }
-
-    private static JsonSerializerOptions CreateOptions()
-    {
-        var options = new JsonSerializerOptions {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        };
-
-        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
-
-        return options;
-    }
 }
+
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    WriteIndented = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UseStringEnumConverter = true)]
+[JsonSerializable(typeof(DescriptorDocument))]
+internal sealed partial class DescriptorJsonContext : JsonSerializerContext;

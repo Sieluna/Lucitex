@@ -26,6 +26,8 @@ public readonly record struct EncodedFormatId(string Name)
 
     public static EncodedFormatId Bc6H => new(nameof(Bc6H));
 
+    public static EncodedFormatId Bc6HSigned => new(nameof(Bc6HSigned));
+
     public static EncodedFormatId Bc7 => new(nameof(Bc7));
 
     public static EncodedFormatId Opaque(string name) => new(name);

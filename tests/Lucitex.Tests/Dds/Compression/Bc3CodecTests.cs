@@ -1,4 +1,4 @@
-using Lucitex.Dds.Compression;
+using Lucitex.TextureCompression;
 
 namespace Lucitex.Tests.Dds.Compression;
 

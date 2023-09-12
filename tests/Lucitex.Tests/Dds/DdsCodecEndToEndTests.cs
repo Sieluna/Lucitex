@@ -256,6 +256,34 @@ public class DdsCodecEndToEndTests
         Assert.Equal(source, destination);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RoundTrip_Bc6HBlock_PreservesSignednessAndRawBytes(bool signed)
+    {
+        var asset = DdsFixtures.Bc6H(signed);
+        var part = asset.Parts[0];
+        var width = part.Topology.BaseExtent.Width;
+        var height = part.Topology.BaseExtent.Height;
+        var source = RandomBytes((int)(((width + 3) / 4) * ((height + 3) / 4) * 16), signed ? 17 : 13);
+        var codec = new DdsCodec();
+        using var stream = new MemoryStream();
+        var writer = codec.CreateWriter(stream, asset);
+        var region = new WorkRegion { Subresource = new SubresourceId(0, 0, 0, LevelKey.Base), Region = ImageBox.FromOrigin(width, height) };
+        writer.Write(region, source);
+        writer.Finish();
+
+        stream.Position = 0;
+        var reader = codec.OpenReader(stream);
+        var described = reader.Describe().Parts[0];
+        var encoded = Assert.IsType<Lucitex.Core.Representation.EncodedElementRepresentation>(described.Representation);
+        Assert.Equal(signed ? Lucitex.Core.Representation.EncodedFormatId.Bc6HSigned : Lucitex.Core.Representation.EncodedFormatId.Bc6H, encoded.Format);
+        Assert.All(described.Channels.Channels, channel => Assert.Equal(Lucitex.Core.Sampling.SampleType.Float16, channel.SampleType));
+        var destination = new byte[source.Length];
+        reader.Read(region, destination);
+        Assert.Equal(source, destination);
+    }
+
     [Fact]
     public void Probe_RecognizesDdsMagic()
     {

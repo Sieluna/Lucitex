@@ -141,6 +141,31 @@ public static class DdsFixtures
         return new ImageAssetDescriptor { Parts = [part] };
     }
 
+    public static ImageAssetDescriptor Bc6H(bool signed = false)
+    {
+        const long width = 128, height = 128;
+        var part = new ImagePartDescriptor {
+            Name = "texture",
+            Spatial = Window(width, height),
+            Topology = new ResourceTopology {
+                SpatialDimensions = 2,
+                BaseExtent = new Extent3L(width, height, 1),
+                Levels = [new ResolutionLevel { Key = LevelKey.Base, Extent = new Extent3L(width, height, 1) }],
+            },
+            Channels = new ChannelSchema {
+                Channels = [Channel("R", SampleType.Float16), Channel("G", SampleType.Float16), Channel("B", SampleType.Float16)],
+            },
+            Representation = new EncodedElementRepresentation {
+                Format = signed ? EncodedFormatId.Bc6HSigned : EncodedFormatId.Bc6H,
+                TexelExtentPerElement = new Extent3I(4, 4, 1),
+                BitsPerElement = 128,
+                Class = EncodedElementClass.BlockCompressed,
+            },
+        };
+
+        return new ImageAssetDescriptor { Parts = [part] };
+    }
+
     public static ImageAssetDescriptor Cubemap()
     {
         const long size = 64;

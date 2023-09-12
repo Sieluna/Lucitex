@@ -24,8 +24,9 @@ public sealed class DdsCodec : IImageCodec
         SupportedSampleTypes = [SampleType.UNorm8, SampleType.UNorm16, SampleType.Float16, SampleType.Float32],
         SupportedEncodedFormats =
         [
-            EncodedFormatId.R10G10B10A2, EncodedFormatId.R11G11B10Float,
-            EncodedFormatId.Bc1, EncodedFormatId.Bc2, EncodedFormatId.Bc3, EncodedFormatId.Bc4, EncodedFormatId.Bc5, EncodedFormatId.Bc6H, EncodedFormatId.Bc7,
+            EncodedFormatId.R10G10B10A2, EncodedFormatId.B5G6R5, EncodedFormatId.B5G5R5A1,
+            EncodedFormatId.R11G11B10Float, EncodedFormatId.Rgb9E5,
+            EncodedFormatId.Bc1, EncodedFormatId.Bc2, EncodedFormatId.Bc3, EncodedFormatId.Bc4, EncodedFormatId.Bc5, EncodedFormatId.Bc6H, EncodedFormatId.Bc6HSigned, EncodedFormatId.Bc7,
         ],
         SupportsIndexed = false,
         SupportsDeep = false,

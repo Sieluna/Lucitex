@@ -100,12 +100,25 @@ internal static class DdsDescriptorMapper
                 EncodedFormatId.R11G11B10Float,
                 [("R", SampleType.Float16), ("G", SampleType.Float16), ("B", SampleType.Float16)],
                 [new PackedField("R", 0, 11), new PackedField("G", 11, 11), new PackedField("B", 22, 10)]),
+            DxgiFormat.R9G9B9E5SharedExp => Packed(
+                EncodedFormatId.Rgb9E5,
+                [("R", SampleType.Float16), ("G", SampleType.Float16), ("B", SampleType.Float16)],
+                [new PackedField("R", 0, 9), new PackedField("G", 9, 9), new PackedField("B", 18, 9), new PackedField("E", 27, 5)]),
+            DxgiFormat.B5G6R5Unorm => Packed(
+                EncodedFormatId.B5G6R5,
+                [("R", SampleType.UNorm8), ("G", SampleType.UNorm8), ("B", SampleType.UNorm8)],
+                [new PackedField("B", 0, 5), new PackedField("G", 5, 6), new PackedField("R", 11, 5)]),
+            DxgiFormat.B5G5R5A1Unorm => Packed(
+                EncodedFormatId.B5G5R5A1,
+                [("R", SampleType.UNorm8), ("G", SampleType.UNorm8), ("B", SampleType.UNorm8), ("A", SampleType.UNorm8)],
+                [new PackedField("B", 0, 5), new PackedField("G", 5, 5), new PackedField("R", 10, 5), new PackedField("A", 15, 1)]),
             DxgiFormat.Bc1Unorm => BlockCompressed(EncodedFormatId.Bc1, 64, ["R", "G", "B", "A"]),
             DxgiFormat.Bc2Unorm => BlockCompressed(EncodedFormatId.Bc2, 128, ["R", "G", "B", "A"]),
             DxgiFormat.Bc3Unorm => BlockCompressed(EncodedFormatId.Bc3, 128, ["R", "G", "B", "A"]),
             DxgiFormat.Bc4Unorm => BlockCompressed(EncodedFormatId.Bc4, 64, ["R"]),
             DxgiFormat.Bc5Unorm => BlockCompressed(EncodedFormatId.Bc5, 128, ["R", "G"]),
-            DxgiFormat.Bc6HUf16 => BlockCompressed(EncodedFormatId.Bc6H, 128, ["R", "G", "B"]),
+            DxgiFormat.Bc6HUf16 => BlockCompressed(EncodedFormatId.Bc6H, 128, ["R", "G", "B"], SampleType.Float16),
+            DxgiFormat.Bc6HSf16 => BlockCompressed(EncodedFormatId.Bc6HSigned, 128, ["R", "G", "B"], SampleType.Float16),
             DxgiFormat.Bc7Unorm => BlockCompressed(EncodedFormatId.Bc7, 128, ["R", "G", "B", "A"]),
             _ => throw new NotSupportedException($"DXGI format {format} is not describable yet."),
         };
@@ -122,6 +135,7 @@ internal static class DdsDescriptorMapper
                     nameof(EncodedFormatId.Bc4) => DxgiFormat.Bc4Unorm,
                     nameof(EncodedFormatId.Bc5) => DxgiFormat.Bc5Unorm,
                     nameof(EncodedFormatId.Bc6H) => DxgiFormat.Bc6HUf16,
+                    nameof(EncodedFormatId.Bc6HSigned) => DxgiFormat.Bc6HSf16,
                     nameof(EncodedFormatId.Bc7) => DxgiFormat.Bc7Unorm,
                     _ => throw new NotSupportedException($"Encoded format '{encoded.Format}' has no DDS equivalent."),
                 };
@@ -129,7 +143,10 @@ internal static class DdsDescriptorMapper
 
             return encoded.Format.Name switch {
                 nameof(EncodedFormatId.R10G10B10A2) => DxgiFormat.R10G10B10A2Unorm,
+                nameof(EncodedFormatId.B5G6R5) => DxgiFormat.B5G6R5Unorm,
+                nameof(EncodedFormatId.B5G5R5A1) => DxgiFormat.B5G5R5A1Unorm,
                 nameof(EncodedFormatId.R11G11B10Float) => DxgiFormat.R11G11B10Float,
+                nameof(EncodedFormatId.Rgb9E5) => DxgiFormat.R9G9B9E5SharedExp,
                 _ => throw new NotSupportedException($"Encoded format '{encoded.Format}' has no DDS equivalent."),
             };
         }
@@ -186,19 +203,23 @@ internal static class DdsDescriptorMapper
             Format = format,
             TexelExtentPerElement = new Extent3I(1, 1, 1),
             BitsPerElement = fields.Sum(f => f.Bits),
-            Class = EncodedElementClass.Packed,
+            Class = format == EncodedFormatId.Rgb9E5 ? EncodedElementClass.SharedExponent : EncodedElementClass.Packed,
             PackedLayout = new PackedFieldLayout { Fields = fields },
         };
 
         return (new ChannelSchema { Channels = descriptors }, representation);
     }
 
-    private static (ChannelSchema, PayloadRepresentation) BlockCompressed(EncodedFormatId format, int bitsPerBlock, string[] channelNames)
+    private static (ChannelSchema, PayloadRepresentation) BlockCompressed(
+        EncodedFormatId format,
+        int bitsPerBlock,
+        string[] channelNames,
+        SampleType? sampleType = null)
     {
         var descriptors = channelNames.Select(name => new ChannelDescriptor {
             Name = name,
             Semantic = ChannelSemanticFor(name),
-            SampleType = SampleType.UNorm8,
+            SampleType = sampleType ?? SampleType.UNorm8,
             Sampling = SampleGrid.Unit,
         }).ToList();
 

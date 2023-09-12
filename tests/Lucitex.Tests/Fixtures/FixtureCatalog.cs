@@ -22,6 +22,8 @@ public static class FixtureCatalog
             ["dds.rgba8"] = DdsFixtures.Rgba8,
             ["dds.r10g10b10a2"] = DdsFixtures.R10G10B10A2,
             ["dds.bc7"] = DdsFixtures.Bc7,
+            ["dds.bc6h"] = () => DdsFixtures.Bc6H(),
+            ["dds.bc6h-signed"] = () => DdsFixtures.Bc6H(signed: true),
             ["dds.cubemap"] = DdsFixtures.Cubemap,
             ["dds.array"] = DdsFixtures.Array,
             ["dds.volume3D"] = DdsFixtures.Volume3D,

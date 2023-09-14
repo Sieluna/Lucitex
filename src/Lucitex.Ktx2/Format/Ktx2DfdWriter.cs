@@ -50,6 +50,20 @@ internal static class Ktx2DfdWriter
 
             WriteSample(writer, bitOffset: 0, bitLength: (info.BytesPerElement * 8) - 1, channelType: 0, floatType: false, signedType: false);
         }
+        else if (format == VkFormat.E5B9G9R9Ufloat) {
+            WriteBasicBlockHeader(
+                writer,
+                k_ColorModelRgbsda,
+                blockWidth: 1,
+                blockHeight: 1,
+                bytesPerBlock: info.BytesPerElement,
+                sampleCount: 6);
+
+            for (byte channel = 0; channel < 3; channel++) {
+                WriteSample(writer, channel * 9, 8, channel, floatType: false, signedType: false, sampleLower: 0, sampleUpper: 0x2100);
+                WriteSample(writer, 27, 4, channel, floatType: false, signedType: false, additionalQualifiers: 0x20, sampleLower: 15, sampleUpper: 31);
+            }
+        }
         else {
             var channels = uncompressedChannels ?? throw new ArgumentNullException(nameof(uncompressedChannels));
 
@@ -97,7 +111,7 @@ internal static class Ktx2DfdWriter
 
         writer.Stream.WriteByte(colorModel);
         writer.Stream.WriteByte(1);
-        writer.Stream.WriteByte(2);
+        writer.Stream.WriteByte(1);
         writer.Stream.WriteByte(0);
 
         writer.Stream.WriteByte((byte)(blockWidth - 1));
@@ -111,13 +125,22 @@ internal static class Ktx2DfdWriter
         }
     }
 
-    private static void WriteSample(Ktx2BinaryWriter writer, int bitOffset, int bitLength, byte channelType, bool floatType, bool signedType)
+    private static void WriteSample(
+        Ktx2BinaryWriter writer,
+        int bitOffset,
+        int bitLength,
+        byte channelType,
+        bool floatType,
+        bool signedType,
+        byte additionalQualifiers = 0,
+        uint? sampleLower = null,
+        uint? sampleUpper = null)
     {
         Span<byte> offsetAndLength = stackalloc byte[4];
         BinaryPrimitives.WriteUInt16LittleEndian(offsetAndLength, (ushort)bitOffset);
         offsetAndLength[2] = (byte)bitLength;
 
-        var qualifiedChannelType = channelType;
+        var qualifiedChannelType = (byte)(channelType | additionalQualifiers);
         if (floatType) {
             qualifiedChannelType |= k_ChannelTypeFloat;
         }
@@ -134,8 +157,9 @@ internal static class Ktx2DfdWriter
         writer.Stream.WriteByte(0);
         writer.Stream.WriteByte(0);
 
-        writer.WriteUInt32(floatType ? 0xBF800000u : 0u);
-        writer.WriteUInt32(floatType ? 0x3F800000u : 0xFFFFFFFFu);
+        var defaultUpper = floatType ? 0x3F800000u : bitLength >= 31 ? uint.MaxValue : (1u << (bitLength + 1)) - 1u;
+        writer.WriteUInt32(sampleLower ?? (floatType && signedType ? 0xBF800000u : 0u));
+        writer.WriteUInt32(sampleUpper ?? defaultUpper);
     }
 
     private static byte ChannelIdFor(string name) => name switch {

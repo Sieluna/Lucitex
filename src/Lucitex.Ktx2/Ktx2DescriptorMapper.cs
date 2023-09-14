@@ -125,7 +125,8 @@ internal static class Ktx2DescriptorMapper
             VkFormat.Bc3UnormBlock => BlockCompressed(EncodedFormatId.Bc3, 128, ["R", "G", "B", "A"]),
             VkFormat.Bc4UnormBlock => BlockCompressed(EncodedFormatId.Bc4, 64, ["R"]),
             VkFormat.Bc5UnormBlock => BlockCompressed(EncodedFormatId.Bc5, 128, ["R", "G"]),
-            VkFormat.Bc6HUfloatBlock => BlockCompressed(EncodedFormatId.Bc6H, 128, ["R", "G", "B"]),
+            VkFormat.Bc6HUfloatBlock => BlockCompressed(EncodedFormatId.Bc6H, 128, ["R", "G", "B"], SampleType.Float16),
+            VkFormat.Bc6HSfloatBlock => BlockCompressed(EncodedFormatId.Bc6HSigned, 128, ["R", "G", "B"], SampleType.Float16),
             VkFormat.Bc7UnormBlock => BlockCompressed(EncodedFormatId.Bc7, 128, ["R", "G", "B", "A"]),
             _ => throw new NotSupportedException($"VkFormat {format} is not describable yet."),
         };
@@ -142,6 +143,7 @@ internal static class Ktx2DescriptorMapper
                     nameof(EncodedFormatId.Bc4) => VkFormat.Bc4UnormBlock,
                     nameof(EncodedFormatId.Bc5) => VkFormat.Bc5UnormBlock,
                     nameof(EncodedFormatId.Bc6H) => VkFormat.Bc6HUfloatBlock,
+                    nameof(EncodedFormatId.Bc6HSigned) => VkFormat.Bc6HSfloatBlock,
                     nameof(EncodedFormatId.Bc7) => VkFormat.Bc7UnormBlock,
                     _ => throw new NotSupportedException($"Encoded format '{encoded.Format}' has no KTX2 equivalent."),
                 };
@@ -214,12 +216,16 @@ internal static class Ktx2DescriptorMapper
         return (new ChannelSchema { Channels = descriptors }, representation);
     }
 
-    private static (ChannelSchema, PayloadRepresentation) BlockCompressed(EncodedFormatId format, int bitsPerBlock, string[] channelNames)
+    private static (ChannelSchema, PayloadRepresentation) BlockCompressed(
+        EncodedFormatId format,
+        int bitsPerBlock,
+        string[] channelNames,
+        SampleType? sampleType = null)
     {
         var descriptors = channelNames.Select(name => new ChannelDescriptor {
             Name = name,
             Semantic = ChannelSemanticFor(name),
-            SampleType = SampleType.UNorm8,
+            SampleType = sampleType ?? SampleType.UNorm8,
             Sampling = SampleGrid.Unit,
         }).ToList();
 

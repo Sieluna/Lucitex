@@ -162,6 +162,34 @@ public class Ktx2CodecEndToEndTests
         Assert.Equal(source, destination);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RoundTrip_Bc6HBlock_PreservesSignednessAndRawBytes(bool signed)
+    {
+        var asset = DdsFixtures.Bc6H(signed);
+        var part = asset.Parts[0];
+        var width = part.Topology.BaseExtent.Width;
+        var height = part.Topology.BaseExtent.Height;
+        var source = RandomBytes((int)(((width + 3) / 4) * ((height + 3) / 4) * 16), signed ? 19 : 15);
+        var codec = new Ktx2Codec();
+        using var stream = new MemoryStream();
+        var writer = codec.CreateWriter(stream, asset);
+        var region = new WorkRegion { Subresource = new SubresourceId(0, 0, 0, LevelKey.Base), Region = ImageBox.FromOrigin(width, height) };
+        writer.Write(region, source);
+        writer.Finish();
+
+        stream.Position = 0;
+        var reader = codec.OpenReader(stream);
+        var described = reader.Describe().Parts[0];
+        var encoded = Assert.IsType<Lucitex.Core.Representation.EncodedElementRepresentation>(described.Representation);
+        Assert.Equal(signed ? Lucitex.Core.Representation.EncodedFormatId.Bc6HSigned : Lucitex.Core.Representation.EncodedFormatId.Bc6H, encoded.Format);
+        Assert.All(described.Channels.Channels, channel => Assert.Equal(Lucitex.Core.Sampling.SampleType.Float16, channel.SampleType));
+        var destination = new byte[source.Length];
+        reader.Read(region, destination);
+        Assert.Equal(source, destination);
+    }
+
     [Fact]
     public void RoundTrip_ZlibSupercompression_TransparentlyDecompressesOnRead()
     {
@@ -200,5 +228,44 @@ public class Ktx2CodecEndToEndTests
 
         Assert.Equal(Lucitex.Core.Execution.Codecs.ProbeConfidence.Certain, result.Confidence);
         Assert.Equal("ktx2", result.Format);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(11)]
+    [InlineData(12)]
+    [InlineData(79)]
+    public void OpenReader_TruncatedInput_ReportsImageFormatException(int length)
+    {
+        var bytes = new byte[length];
+        var codec = new Ktx2Codec();
+
+        var exception = Assert.Throws<ImageFormatException>(() => codec.OpenReader(new MemoryStream(bytes)));
+
+        Assert.Equal("ktx2", exception.Format);
+    }
+
+    [Fact]
+    public void OpenReader_LevelShorterThanImageDimensions_ReportsImageFormatException()
+    {
+        var asset = Ktx2Fixtures.Rgba8();
+        var codec = new Ktx2Codec();
+        using var stream = new MemoryStream();
+        var writer = codec.CreateWriter(stream, asset);
+        var part = asset.Parts[0];
+        var region = new WorkRegion {
+            Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
+            Region = part.Spatial.DataWindow,
+        };
+        writer.Write(region, new byte[part.Spatial.DataWindow.Width * part.Spatial.DataWindow.Height * 4]);
+        writer.Finish();
+
+        var bytes = stream.ToArray();
+        bytes[24] = checked((byte)(part.Spatial.DataWindow.Height + 1));
+
+        var exception = Assert.Throws<ImageFormatException>(() => codec.OpenReader(new MemoryStream(bytes)));
+
+        Assert.Equal("BadLevelIndex", exception.Code);
     }
 }

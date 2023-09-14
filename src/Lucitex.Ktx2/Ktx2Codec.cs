@@ -23,7 +23,7 @@ public sealed class Ktx2Codec : IImageCodec
         SupportedEncodedFormats =
         [
             EncodedFormatId.R10G10B10A2, EncodedFormatId.R11G11B10Float, EncodedFormatId.Rgb9E5,
-            EncodedFormatId.Bc1, EncodedFormatId.Bc2, EncodedFormatId.Bc3, EncodedFormatId.Bc4, EncodedFormatId.Bc5, EncodedFormatId.Bc6H, EncodedFormatId.Bc7,
+            EncodedFormatId.Bc1, EncodedFormatId.Bc2, EncodedFormatId.Bc3, EncodedFormatId.Bc4, EncodedFormatId.Bc5, EncodedFormatId.Bc6H, EncodedFormatId.Bc6HSigned, EncodedFormatId.Bc7,
         ],
         SupportsIndexed = false,
         SupportsDeep = false,
@@ -44,7 +44,15 @@ public sealed class Ktx2Codec : IImageCodec
             : FormatProbeResult.NoMatch(Magic.Length);
     }
 
-    public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null) => new Ktx2Reader(stream, limits ?? DecodeLimits.Default);
+    public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null)
+    {
+        try {
+            return new Ktx2Reader(stream, limits ?? DecodeLimits.Default);
+        }
+        catch (Exception exception) when (Ktx2FormatErrors.IsMalformed(exception)) {
+            throw Ktx2FormatErrors.Wrap(exception, stream);
+        }
+    }
 
     public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) =>
         new Ktx2Writer(stream, descriptor, Ktx2SupercompressionScheme.None);

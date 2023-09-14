@@ -165,8 +165,21 @@ internal sealed class Ktx2Writer : IImageWriter
 
     private byte[] BuildDfd()
     {
-        if (_part.Representation is Core.Representation.EncodedElementRepresentation) {
+        if (_part.Representation is Core.Representation.EncodedElementRepresentation { Class: Core.Representation.EncodedElementClass.BlockCompressed }) {
             return Ktx2DfdWriter.Write(_shape.Format, null);
+        }
+
+        if (_part.Representation is Core.Representation.EncodedElementRepresentation { PackedLayout: { } packed }) {
+            var channelsByName = _part.Channels.Channels.ToDictionary(channel => channel.Name.FullName);
+            var fields = packed.Fields.Select(field => {
+                var hasChannel = channelsByName.TryGetValue(field.Name, out var channel);
+                return (
+                    Name: field.Name,
+                    BitLength: field.Bits,
+                    Float: hasChannel && channel!.SampleType.Kind == Core.Sampling.ScalarKind.Float,
+                    Signed: hasChannel && channel!.SampleType.Kind == Core.Sampling.ScalarKind.SignedInt);
+            }).ToList();
+            return Ktx2DfdWriter.Write(_shape.Format, fields);
         }
 
         var channels = _part.Channels.Channels
@@ -174,7 +187,7 @@ internal sealed class Ktx2Writer : IImageWriter
                 Name: c.Name.FullName,
                 BitLength: (int)c.SampleType.Bits,
                 Float: c.SampleType.Kind == Core.Sampling.ScalarKind.Float,
-                Signed: c.SampleType.Kind == Core.Sampling.ScalarKind.SignedInt))
+                Signed: c.SampleType.Kind is Core.Sampling.ScalarKind.SignedInt or Core.Sampling.ScalarKind.Float))
             .ToList();
 
         return Ktx2DfdWriter.Write(_shape.Format, channels);

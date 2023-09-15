@@ -23,7 +23,8 @@ internal static class PngDocumentReader
         string? iccProfileName = null;
         var textEntries = new List<PngTextEntry>();
         var unknown = new List<PngRawChunk>();
-        using var idatBuffer = new MemoryStream();
+        var idatChunks = new List<byte[]>();
+        long idatBytes = 0;
         long metadataBytes = 0;
         var sawIhdr = false;
         var sawIdat = false;
@@ -73,11 +74,12 @@ internal static class PngDocumentReader
                     textEntries.Add(ParseITxt(chunk.Data));
                     break;
                 case "IDAT":
-                    if (idatBuffer.Length + chunk.Data.Length > limits.MaxWorkingSet) {
+                    idatBytes = checked(idatBytes + chunk.Data.Length);
+                    if (idatBytes > limits.MaxWorkingSet) {
                         throw new ImageFormatException("png", "LimitExceeded", "Compressed PNG image data exceeds MaxWorkingSet.");
                     }
 
-                    idatBuffer.Write(chunk.Data);
+                    idatChunks.Add(chunk.Data);
                     sawIdat = true;
                     break;
                 case "IEND":
@@ -126,7 +128,23 @@ internal static class PngDocumentReader
             UnknownChunks = unknown,
         };
 
-        return (document, idatBuffer.ToArray());
+        return (document, CombineIdatChunks(idatChunks, idatBytes));
+    }
+
+    private static byte[] CombineIdatChunks(List<byte[]> chunks, long totalLength)
+    {
+        if (chunks.Count == 1) {
+            return chunks[0];
+        }
+
+        var combined = new byte[checked((int)totalLength)];
+        var offset = 0;
+        foreach (var chunk in chunks) {
+            chunk.CopyTo(combined, offset);
+            offset += chunk.Length;
+        }
+
+        return combined;
     }
 
     private static PngIhdr ParseIhdr(byte[] data)

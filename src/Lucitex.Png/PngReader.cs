@@ -67,44 +67,45 @@ internal sealed class PngReader : IImageReader
             throw new ImageFormatException("png", "LimitExceeded", $"Decoded size {totalBytes} exceeds MaxDecodedBytes limit of {_limits.MaxDecodedBytes}.");
         }
 
-        var inflatedLength = ExpectedInflatedLength(ihdr);
-        var inflated = InflateExactly(_compressedIdat, inflatedLength);
         var buffer = new byte[totalBytes];
 
+        using var input = new MemoryStream(_compressedIdat, writable: false);
+        using var zlib = new ZLibStream(input, CompressionMode.Decompress);
         if (ihdr.Interlace == PngInterlaceMethod.None) {
-            DecodeNonInterlaced(ihdr, inflated, buffer);
+            DecodeNonInterlaced(ihdr, zlib, buffer);
         }
         else {
-            DecodeAdam7(ihdr, inflated, buffer);
+            DecodeAdam7(ihdr, zlib, buffer);
+        }
+
+        if (zlib.ReadByte() != -1) {
+            throw new ImageFormatException("png", "BadImageData", "Inflated PNG image data is longer than expected.");
         }
 
         _decodedPixels = buffer;
     }
 
-    private static void DecodeNonInterlaced(PngIhdr ihdr, byte[] inflated, byte[] buffer)
+    private static void DecodeNonInterlaced(PngIhdr ihdr, Stream inflated, byte[] buffer)
     {
         var rowBytes = ihdr.RowByteLength(ihdr.Width);
         var bpp = ihdr.BytesPerPixel;
-        var position = 0;
 
         for (var y = 0; y < ihdr.Height; y++) {
-            var filterType = (PngFilterType)inflated[position++];
+            var filterType = (PngFilterType)inflated.ReadByte();
             var row = buffer.AsSpan(y * rowBytes, rowBytes);
-            inflated.AsSpan(position, rowBytes).CopyTo(row);
-            position += rowBytes;
+            inflated.ReadExactly(row);
 
             var previous = y > 0 ? buffer.AsSpan((y - 1) * rowBytes, rowBytes) : ReadOnlySpan<byte>.Empty;
             PngFilter.Reconstruct(filterType, row, previous, bpp);
         }
     }
 
-    private static void DecodeAdam7(PngIhdr ihdr, byte[] inflated, byte[] buffer)
+    private static void DecodeAdam7(PngIhdr ihdr, Stream inflated, byte[] buffer)
     {
         var samplesPerPixel = ihdr.SamplesPerPixel;
         var bitDepth = ihdr.BitDepth;
         var bpp = ihdr.BytesPerPixel;
         var finalRowBytes = ihdr.RowByteLength(ihdr.Width);
-        var position = 0;
 
         for (var passIndex = 0; passIndex < 7; passIndex++) {
             var (passWidth, passHeight) = Adam7.PassDimensions(ihdr.Width, ihdr.Height, passIndex);
@@ -114,15 +115,15 @@ internal sealed class PngReader : IImageReader
 
             var (xStart, yStart, xStep, yStep) = Adam7.Passes[passIndex];
             var passRowBytes = ihdr.RowByteLength(passWidth);
-            var previousPassRow = Array.Empty<byte>();
+            var previousPassRow = new byte[passRowBytes];
+            var currentRow = new byte[passRowBytes];
+            var hasPreviousRow = false;
 
             for (var py = 0; py < passHeight; py++) {
-                var filterType = (PngFilterType)inflated[position++];
-                var currentRow = new byte[passRowBytes];
-                inflated.AsSpan(position, passRowBytes).CopyTo(currentRow);
-                position += passRowBytes;
+                var filterType = (PngFilterType)inflated.ReadByte();
+                inflated.ReadExactly(currentRow);
 
-                PngFilter.Reconstruct(filterType, currentRow, previousPassRow, bpp);
+                PngFilter.Reconstruct(filterType, currentRow, hasPreviousRow ? previousPassRow : ReadOnlySpan<byte>.Empty, bpp);
 
                 var y = yStart + (py * yStep);
                 var finalRow = buffer.AsSpan(y * finalRowBytes, finalRowBytes);
@@ -135,38 +136,9 @@ internal sealed class PngReader : IImageReader
                     }
                 }
 
-                previousPassRow = currentRow;
+                (previousPassRow, currentRow) = (currentRow, previousPassRow);
+                hasPreviousRow = true;
             }
         }
-    }
-
-    private static int ExpectedInflatedLength(PngIhdr ihdr)
-    {
-        if (ihdr.Interlace == PngInterlaceMethod.None) {
-            return checked((ihdr.RowByteLength(ihdr.Width) + 1) * ihdr.Height);
-        }
-
-        var length = 0;
-        for (var pass = 0; pass < 7; pass++) {
-            var (width, height) = Adam7.PassDimensions(ihdr.Width, ihdr.Height, pass);
-            if (width > 0 && height > 0) {
-                length = checked(length + ((ihdr.RowByteLength(width) + 1) * height));
-            }
-        }
-
-        return length;
-    }
-
-    private static byte[] InflateExactly(byte[] compressed, int expectedLength)
-    {
-        using var input = new MemoryStream(compressed);
-        using var zlib = new ZLibStream(input, CompressionMode.Decompress);
-        var output = new byte[expectedLength];
-        zlib.ReadExactly(output);
-        if (zlib.ReadByte() != -1) {
-            throw new ImageFormatException("png", "BadImageData", "Inflated PNG image data is longer than expected.");
-        }
-
-        return output;
     }
 }

@@ -15,7 +15,17 @@ internal static class ExrHeaderReader
 
         var versionField = reader.ReadInt32();
         versionNumber = versionField & 0xFF;
-        return (ExrVersionFlags)(versionField & ~0xFF);
+        if (versionNumber != 2) {
+            throw new ImageFormatException("exr", "BadVersion", $"OpenEXR version {versionNumber} is not supported.");
+        }
+
+        var flags = (ExrVersionFlags)(versionField & ~0xFF);
+        const ExrVersionFlags knownFlags = ExrVersionFlags.Tiled | ExrVersionFlags.LongNames | ExrVersionFlags.NonImage | ExrVersionFlags.MultiPart;
+        if ((flags & ~knownFlags) != 0) {
+            throw new ImageFormatException("exr", "BadVersion", "OpenEXR version field contains unknown flags.");
+        }
+
+        return flags;
     }
 
     public static ExrHeader ReadHeader(ExrBinaryReader reader) =>
@@ -64,6 +74,11 @@ internal static class ExrHeaderReader
 
             var type = reader.ReadCString();
             var size = reader.ReadInt32();
+            if (size < 0) {
+                throw new InvalidDataException($"EXR attribute '{name}' has a negative size.");
+            }
+
+            var valueStart = reader.Stream.Position;
 
             switch (name) {
                 case "channels" when type == "chlist":
@@ -99,6 +114,10 @@ internal static class ExrHeaderReader
                 default:
                     unknown.Add(new ExrRawAttribute { Name = name, Type = type, Value = reader.ReadBytes(size) });
                     break;
+            }
+
+            if (reader.Stream.Position - valueStart != size) {
+                throw new InvalidDataException($"EXR attribute '{name}' does not match its declared size of {size} bytes.");
             }
         }
 

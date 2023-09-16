@@ -12,6 +12,8 @@ internal sealed class ExrReader : IImageReader
     {
         public required ExrHeader Header { get; init; }
 
+        public required int PartIndex { get; init; }
+
         public required bool IsTiled { get; init; }
 
         public required long DataMinX { get; init; }
@@ -108,8 +110,9 @@ internal sealed class ExrReader : IImageReader
         return byteCount;
     }
 
-    private static PartState BuildPartState(ExrHeader header) => new() {
+    private static PartState BuildPartState(ExrHeader header, int partIndex) => new() {
         Header = header,
+        PartIndex = partIndex,
         IsTiled = header.Tiles is not null,
         DataMinX = header.DataWindow.XMin,
         DataMinY = header.DataWindow.YMin,
@@ -192,13 +195,19 @@ internal sealed class ExrReader : IImageReader
     {
         var linesPerChunk = ExrCompressor.NumScanlinesPerChunk(part.Header.Compression);
 
-        foreach (var offset in part.ChunkOffsets) {
+        for (var chunkIndex = 0; chunkIndex < part.ChunkOffsets.Length; chunkIndex++) {
+            var offset = part.ChunkOffsets[chunkIndex];
             _stream.Position = offset;
             if (_isMultiPart) {
-                _binaryReader.ReadInt32();
+                ValidateChunkPart(part, _binaryReader.ReadInt32());
             }
 
             var y = _binaryReader.ReadInt32();
+            var expectedY = checked((int)part.DataMinY + (chunkIndex * linesPerChunk));
+            if (y != expectedY) {
+                throw new ImageFormatException("exr", "BadChunkLeader", $"EXR scanline chunk {chunkIndex} declares y={y}; expected {expectedY}.");
+            }
+
             var packedSize = _binaryReader.ReadInt32();
             var packed = _binaryReader.ReadBytes(packedSize);
 
@@ -216,16 +225,27 @@ internal sealed class ExrReader : IImageReader
         var tiles = part.Header.Tiles!.Value;
         var fullImageOffsets = ComputeChannelOffsets(part.Header.Channels, part.Width);
 
-        foreach (var offset in part.ChunkOffsets) {
+        var (tilesX, _) = ExrTiling.TileGrid(part.Width, part.Height, tiles.XSize, tiles.YSize);
+        for (var chunkIndex = 0; chunkIndex < part.ChunkOffsets.Length; chunkIndex++) {
+            var offset = part.ChunkOffsets[chunkIndex];
             _stream.Position = offset;
             if (_isMultiPart) {
-                _binaryReader.ReadInt32();
+                ValidateChunkPart(part, _binaryReader.ReadInt32());
             }
 
             var dx = _binaryReader.ReadInt32();
             var dy = _binaryReader.ReadInt32();
-            _binaryReader.ReadInt32();
-            _binaryReader.ReadInt32();
+            var levelX = _binaryReader.ReadInt32();
+            var levelY = _binaryReader.ReadInt32();
+            var expectedDx = chunkIndex % tilesX;
+            var expectedDy = chunkIndex / tilesX;
+            if (dx != expectedDx || dy != expectedDy || levelX != 0 || levelY != 0) {
+                throw new ImageFormatException(
+                    "exr",
+                    "BadChunkLeader",
+                    $"EXR tile chunk {chunkIndex} declares ({dx},{dy},{levelX},{levelY}); expected ({expectedDx},{expectedDy},0,0).");
+            }
+
             var packedSize = _binaryReader.ReadInt32();
             var packed = _binaryReader.ReadBytes(packedSize);
 
@@ -239,6 +259,16 @@ internal sealed class ExrReader : IImageReader
             ExrCompressor.Decompress(part.Header.Compression, packed, unpacked);
 
             ScatterTileIntoImage(buffer, part.RowStrideBytes, unpacked, tileOffsets, fullImageOffsets, x0, y0, tileWidth, tileHeight, part.Header.Channels.Count);
+        }
+    }
+
+    private static void ValidateChunkPart(PartState part, int actualPartIndex)
+    {
+        if (actualPartIndex != part.PartIndex) {
+            throw new ImageFormatException(
+                "exr",
+                "BadChunkLeader",
+                $"EXR chunk for part {part.PartIndex} declares part index {actualPartIndex}.");
         }
     }
 

@@ -1,4 +1,5 @@
 using Lucitex.Exr.Compression;
+using Lucitex.Exr.Format;
 
 namespace Lucitex.Tests.Exr.Compression;
 
@@ -16,6 +17,8 @@ public class CompressionPrimitiveTests
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(17)]
+    [InlineData(33)]
+    [InlineData(65)]
     [InlineData(4096)]
     public void BytePredictor_ApplyThenRemove_RestoresOriginalBytes(int length)
     {
@@ -33,6 +36,8 @@ public class CompressionPrimitiveTests
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(17)]
+    [InlineData(33)]
+    [InlineData(65)]
     [InlineData(4096)]
     public void ByteReorder_SplitThenInterleave_RestoresOriginalBytes(int length)
     {
@@ -92,5 +97,23 @@ public class CompressionPrimitiveTests
         ExrZip.Decompress(compressed, decompressed);
 
         Assert.Equal(original, decompressed);
+    }
+
+    [Theory]
+    [InlineData(ExrCompressionId.Rle)]
+    [InlineData(ExrCompressionId.Zips)]
+    [InlineData(ExrCompressionId.Zip)]
+    public void ExrCompressor_IncompressibleInput_FallsBackToOriginalBytes(ExrCompressionId compression)
+    {
+        var input = new byte[1040];
+        new Random(17).NextBytes(input);
+
+        var packed = ExrCompressor.Compress(compression, input);
+
+        Assert.Equal(input, packed);
+
+        var output = new byte[input.Length];
+        ExrCompressor.Decompress(compression, packed, output);
+        Assert.Equal(input, output);
     }
 }

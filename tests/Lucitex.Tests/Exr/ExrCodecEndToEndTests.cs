@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
 using Lucitex.Core.Spatial;
@@ -137,6 +138,37 @@ public class ExrCodecEndToEndTests
         reader.Read(FullRegion(width, height), destination);
 
         Assert.Equal(source, destination);
+    }
+
+    [Fact]
+    public void Read_RejectsScanlineChunkWithMismatchedYCoordinate()
+    {
+        var asset = ExrFixtures.SimpleRgba();
+        var part = asset.Parts[0];
+        var width = part.Topology.BaseExtent.Width;
+        var height = part.Topology.BaseExtent.Height;
+        var rowStride = checked((int)(width * 8));
+        var codec = new ExrCodec(ExrCompressionId.None);
+        using var stream = new MemoryStream();
+        var writer = codec.CreateWriter(stream, asset);
+        writer.Write(FullRegion(width, height), new byte[rowStride * height]);
+        writer.Finish();
+        var bytes = stream.ToArray();
+
+        using var layoutStream = new MemoryStream(bytes, writable: false);
+        var binaryReader = new ExrBinaryReader(layoutStream);
+        var flags = ExrHeaderReader.ReadFileVersion(binaryReader, out _);
+        ExrHeaderReader.ReadHeaderList(binaryReader, flags.HasFlag(ExrVersionFlags.MultiPart));
+        long seventhChunkOffset = 0;
+        for (var i = 0; i <= 6; i++) {
+            seventhChunkOffset = binaryReader.ReadInt64();
+        }
+
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(checked((int)seventhChunkOffset), sizeof(int)), 2);
+        using var malformedStream = new MemoryStream(bytes, writable: false);
+        var reader = codec.OpenReader(malformedStream);
+        var exception = Assert.Throws<ImageFormatException>(() => reader.Read(FullRegion(width, height), new byte[rowStride * height]));
+        Assert.Equal("BadChunkLeader", exception.Code);
     }
 
     [Fact]

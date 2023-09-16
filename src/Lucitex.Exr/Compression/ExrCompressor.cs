@@ -21,24 +21,36 @@ internal static class ExrCompressor
     public static bool IsSupported(ExrCompressionId compression) => compression is
         ExrCompressionId.None or ExrCompressionId.Rle or ExrCompressionId.Zips or ExrCompressionId.Zip;
 
-    public static byte[] Compress(ExrCompressionId compression, ReadOnlySpan<byte> uncompressed) => compression switch {
-        ExrCompressionId.None => uncompressed.ToArray(),
-        ExrCompressionId.Rle => ExrRle.Compress(uncompressed),
-        ExrCompressionId.Zips => ExrZip.Compress(uncompressed),
-        ExrCompressionId.Zip => ExrZip.Compress(uncompressed),
-        _ => throw new NotSupportedException($"EXR compression '{compression}' is not supported."),
-    };
+    public static byte[] Compress(ExrCompressionId compression, ReadOnlySpan<byte> uncompressed)
+    {
+        if (compression == ExrCompressionId.None) {
+            return uncompressed.ToArray();
+        }
+
+        var compressed = compression switch {
+            ExrCompressionId.Rle => ExrRle.Compress(uncompressed),
+            ExrCompressionId.Zips => ExrZip.Compress(uncompressed),
+            ExrCompressionId.Zip => ExrZip.Compress(uncompressed),
+            _ => throw new NotSupportedException($"EXR compression '{compression}' is not supported."),
+        };
+
+        return compressed.Length < uncompressed.Length ? compressed : uncompressed.ToArray();
+    }
 
     public static void Decompress(ExrCompressionId compression, ReadOnlySpan<byte> compressed, Span<byte> destination)
     {
+        if (compressed.Length == destination.Length) {
+            compressed.CopyTo(destination);
+            return;
+        }
+
+        if (compressed.Length > destination.Length) {
+            throw new InvalidDataException($"Compressed EXR chunk has {compressed.Length} bytes; expected at most {destination.Length}.");
+        }
+
         switch (compression) {
             case ExrCompressionId.None:
-                if (compressed.Length != destination.Length) {
-                    throw new InvalidDataException($"Uncompressed EXR chunk has {compressed.Length} bytes; expected {destination.Length}.");
-                }
-
-                compressed.CopyTo(destination);
-                break;
+                throw new InvalidDataException($"Uncompressed EXR chunk has {compressed.Length} bytes; expected {destination.Length}.");
             case ExrCompressionId.Rle:
                 var written = ExrRle.Decompress(compressed, destination);
                 if (written != destination.Length) {

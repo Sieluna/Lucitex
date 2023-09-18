@@ -4,6 +4,7 @@
     <Project Path="src/Lucitex.Core/Lucitex.Core.csproj" />
     <Project Path="src/Lucitex.Dds/Lucitex.Dds.csproj" />
     <Project Path="src/Lucitex.Exr/Lucitex.Exr.csproj" />
+    <Project Path="src/Lucitex.Hdr/Lucitex.Hdr.csproj" />
     <Project Path="src/Lucitex.Ktx2/Lucitex.Ktx2.csproj" />
     <Project Path="src/Lucitex.Png/Lucitex.Png.csproj" />
     <Project Path="src/Lucitex.TextureCompression/Lucitex.TextureCompression.csproj" />

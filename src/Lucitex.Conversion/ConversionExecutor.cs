@@ -6,6 +6,7 @@ using Lucitex.Core.Representation;
 using Lucitex.Core.Sampling;
 using Lucitex.Core.Spatial;
 using Lucitex.Core.Topology;
+using Lucitex.TextureCompression;
 
 namespace Lucitex.Conversion;
 
@@ -40,17 +41,10 @@ public static class ConversionExecutor
 
             foreach (var step in partPlan.Steps) {
                 if (step is not (SelectPartStep or SelectChannelsStep or ConvertSampleTypeStep or PremultiplyAlphaStep or UnpremultiplyAlphaStep
-                    or ApplyOrientationStep or ColorTransformStep or DropMetadataStep or PreserveMetadataStep)) {
+                    or ApplyOrientationStep or ColorTransformStep or DropMetadataStep or PreserveMetadataStep
+                    or DecodeEncodedElementsStep or EncodeEncodedElementsStep or TranscodeEncodedElementsStep or SynthesizeChannelStep)) {
                     throw new NotSupportedException($"ConversionExecutor does not support {step.GetType().Name} yet.");
                 }
-            }
-
-            if (sourcePart.Representation is not PlainSampleRepresentation sourcePlain) {
-                throw new NotSupportedException("ConversionExecutor only supports PlainSampleRepresentation parts.");
-            }
-
-            if (targetPart.Representation is not PlainSampleRepresentation targetPlain) {
-                throw new NotSupportedException("ConversionExecutor only supports PlainSampleRepresentation parts.");
             }
 
             var window = sourcePart.Spatial.DataWindow;
@@ -59,35 +53,117 @@ public static class ConversionExecutor
             var pixelCount = width * height;
             var region = new WorkRegion { Subresource = new SubresourceId(partPlan.SourcePartIndex, 0, 0, LevelKey.Base), Region = window };
 
-            var sourceChannels = sourcePart.Channels.Channels.ToDictionary(c => c.Name);
-            var (sourceLocations, sourceRowStride) = ComputeLayout(sourcePlain.Planes, sourceChannels, width);
-
-            var sourceBuffer = new byte[height * sourceRowStride];
-            source.Read(region, sourceBuffer);
+            if (sourcePart.Representation is EncodedElementRepresentation sourceEncoded &&
+                targetPart.Representation is EncodedElementRepresentation targetEncoded &&
+                sourceEncoded.Format == targetEncoded.Format &&
+                partPlan.Steps.OfType<TranscodeEncodedElementsStep>().Any(step => step.SourceFormat == sourceEncoded.Format && step.TargetFormat == targetEncoded.Format)) {
+                var encoded = new byte[EncodedByteCount(sourceEncoded, sourcePart.Topology.BaseExtent)];
+                source.Read(region, encoded);
+                target.Write(region with { Subresource = region.Subresource with { Part = i } }, encoded);
+                continue;
+            }
 
             var floatChannels = new Dictionary<ChannelPath, float[]>();
-            foreach (var plane in sourcePlain.Planes) {
-                foreach (var channelName in plane.Channels) {
-                    var channel = sourceChannels[channelName];
-                    var location = sourceLocations[channelName];
+            if (sourcePart.Representation is PlainSampleRepresentation sourcePlain) {
+                var sourceChannels = sourcePart.Channels.Channels.ToDictionary(c => c.Name);
+                var (sourceLocations, sourceRowStride) = ComputeLayout(sourcePlain.Planes, sourceChannels, width);
+                var sourceBuffer = new byte[height * sourceRowStride];
+                source.Read(region, sourceBuffer);
 
-                    var raw = new byte[pixelCount * location.BytesPerSample];
-                    for (var y = 0; y < height; y++) {
-                        var rowBase = (y * sourceRowStride) + location.RowRelativeBase;
-                        for (var x = 0; x < width; x++) {
-                            sourceBuffer.AsSpan(rowBase + (x * location.PerPixelStride), location.BytesPerSample)
-                                .CopyTo(raw.AsSpan(((y * width) + x) * location.BytesPerSample, location.BytesPerSample));
+                foreach (var plane in sourcePlain.Planes) {
+                    foreach (var channelName in plane.Channels) {
+                        var channel = sourceChannels[channelName];
+                        var location = sourceLocations[channelName];
+
+                        var raw = new byte[pixelCount * location.BytesPerSample];
+                        for (var y = 0; y < height; y++) {
+                            var rowBase = (y * sourceRowStride) + location.RowRelativeBase;
+                            for (var x = 0; x < width; x++) {
+                                sourceBuffer.AsSpan(rowBase + (x * location.PerPixelStride), location.BytesPerSample)
+                                    .CopyTo(raw.AsSpan(((y * width) + x) * location.BytesPerSample, location.BytesPerSample));
+                            }
                         }
+
+                        var floats = new float[pixelCount];
+                        SampleTypeConversionKernel.ToFloat32(raw, channel.SampleType, sourceByteOrder, floats);
+                        floatChannels[channelName] = floats;
+                    }
+                }
+            }
+            else if (sourcePart.Representation is EncodedElementRepresentation { Format.Name: nameof(EncodedFormatId.Rgbe) } &&
+                partPlan.Steps.OfType<DecodeEncodedElementsStep>().Any(step => step.Format == EncodedFormatId.Rgbe)) {
+                var encoded = new byte[checked(pixelCount * 4)];
+                source.Read(region, encoded);
+                var red = new float[pixelCount];
+                var green = new float[pixelCount];
+                var blue = new float[pixelCount];
+                RgbeConversionKernel.Decode(encoded, red, green, blue);
+                floatChannels["R"] = red;
+                floatChannels["G"] = green;
+                floatChannels["B"] = blue;
+            }
+            else if (sourcePart.Representation is EncodedElementRepresentation packed &&
+                IsPackedPixelFormat(packed.Format) &&
+                partPlan.Steps.OfType<DecodeEncodedElementsStep>().Any(step => step.Format == packed.Format)) {
+                var encoded = new byte[checked(pixelCount * ((packed.BitsPerElement + 7) / 8))];
+                source.Read(region, encoded);
+                var red = new float[pixelCount];
+                var green = new float[pixelCount];
+                var blue = new float[pixelCount];
+                var alpha = packed.Format.Name is nameof(EncodedFormatId.R10G10B10A2) or nameof(EncodedFormatId.B5G5R5A1) ? new float[pixelCount] : [];
+                PackedPixelConversionKernel.Decode(packed.Format, encoded, red, green, blue, alpha);
+                floatChannels["R"] = red;
+                floatChannels["G"] = green;
+                floatChannels["B"] = blue;
+                if (alpha.Length > 0) {
+                    floatChannels["A"] = alpha;
+                }
+            }
+            else if (sourcePart.Representation is EncodedElementRepresentation bc6H &&
+                bc6H.Format.Name is nameof(EncodedFormatId.Bc6H) or nameof(EncodedFormatId.Bc6HSigned) &&
+                partPlan.Steps.OfType<DecodeEncodedElementsStep>().Any(step => step.Format == bc6H.Format)) {
+                var encoded = new byte[Bc6HImageCodec.EncodedByteCount(width, height)];
+                source.Read(region, encoded);
+                var decoded = new float[checked(pixelCount * 3)];
+                Bc6HImageCodec.Decode(encoded, width, height, bc6H.Format == EncodedFormatId.Bc6HSigned, decoded);
+                for (var channelIndex = 0; channelIndex < 3; channelIndex++) {
+                    var values = new float[pixelCount];
+                    for (var pixel = 0; pixel < pixelCount; pixel++) {
+                        values[pixel] = decoded[(pixel * 3) + channelIndex];
                     }
 
-                    var floats = new float[pixelCount];
-                    SampleTypeConversionKernel.ToFloat32(raw, channel.SampleType, sourceByteOrder, floats);
-                    floatChannels[channelName] = floats;
+                    floatChannels[sourcePart.Channels.Channels[channelIndex].Name] = values;
                 }
+            }
+            else if (sourcePart.Representation is EncodedElementRepresentation blockCompressed &&
+                TryGetBcFormat(blockCompressed.Format, out var bcFormat) &&
+                partPlan.Steps.OfType<DecodeEncodedElementsStep>().Any(step => step.Format == blockCompressed.Format)) {
+                var encoded = new byte[BcImageCodec.EncodedByteCount(bcFormat, width, height)];
+                source.Read(region, encoded);
+                var channelCount = BcImageCodec.ChannelCount(bcFormat);
+                var decoded = new byte[checked(pixelCount * channelCount)];
+                BcImageCodec.Decode(bcFormat, encoded, width, height, decoded);
+                for (var channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+                    var raw = new byte[pixelCount];
+                    for (var pixel = 0; pixel < pixelCount; pixel++) {
+                        raw[pixel] = decoded[(pixel * channelCount) + channelIndex];
+                    }
+
+                    var values = new float[pixelCount];
+                    SampleTypeConversionKernel.ToFloat32(raw, SampleType.UNorm8, SampleByteOrder.LittleEndian, values);
+                    floatChannels[sourcePart.Channels.Channels[channelIndex].Name] = values;
+                }
+            }
+            else {
+                throw new NotSupportedException($"ConversionExecutor does not support {sourcePart.Representation.GetType().Name} as a source.");
             }
 
             foreach (var step in partPlan.Steps) {
                 switch (step) {
+                    case SynthesizeChannelStep synthesizeStep:
+                        floatChannels[synthesizeStep.Channel] = Enumerable.Repeat((float)synthesizeStep.ConstantValue, pixelCount).ToArray();
+                        break;
+
                     case ApplyOrientationStep orientationStep: {
                             var reoriented = new Dictionary<ChannelPath, float[]>();
                             var newWidth = width;
@@ -143,6 +219,48 @@ public static class ConversionExecutor
 
                         break;
                 }
+            }
+
+            if (targetPart.Representation is EncodedElementRepresentation { Format.Name: nameof(EncodedFormatId.Rgbe) } &&
+                partPlan.Steps.OfType<EncodeEncodedElementsStep>().Any(step => step.Format == EncodedFormatId.Rgbe)) {
+                var encoded = new byte[checked(pixelCount * 4)];
+                RgbeConversionKernel.Encode(floatChannels["R"], floatChannels["G"], floatChannels["B"], encoded);
+                target.Write(region, encoded);
+                continue;
+            }
+
+            if (targetPart.Representation is EncodedElementRepresentation packedTarget &&
+                IsPackedPixelFormat(packedTarget.Format) &&
+                partPlan.Steps.OfType<EncodeEncodedElementsStep>().Any(step => step.Format == packedTarget.Format)) {
+                var encoded = new byte[checked(pixelCount * ((packedTarget.BitsPerElement + 7) / 8))];
+                var alpha = packedTarget.Format.Name is nameof(EncodedFormatId.R10G10B10A2) or nameof(EncodedFormatId.B5G5R5A1) ? floatChannels["A"] : [];
+                PackedPixelConversionKernel.Encode(packedTarget.Format, floatChannels["R"], floatChannels["G"], floatChannels["B"], alpha, encoded);
+                target.Write(region with { Subresource = region.Subresource with { Part = i } }, encoded);
+                continue;
+            }
+
+            if (targetPart.Representation is EncodedElementRepresentation blockTarget &&
+                TryGetBcFormat(blockTarget.Format, out var targetBcFormat) &&
+                partPlan.Steps.OfType<EncodeEncodedElementsStep>().Any(step => step.Format == blockTarget.Format)) {
+                var channelCount = BcImageCodec.ChannelCount(targetBcFormat);
+                var interleaved = new byte[checked(pixelCount * channelCount)];
+                for (var channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+                    var channel = targetPart.Channels.Channels[channelIndex];
+                    var raw = new byte[pixelCount];
+                    SampleTypeConversionKernel.FromFloat32(floatChannels[channel.Name], SampleType.UNorm8, SampleByteOrder.LittleEndian, raw);
+                    for (var pixel = 0; pixel < pixelCount; pixel++) {
+                        interleaved[(pixel * channelCount) + channelIndex] = raw[pixel];
+                    }
+                }
+
+                var encoded = new byte[BcImageCodec.EncodedByteCount(targetBcFormat, width, height)];
+                BcImageCodec.Encode(targetBcFormat, interleaved, width, height, encoded);
+                target.Write(region with { Subresource = region.Subresource with { Part = i } }, encoded);
+                continue;
+            }
+
+            if (targetPart.Representation is not PlainSampleRepresentation targetPlain) {
+                throw new NotSupportedException($"ConversionExecutor does not support {targetPart.Representation.GetType().Name} as a target.");
             }
 
             var targetChannels = targetPart.Channels.Channels.ToDictionary(c => c.Name);
@@ -206,4 +324,43 @@ public static class ConversionExecutor
 
         return channel.SampleType.Bits / 8;
     }
+
+    private static int EncodedByteCount(EncodedElementRepresentation representation, Extent3L extent)
+    {
+        var elementsX = checked((extent.Width + representation.TexelExtentPerElement.Width - 1) / representation.TexelExtentPerElement.Width);
+        var elementsY = checked((extent.Height + representation.TexelExtentPerElement.Height - 1) / representation.TexelExtentPerElement.Height);
+        var elementsZ = checked((extent.Depth + representation.TexelExtentPerElement.Depth - 1) / representation.TexelExtentPerElement.Depth);
+        return checked((int)((elementsX * elementsY * elementsZ * representation.BitsPerElement + 7) / 8));
+    }
+
+    private static bool TryGetBcFormat(EncodedFormatId format, out BcFormat bcFormat)
+    {
+        switch (format.Name) {
+            case nameof(EncodedFormatId.Bc1):
+                bcFormat = BcFormat.Bc1;
+                return true;
+            case nameof(EncodedFormatId.Bc2):
+                bcFormat = BcFormat.Bc2;
+                return true;
+            case nameof(EncodedFormatId.Bc3):
+                bcFormat = BcFormat.Bc3;
+                return true;
+            case nameof(EncodedFormatId.Bc4):
+                bcFormat = BcFormat.Bc4;
+                return true;
+            case nameof(EncodedFormatId.Bc5):
+                bcFormat = BcFormat.Bc5;
+                return true;
+            case nameof(EncodedFormatId.Bc7):
+                bcFormat = BcFormat.Bc7;
+                return true;
+            default:
+                bcFormat = default;
+                return false;
+        }
+    }
+
+    private static bool IsPackedPixelFormat(EncodedFormatId format) => format.Name is
+        nameof(EncodedFormatId.R10G10B10A2) or nameof(EncodedFormatId.B5G6R5) or nameof(EncodedFormatId.B5G5R5A1) or
+        nameof(EncodedFormatId.R11G11B10Float) or nameof(EncodedFormatId.Rgb9E5);
 }

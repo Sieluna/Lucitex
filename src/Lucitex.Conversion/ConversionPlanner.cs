@@ -8,8 +8,30 @@ namespace Lucitex.Conversion;
 
 public static class ConversionPlanner
 {
-    public static ConversionPlanResult Plan(ImageAssetDescriptor source, CodecCapabilities targetCapabilities, ConversionPolicy policy)
+    public static ConversionPlanResult Plan(
+        ImageAssetDescriptor source,
+        CodecCapabilities targetCapabilities,
+        ConversionPolicy policy,
+        EncodedFormatId? targetEncodedFormat = null)
     {
+        if (targetEncodedFormat is { } requestedFormat && !targetCapabilities.SupportsEncodedFormat(requestedFormat)) {
+            return ConversionPlanResult.Failure([
+                new LossDiagnostic {
+                    Category = LossCategory.Transcode,
+                    Message = $"Target format cannot store encoded format '{requestedFormat}'.",
+                },
+            ]);
+        }
+
+        if (targetEncodedFormat is { } unsupportedFormat && !CanEncodeEncoded(unsupportedFormat)) {
+            return ConversionPlanResult.Failure([
+                new LossDiagnostic {
+                    Category = LossCategory.Transcode,
+                    Message = $"No encoder is available for encoded format '{unsupportedFormat}'.",
+                },
+            ]);
+        }
+
         var diagnostics = new List<LossDiagnostic>();
         var parts = new List<PartConversionPlan>();
         var targetParts = new List<ImagePartDescriptor>();
@@ -30,7 +52,47 @@ public static class ConversionPlanner
                 steps.Add(new SelectPartStep(partIndex));
             }
 
-            if (sourcePart.Representation is not PlainSampleRepresentation plain) {
+            PlainSampleRepresentation plain;
+            if (sourcePart.Representation is PlainSampleRepresentation sourcePlain) {
+                plain = sourcePlain;
+            }
+            else if (sourcePart.Representation is EncodedElementRepresentation encoded &&
+                targetCapabilities.SupportsEncodedFormat(encoded.Format) &&
+                (targetEncodedFormat is null || targetEncodedFormat.Value == encoded.Format) &&
+                (targetCapabilities.SupportsOrientationMetadata || sourcePart.Spatial.Orientation == Lucitex.Core.Spatial.LogicalOrientation.Identity)) {
+                steps.Add(new TranscodeEncodedElementsStep(encoded.Format, encoded.Format));
+                var (repackMetadataSteps, repackMetadataDiagnostics) = PlanMetadata(sourcePart.Metadata, policy);
+                if (repackMetadataDiagnostics.Count > 0 && !AllowsLoss(policy, repackMetadataDiagnostics)) {
+                    return ConversionPlanResult.Failure(repackMetadataDiagnostics);
+                }
+
+                steps.AddRange(repackMetadataSteps);
+                diagnostics.AddRange(repackMetadataDiagnostics);
+                targetParts.Add(sourcePart with {
+                    Spatial = sourcePart.Spatial with {
+                        Orientation = targetCapabilities.SupportsOrientationMetadata
+                            ? sourcePart.Spatial.Orientation
+                            : Lucitex.Core.Spatial.LogicalOrientation.Identity,
+                    },
+                    Metadata = Lucitex.Core.Metadata.MetadataCollection.Empty,
+                });
+                parts.Add(new PartConversionPlan { SourcePartIndex = partIndex, Steps = steps.ToArray() });
+                continue;
+            }
+            else if (sourcePart.Representation is EncodedElementRepresentation decodable && CanDecodeEncoded(decodable.Format)) {
+                steps.Add(new DecodeEncodedElementsStep(decodable.Format));
+                plain = new PlainSampleRepresentation {
+                    Planes =
+                    [
+                        new SamplePlaneDescriptor {
+                            Channels = sourcePart.Channels.Channels.Select(channel => channel.Name).ToList(),
+                            Extent = sourcePart.Topology.BaseExtent,
+                            Layout = PlaneLayout.Interleaved,
+                        },
+                    ],
+                };
+            }
+            else {
                 return ConversionPlanResult.Failure([
                     new LossDiagnostic {
                         Category = LossCategory.Transcode,
@@ -47,7 +109,25 @@ public static class ConversionPlanner
             steps.AddRange(channelSteps);
             diagnostics.AddRange(channelDiagnostics);
 
-            var (sampleSteps, resultChannelSchema, sampleDiagnostics) = PlanSampleTypes(resultChannels, targetCapabilities);
+            var encodedTarget = targetEncodedFormat ?? AutoEncodedTarget(targetCapabilities);
+            if (encodedTarget is { } channelTarget) {
+                var encodedChannels = PlanEncodedChannels(resultChannels, channelTarget);
+                if (!encodedChannels.Success) {
+                    return ConversionPlanResult.Failure(encodedChannels.Diagnostics);
+                }
+
+                if (encodedChannels.Diagnostics.Count > 0 && !AllowsLoss(policy, encodedChannels.Diagnostics)) {
+                    return ConversionPlanResult.Failure(encodedChannels.Diagnostics);
+                }
+
+                steps.AddRange(encodedChannels.Steps);
+                diagnostics.AddRange(encodedChannels.Diagnostics);
+                resultChannels = encodedChannels.Channels;
+            }
+
+            var (sampleSteps, resultChannelSchema, sampleDiagnostics) = encodedTarget is { } sampleTarget
+                ? PlanEncodedSampleTypes(resultChannels, sampleTarget)
+                : PlanSampleTypes(resultChannels, targetCapabilities);
             if (sampleDiagnostics.Count > 0 && !AllowsLoss(policy, sampleDiagnostics)) {
                 return ConversionPlanResult.Failure(sampleDiagnostics);
             }
@@ -71,16 +151,33 @@ public static class ConversionPlanner
             steps.AddRange(metadataSteps);
             diagnostics.AddRange(metadataDiagnostics);
 
-            parts.Add(new PartConversionPlan { SourcePartIndex = partIndex, Steps = steps });
+            PayloadRepresentation targetRepresentation;
+            if (encodedTarget is { } targetFormat) {
+                var compressionDiagnostic = new LossDiagnostic {
+                    Category = LossCategory.Compression,
+                    Message = $"Encoding to '{targetFormat}' introduces representation quantization.",
+                };
+                if (!AllowsLoss(policy, [compressionDiagnostic])) {
+                    return ConversionPlanResult.Failure([compressionDiagnostic]);
+                }
+
+                diagnostics.Add(compressionDiagnostic);
+                steps.Add(new EncodeEncodedElementsStep(targetFormat));
+                targetRepresentation = EncodedRepresentation(targetFormat);
+            }
+            else {
+                targetRepresentation = new PlainSampleRepresentation {
+                    Planes = [new() { Channels = resultChannelSchema.Channels.Select(c => c.Name).ToList(), Extent = plain.Planes[0].Extent }],
+                };
+            }
 
             targetParts.Add(sourcePart with {
                 Channels = resultChannelSchema,
-                Representation = new PlainSampleRepresentation {
-                    Planes = [new() { Channels = resultChannelSchema.Channels.Select(c => c.Name).ToList(), Extent = plain.Planes[0].Extent }],
-                },
+                Representation = targetRepresentation,
                 Spatial = sourcePart.Spatial with { Orientation = targetCapabilities.SupportsOrientationMetadata ? sourcePart.Spatial.Orientation : Lucitex.Core.Spatial.LogicalOrientation.Identity },
                 Metadata = Lucitex.Core.Metadata.MetadataCollection.Empty,
             });
+            parts.Add(new PartConversionPlan { SourcePartIndex = partIndex, Steps = steps.ToArray() });
         }
 
         if (policy == ConversionPolicy.Strict && diagnostics.Count > 0) {
@@ -104,6 +201,154 @@ public static class ConversionPlanner
         ConversionPolicy.Preview or ConversionPolicy.Explicit => true,
         _ => false,
     };
+
+    private static bool CanDecodeEncoded(EncodedFormatId format) => format.Name is
+        nameof(EncodedFormatId.R10G10B10A2) or nameof(EncodedFormatId.B5G6R5) or nameof(EncodedFormatId.B5G5R5A1) or
+        nameof(EncodedFormatId.R11G11B10Float) or nameof(EncodedFormatId.Rgb9E5) or
+        nameof(EncodedFormatId.Rgbe) or nameof(EncodedFormatId.Bc1) or nameof(EncodedFormatId.Bc2) or
+        nameof(EncodedFormatId.Bc3) or nameof(EncodedFormatId.Bc4) or nameof(EncodedFormatId.Bc5) or
+        nameof(EncodedFormatId.Bc6H) or nameof(EncodedFormatId.Bc6HSigned) or nameof(EncodedFormatId.Bc7);
+
+    private static bool CanEncodeEncoded(EncodedFormatId format) => format.Name is
+        nameof(EncodedFormatId.R10G10B10A2) or nameof(EncodedFormatId.B5G6R5) or nameof(EncodedFormatId.B5G5R5A1) or
+        nameof(EncodedFormatId.R11G11B10Float) or nameof(EncodedFormatId.Rgb9E5) or
+        nameof(EncodedFormatId.Rgbe) or nameof(EncodedFormatId.Bc1) or nameof(EncodedFormatId.Bc2) or
+        nameof(EncodedFormatId.Bc3) or nameof(EncodedFormatId.Bc4) or nameof(EncodedFormatId.Bc5);
+
+    private static EncodedFormatId? AutoEncodedTarget(CodecCapabilities targetCapabilities) =>
+        targetCapabilities.SupportsEncodedFormat(EncodedFormatId.Rgbe) ? EncodedFormatId.Rgbe : null;
+
+    private static EncodedElementRepresentation EncodedRepresentation(EncodedFormatId format)
+    {
+        if (format.Name is nameof(EncodedFormatId.R10G10B10A2) or nameof(EncodedFormatId.B5G6R5) or nameof(EncodedFormatId.B5G5R5A1) or
+            nameof(EncodedFormatId.R11G11B10Float) or nameof(EncodedFormatId.Rgb9E5)) {
+            var fields = format.Name switch {
+                nameof(EncodedFormatId.R10G10B10A2) => new[] { new PackedField("R", 0, 10), new PackedField("G", 10, 10), new PackedField("B", 20, 10), new PackedField("A", 30, 2) },
+                nameof(EncodedFormatId.B5G6R5) => [new PackedField("B", 0, 5), new PackedField("G", 5, 6), new PackedField("R", 11, 5)],
+                nameof(EncodedFormatId.B5G5R5A1) => [new PackedField("B", 0, 5), new PackedField("G", 5, 5), new PackedField("R", 10, 5), new PackedField("A", 15, 1)],
+                nameof(EncodedFormatId.R11G11B10Float) => [new PackedField("R", 0, 11), new PackedField("G", 11, 11), new PackedField("B", 22, 10)],
+                _ => [new PackedField("R", 0, 9), new PackedField("G", 9, 9), new PackedField("B", 18, 9), new PackedField("E", 27, 5)],
+            };
+            return new EncodedElementRepresentation {
+                Format = format,
+                TexelExtentPerElement = new Lucitex.Core.Spatial.Extent3I(1, 1, 1),
+                BitsPerElement = format.Name is nameof(EncodedFormatId.B5G6R5) or nameof(EncodedFormatId.B5G5R5A1) ? 16 : 32,
+                Class = format == EncodedFormatId.Rgb9E5 ? EncodedElementClass.SharedExponent : EncodedElementClass.Packed,
+                PackedLayout = new PackedFieldLayout { Fields = fields },
+            };
+        }
+
+        if (format == EncodedFormatId.Rgbe) {
+            return new EncodedElementRepresentation {
+                Format = format,
+                TexelExtentPerElement = new Lucitex.Core.Spatial.Extent3I(1, 1, 1),
+                BitsPerElement = 32,
+                Class = EncodedElementClass.SharedExponent,
+                PackedLayout = new PackedFieldLayout {
+                    Fields =
+                    [
+                        new PackedField("R", 0, 8),
+                        new PackedField("G", 8, 8),
+                        new PackedField("B", 16, 8),
+                        new PackedField("E", 24, 8),
+                    ],
+                },
+            };
+        }
+
+        var bits = format.Name is nameof(EncodedFormatId.Bc1) or nameof(EncodedFormatId.Bc4) ? 64 : 128;
+        return new EncodedElementRepresentation {
+            Format = format,
+            TexelExtentPerElement = new Lucitex.Core.Spatial.Extent3I(4, 4, 1),
+            BitsPerElement = bits,
+            Class = EncodedElementClass.BlockCompressed,
+        };
+    }
+
+    private static (bool Success, IReadOnlyList<ConversionStep> Steps, ChannelSchema Channels, IReadOnlyList<LossDiagnostic> Diagnostics)
+        PlanEncodedChannels(ChannelSchema channels, EncodedFormatId format)
+    {
+        string[] requiredNames = format.Name switch {
+            nameof(EncodedFormatId.Bc4) => ["R"],
+            nameof(EncodedFormatId.Bc5) => ["R", "G"],
+            nameof(EncodedFormatId.Rgbe) or nameof(EncodedFormatId.B5G6R5) or
+                nameof(EncodedFormatId.R11G11B10Float) or nameof(EncodedFormatId.Rgb9E5) => ["R", "G", "B"],
+            _ => ["R", "G", "B", "A"],
+        };
+        var sourceByName = channels.Channels.ToDictionary(channel => channel.Name.FullName);
+        var result = new List<ChannelDescriptor>(requiredNames.Length);
+        var steps = new List<ConversionStep>();
+        var diagnostics = new List<LossDiagnostic>();
+        foreach (var name in requiredNames) {
+            if (sourceByName.TryGetValue(name, out var channel)) {
+                result.Add(channel);
+                continue;
+            }
+
+            if (name == "A") {
+                var alpha = new ChannelDescriptor {
+                    Name = "A",
+                    Semantic = ChannelSemantic.Alpha,
+                    SampleType = SampleType.UNorm8,
+                    Sampling = SampleGrid.Unit,
+                };
+                result.Add(alpha);
+                steps.Add(new SynthesizeChannelStep("A", SampleType.UNorm8, 1));
+                continue;
+            }
+
+            diagnostics.Add(new LossDiagnostic {
+                Category = LossCategory.Channel,
+                Message = $"Encoded format '{format}' requires channel '{name}'.",
+                ChannelName = name,
+            });
+            return (false, steps, channels, diagnostics);
+        }
+
+        var dropped = channels.Channels.Where(channel => !requiredNames.Contains(channel.Name.FullName)).ToList();
+        if (dropped.Count > 0) {
+            diagnostics.Add(new LossDiagnostic {
+                Category = LossCategory.Channel,
+                Message = $"Encoding to '{format}' drops channel(s): {string.Join(", ", dropped.Select(channel => channel.Name.FullName))}.",
+            });
+        }
+
+        if (!channels.Channels.Select(channel => channel.Name.FullName).SequenceEqual(requiredNames)) {
+            steps.Add(new SelectChannelsStep(result.Select(channel => channel.Name).ToList()));
+        }
+
+        return (true, steps, new ChannelSchema { Channels = result }, diagnostics);
+    }
+
+    private static (IReadOnlyList<ConversionStep> Steps, ChannelSchema Channels, IReadOnlyList<LossDiagnostic> Diagnostics)
+        PlanEncodedSampleTypes(ChannelSchema channels, EncodedFormatId format)
+    {
+        var steps = new List<ConversionStep>();
+        var diagnostics = new List<LossDiagnostic>();
+        var result = new List<ChannelDescriptor>(channels.Channels.Count);
+        foreach (var channel in channels.Channels) {
+            var target = format.Name switch {
+                nameof(EncodedFormatId.R10G10B10A2) when channel.Name.FullName == "A" => SampleType.UNorm8,
+                nameof(EncodedFormatId.R10G10B10A2) => SampleType.UNorm16,
+                nameof(EncodedFormatId.R11G11B10Float) or nameof(EncodedFormatId.Rgb9E5) or
+                    nameof(EncodedFormatId.Bc6H) or nameof(EncodedFormatId.Bc6HSigned) => SampleType.Float16,
+                nameof(EncodedFormatId.Rgbe) => SampleType.Float32,
+                _ => SampleType.UNorm8,
+            };
+            if (channel.SampleType != target) {
+                steps.Add(new ConvertSampleTypeStep(channel.Name, channel.SampleType, target));
+                diagnostics.Add(new LossDiagnostic {
+                    Category = IsNarrowing(channel.SampleType, target) ? LossCategory.DynamicRange : LossCategory.Numeric,
+                    Message = $"Channel '{channel.Name}' converts from {channel.SampleType} to {target}.",
+                    ChannelName = channel.Name.FullName,
+                });
+            }
+
+            result.Add(channel with { SampleType = target });
+        }
+
+        return (steps, new ChannelSchema { Channels = result }, diagnostics);
+    }
 
     private static (IReadOnlyList<ConversionStep> Steps, ChannelSchema Channels, IReadOnlyList<LossDiagnostic> Diagnostics) PlanChannels(
         ChannelSchema sourceChannels, CodecCapabilities targetCapabilities, ConversionPolicy policy)

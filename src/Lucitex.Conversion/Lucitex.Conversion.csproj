@@ -4,10 +4,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Lucitex.Core\Lucitex.Core.csproj" />
+    <ProjectReference Include="..\Lucitex.TextureCompression\Lucitex.TextureCompression.csproj" />
   </ItemGroup>
 
 </Project>

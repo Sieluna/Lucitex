@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Lucitex.Core\Lucitex.Core.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Exr\Lucitex.Exr.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Hdr\Lucitex.Hdr.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Ktx2\Lucitex.Ktx2.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Png\Lucitex.Png.csproj" />
   </ItemGroup>

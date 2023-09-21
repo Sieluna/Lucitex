@@ -3,6 +3,7 @@
 #include <png.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -100,10 +101,62 @@ bool validate_ktx2(const char* path)
 
 int main(int argc, char** argv)
 {
-    if (argc != 3)
+    if (argc != 3 && argc != 5)
     {
         std::cerr << "usage: lucitex_native_oracle <png|exr|ktx2> <path>\n";
+        std::cerr << "       lucitex_native_oracle bench <png|exr|ktx2> <path> <iterations>\n";
         return 64;
+    }
+
+    if (argc == 5 && std::strcmp(argv[1], "bench") == 0)
+    {
+        const auto iterations = std::stoi(argv[4]);
+        if (iterations <= 0)
+        {
+            return 64;
+        }
+
+        const auto decode = [&]()
+        {
+            if (std::strcmp(argv[2], "png") == 0)
+            {
+                return validate_png(argv[3]);
+            }
+
+            if (std::strcmp(argv[2], "exr") == 0)
+            {
+                return validate_exr(argv[3]);
+            }
+
+            if (std::strcmp(argv[2], "ktx2") == 0)
+            {
+                return validate_ktx2(argv[3]);
+            }
+
+            return false;
+        };
+
+        for (auto i = 0; i < std::min(10, iterations); ++i)
+        {
+            if (!decode())
+            {
+                return 1;
+            }
+        }
+
+        const auto started = std::chrono::steady_clock::now();
+        for (auto i = 0; i < iterations; ++i)
+        {
+            if (!decode())
+            {
+                return 1;
+            }
+        }
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        const auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
+        std::cout << "iterations=" << iterations << " elapsed_ns=" << elapsed_ns
+                  << " ns_per_iteration=" << elapsed_ns / iterations << '\n';
+        return 0;
     }
 
     if (std::strcmp(argv[1], "png") == 0)

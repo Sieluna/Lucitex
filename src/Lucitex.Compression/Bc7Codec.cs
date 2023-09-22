@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 
 
 
-namespace Lucitex.TextureCompression
+namespace Lucitex.Compression
 {
     internal enum Bc7Mode : uint
     {
@@ -697,7 +697,7 @@ namespace Lucitex.TextureCompression
     }
 }
 
-namespace Lucitex.TextureCompression
+namespace Lucitex.Compression
 {
     internal static class Bc7Codec
     {

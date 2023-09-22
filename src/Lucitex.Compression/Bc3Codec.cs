@@ -1,4 +1,4 @@
-namespace Lucitex.TextureCompression;
+namespace Lucitex.Compression;
 
 internal static class Bc3Codec
 {

@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
-namespace Lucitex.TextureCompression;
+namespace Lucitex.Compression;
 
 internal static class BcImageCodec
 {

@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Lucitex.Core\Lucitex.Core.csproj" />
-    <ProjectReference Include="..\Lucitex.TextureCompression\Lucitex.TextureCompression.csproj" />
+    <ProjectReference Include="..\Lucitex.Compression\Lucitex.Compression.csproj" />
   </ItemGroup>
 
 </Project>

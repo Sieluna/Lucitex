@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace Lucitex.TextureCompression;
+namespace Lucitex.Compression;
 
 internal static class Bc1Codec
 {

@@ -12,7 +12,7 @@ using Lucitex.Hdr;
 using Lucitex.Ktx2;
 using Lucitex.Png;
 using Lucitex.Tests.Fixtures;
-using Lucitex.TextureCompression;
+using Lucitex.Compression;
 
 namespace Lucitex.Tests.Conversion;
 

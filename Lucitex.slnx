@@ -7,7 +7,7 @@
     <Project Path="src/Lucitex.Hdr/Lucitex.Hdr.csproj" />
     <Project Path="src/Lucitex.Ktx2/Lucitex.Ktx2.csproj" />
     <Project Path="src/Lucitex.Png/Lucitex.Png.csproj" />
-    <Project Path="src/Lucitex.TextureCompression/Lucitex.TextureCompression.csproj" />
+    <Project Path="src/Lucitex.Compression/Lucitex.Compression.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Lucitex.Fuzz/Lucitex.Fuzz.csproj" />

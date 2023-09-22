@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 
 
-namespace Lucitex.TextureCompression
+namespace Lucitex.Compression
 {
 
     internal enum Bc6HMode : uint
@@ -794,7 +794,7 @@ namespace Lucitex.TextureCompression
     }
 }
 
-namespace Lucitex.TextureCompression
+namespace Lucitex.Compression
 {
     internal static class Bc6HCodec
     {

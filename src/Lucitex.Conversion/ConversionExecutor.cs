@@ -6,7 +6,7 @@ using Lucitex.Core.Representation;
 using Lucitex.Core.Sampling;
 using Lucitex.Core.Spatial;
 using Lucitex.Core.Topology;
-using Lucitex.TextureCompression;
+using Lucitex.Compression;
 
 namespace Lucitex.Conversion;
 

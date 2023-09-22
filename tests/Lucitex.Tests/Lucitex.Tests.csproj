@@ -25,7 +25,7 @@
     <ProjectReference Include="..\..\src\Lucitex.Hdr\Lucitex.Hdr.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Ktx2\Lucitex.Ktx2.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Png\Lucitex.Png.csproj" />
-    <ProjectReference Include="..\..\src\Lucitex.TextureCompression\Lucitex.TextureCompression.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Compression\Lucitex.Compression.csproj" />
   </ItemGroup>
 
   <ItemGroup>

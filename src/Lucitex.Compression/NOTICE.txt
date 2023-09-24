@@ -1,0 +1,4 @@
+UNLICENSE and LICENSE-MIT in this directory are copied unmodified from
+BCnEncoder.NET (Nomi Lakkala), https://github.com/Nominom/BCnEncoder.NET,
+whose dual-licensed terms cover the conformance test data in this project
+sourced from that repository.

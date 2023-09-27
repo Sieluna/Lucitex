@@ -9,6 +9,9 @@
     <Project Path="src/Lucitex.Png/Lucitex.Png.csproj" />
     <Project Path="src/Lucitex.Compression/Lucitex.Compression.csproj" />
   </Folder>
+  <Folder Name="/examples/">
+    <Project Path="examples/Lucitex.Example/Lucitex.Example.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Lucitex.Fuzz/Lucitex.Fuzz.csproj" />
     <Project Path="tests/Lucitex.Tests/Lucitex.Tests.csproj" />

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lucitex Example Browser</title>
+    <style>
+        :root { color-scheme: light dark; }
+        body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+        label { display: block; margin-top: 1rem; }
+        select, input, button { font: inherit; padding: 0.4rem; }
+        button { margin-top: 1rem; }
+        #log { white-space: pre-wrap; margin-top: 1.5rem; padding: 0.75rem; border: 1px solid currentColor; border-radius: 4px; min-height: 4rem; }
+    </style>
+</head>
+<body>
+    <h1>Lucitex image conversion</h1>
+    <p>Runs Lucitex's format planner and executor entirely in the browser via WebAssembly.</p>
+
+    <label for="source">Source image</label>
+    <input id="source" type="file" accept=".png,.dds,.exr,.hdr,.pic,.ktx2" />
+
+    <label for="target">Target format</label>
+    <select id="target">
+        <option value="png">PNG</option>
+        <option value="dds">DDS</option>
+        <option value="exr">EXR</option>
+        <option value="hdr">HDR</option>
+        <option value="ktx2">KTX2</option>
+    </select>
+
+    <button id="convert" type="button" disabled>Convert</button>
+
+    <div id="log">Loading the .NET runtime…</div>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>

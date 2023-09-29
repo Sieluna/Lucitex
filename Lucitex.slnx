@@ -11,6 +11,7 @@
   </Folder>
   <Folder Name="/examples/">
     <Project Path="examples/Lucitex.Example/Lucitex.Example.csproj" />
+    <Project Path="examples/Lucitex.Example.Browser/Lucitex.Example.Browser.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Lucitex.Fuzz/Lucitex.Fuzz.csproj" />

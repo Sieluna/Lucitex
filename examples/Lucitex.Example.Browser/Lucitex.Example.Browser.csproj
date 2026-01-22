@@ -10,6 +10,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <WasmEnableSIMD>true</WasmEnableSIMD>
     <PublishTrimmed>false</PublishTrimmed>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>

@@ -31,6 +31,7 @@ public sealed class Ktx2Codec : IImageCodec
         SupportsArbitraryChannelNames = false,
         SupportsOrientationMetadata = false,
         MaxChannelsPerPart = 4,
+        SupportedChannelCounts = [1, 2, 4],
     };
 
     public FormatProbeResult Probe(ReadOnlySpan<byte> header)

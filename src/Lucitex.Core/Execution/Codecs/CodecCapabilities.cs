@@ -33,6 +33,13 @@ public sealed record CodecCapabilities
 
     public int MaxChannelsPerPart { get; init; } = int.MaxValue;
 
+    // Null means any channel count is fine (true for PNG/EXR/HDR, which lay channels out as
+    // independent planes/samples). DDS and KTX2 instead pick one fixed-layout pixel format
+    // (DXGI/VkFormat) for the whole part, and those tables only define 1, 2, or 4-channel formats -
+    // there is no hardware 3-channel 8-bit format - so a plan targeting them has to know that up
+    // front rather than finding out when the codec-specific format lookup throws.
+    public IReadOnlyList<int>? SupportedChannelCounts { get; init; }
+
     public bool SupportsSampleType(SampleType sampleType) => SupportedSampleTypes.Contains(sampleType);
 
     public bool SupportsEncodedFormat(EncodedFormatId format) => SupportedEncodedFormats.Contains(format);

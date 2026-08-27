@@ -655,6 +655,52 @@ public class ConversionEndToEndTests
         Assert.Equal(["R", "G", "B", "A"], result.Plan.TargetDescriptor.Parts[0].Channels.Channels.Select(channel => channel.Name.FullName));
     }
 
+    [Fact]
+    public void Execute_PngRgb8_ToDdsRaw_SynthesizesOpaqueAlpha()
+    {
+        const int width = 8;
+        const int height = 2;
+        var descriptor = Resize(PngFixtures.Rgba8(), width, height);
+        var rgbDescriptor = descriptor with {
+            Parts =
+            [
+                descriptor.Parts[0] with {
+                    Channels = new Lucitex.Core.Sampling.ChannelSchema { Channels = descriptor.Parts[0].Channels.Channels.Take(3).ToList() },
+                    Representation = new Lucitex.Core.Representation.PlainSampleRepresentation {
+                        Planes = [new Lucitex.Core.Representation.SamplePlaneDescriptor { Channels = ["R", "G", "B"], Extent = new Extent3L(width, height, 1), Layout = Lucitex.Core.Representation.PlaneLayout.Interleaved }],
+                    },
+                },
+            ],
+        };
+        var pixels = Enumerable.Repeat(new byte[] { 255, 128, 64 }, width * height).SelectMany(pixel => pixel).ToArray();
+        var region = new WorkRegion { Subresource = new SubresourceId(0, 0, 0, LevelKey.Base), Region = ImageBox.FromOrigin(width, height) };
+        var pngCodec = new PngCodec();
+        using var pngStream = new MemoryStream();
+        var pngWriter = pngCodec.CreateWriter(pngStream, rgbDescriptor);
+        pngWriter.Write(region, pixels);
+        pngWriter.Finish();
+        pngStream.Position = 0;
+        var pngReader = pngCodec.OpenReader(pngStream);
+
+        var ddsCodec = new DdsCodec();
+        var planResult = ConversionPlanner.Plan(pngReader.Describe(), ddsCodec.Capabilities, ConversionPolicy.Preview);
+        Assert.True(planResult.Success);
+        Assert.Contains(planResult.Plan!.Parts[0].Steps, step => step is SynthesizeChannelStep { Channel.FullName: "A", ConstantValue: 1 });
+        Assert.Equal(["R", "G", "B", "A"], planResult.Plan.TargetDescriptor.Parts[0].Channels.Channels.Select(channel => channel.Name.FullName));
+
+        using var ddsStream = new MemoryStream();
+        var ddsWriter = ddsCodec.CreateWriter(ddsStream, planResult.Plan.TargetDescriptor);
+        ConversionExecutor.Execute(planResult.Plan, pngReader, pngCodec.Capabilities.SampleByteOrder, ddsWriter, ddsCodec.Capabilities.SampleByteOrder);
+
+        ddsStream.Position = 0;
+        var ddsReader = ddsCodec.OpenReader(ddsStream);
+        var rgba = new byte[width * height * 4];
+        ddsReader.Read(region, rgba);
+        for (var pixel = 0; pixel < width * height; pixel++) {
+            Assert.True(rgba.AsSpan(pixel * 4, 4).SequenceEqual(new byte[] { 255, 128, 64, 255 }));
+        }
+    }
+
     private static Lucitex.Core.Semantic.ImageAssetDescriptor Resize(Lucitex.Core.Semantic.ImageAssetDescriptor descriptor, int width, int height)
     {
         var part = descriptor.Parts[0];

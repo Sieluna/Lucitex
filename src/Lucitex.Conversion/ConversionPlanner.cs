@@ -124,6 +124,16 @@ public static class ConversionPlanner
                 diagnostics.AddRange(encodedChannels.Diagnostics);
                 resultChannels = encodedChannels.Channels;
             }
+            else if (targetCapabilities.SupportedChannelCounts is { } supportedChannelCounts &&
+                !supportedChannelCounts.Contains(resultChannels.Channels.Count)) {
+                var padded = PadChannelCount(resultChannels, supportedChannelCounts);
+                if (!padded.Success) {
+                    return ConversionPlanResult.Failure(padded.Diagnostics);
+                }
+
+                steps.AddRange(padded.Steps);
+                resultChannels = padded.Channels;
+            }
 
             var (sampleSteps, resultChannelSchema, sampleDiagnostics) = encodedTarget is { } sampleTarget
                 ? PlanEncodedSampleTypes(resultChannels, sampleTarget)
@@ -318,6 +328,39 @@ public static class ConversionPlanner
         }
 
         return (true, steps, new ChannelSchema { Channels = result }, diagnostics);
+    }
+
+    // DDS/KTX2 pick one fixed-layout pixel format for a whole part, and their tables only define
+    // 1, 2, or 4-channel formats - there is no 3-channel 8-bit hardware format. A 3-channel source
+    // (an opaque RGB PNG is the common case) gets an opaque alpha channel synthesized so it lands on
+    // a channel count the target can actually represent, the same way PlanEncodedChannels already
+    // does for encoded formats that require alpha. Only a shortfall of exactly one channel is
+    // recoverable this way; anything else means the target genuinely cannot represent this many
+    // channels as a single fixed-layout element.
+    private static (bool Success, IReadOnlyList<ConversionStep> Steps, ChannelSchema Channels, IReadOnlyList<LossDiagnostic> Diagnostics)
+        PadChannelCount(ChannelSchema channels, IReadOnlyList<int> supportedChannelCounts)
+    {
+        var count = channels.Channels.Count;
+        var hasAlpha = channels.Channels.Any(channel => channel.Name.FullName == "A");
+
+        if (!hasAlpha && supportedChannelCounts.Contains(count + 1)) {
+            var alpha = new ChannelDescriptor {
+                Name = "A",
+                Semantic = ChannelSemantic.Alpha,
+                SampleType = channels.Channels[0].SampleType,
+                Sampling = SampleGrid.Unit,
+            };
+            var padded = new List<ChannelDescriptor>(channels.Channels) { alpha };
+            IReadOnlyList<ConversionStep> steps = [new SynthesizeChannelStep("A", alpha.SampleType, 1)];
+            return (true, steps, new ChannelSchema { Channels = padded }, []);
+        }
+
+        return (false, [], channels, [
+            new LossDiagnostic {
+                Category = LossCategory.Channel,
+                Message = $"Target format has no fixed pixel layout for {count} channel(s).",
+            },
+        ]);
     }
 
     private static (IReadOnlyList<ConversionStep> Steps, ChannelSchema Channels, IReadOnlyList<LossDiagnostic> Diagnostics)

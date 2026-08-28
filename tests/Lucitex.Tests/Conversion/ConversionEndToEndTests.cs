@@ -673,29 +673,12 @@ public class ConversionEndToEndTests
             ],
         };
         var pixels = Enumerable.Repeat(new byte[] { 255, 128, 64 }, width * height).SelectMany(pixel => pixel).ToArray();
-        var region = new WorkRegion { Subresource = new SubresourceId(0, 0, 0, LevelKey.Base), Region = ImageBox.FromOrigin(width, height) };
-        var pngCodec = new PngCodec();
-        using var pngStream = new MemoryStream();
-        var pngWriter = pngCodec.CreateWriter(pngStream, rgbDescriptor);
-        pngWriter.Write(region, pixels);
-        pngWriter.Finish();
-        pngStream.Position = 0;
-        var pngReader = pngCodec.OpenReader(pngStream);
 
-        var ddsCodec = new DdsCodec();
-        var planResult = ConversionPlanner.Plan(pngReader.Describe(), ddsCodec.Capabilities, ConversionPolicy.Preview);
+        var (planResult, rgba) = PlanAndConvertPngToDdsRaw(rgbDescriptor, pixels, width, height);
+
         Assert.True(planResult.Success);
         Assert.Contains(planResult.Plan!.Parts[0].Steps, step => step is SynthesizeChannelStep { Channel.FullName: "A", ConstantValue: 1 });
         Assert.Equal(["R", "G", "B", "A"], planResult.Plan.TargetDescriptor.Parts[0].Channels.Channels.Select(channel => channel.Name.FullName));
-
-        using var ddsStream = new MemoryStream();
-        var ddsWriter = ddsCodec.CreateWriter(ddsStream, planResult.Plan.TargetDescriptor);
-        ConversionExecutor.Execute(planResult.Plan, pngReader, pngCodec.Capabilities.SampleByteOrder, ddsWriter, ddsCodec.Capabilities.SampleByteOrder);
-
-        ddsStream.Position = 0;
-        var ddsReader = ddsCodec.OpenReader(ddsStream);
-        var rgba = new byte[width * height * 4];
-        ddsReader.Read(region, rgba);
         for (var pixel = 0; pixel < width * height; pixel++) {
             Assert.True(rgba.AsSpan(pixel * 4, 4).SequenceEqual(new byte[] { 255, 128, 64, 255 }));
         }
@@ -719,31 +702,12 @@ public class ConversionEndToEndTests
         ];
 
         var descriptor = IndexedPngDescriptor(width, height, palette, hasAlpha: false);
-        var region = new WorkRegion { Subresource = new SubresourceId(0, 0, 0, LevelKey.Base), Region = ImageBox.FromOrigin(width, height) };
-        var pngCodec = new PngCodec();
-        using var pngStream = new MemoryStream();
-        var pngWriter = pngCodec.CreateWriter(pngStream, descriptor);
-        pngWriter.Write(region, indices);
-        pngWriter.Finish();
-        pngStream.Position = 0;
-        var pngReader = pngCodec.OpenReader(pngStream);
-        var sourceDescriptor = pngReader.Describe();
-        Assert.IsType<Lucitex.Core.Representation.IndexedRepresentation>(sourceDescriptor.Parts[0].Representation);
+        var (planResult, rgba) = PlanAndConvertPngToDdsRaw(descriptor, indices, width, height, out var sourceDescriptor);
 
-        var ddsCodec = new DdsCodec();
-        var planResult = ConversionPlanner.Plan(sourceDescriptor, ddsCodec.Capabilities, ConversionPolicy.Preview);
+        Assert.IsType<Lucitex.Core.Representation.IndexedRepresentation>(sourceDescriptor.Parts[0].Representation);
         Assert.True(planResult.Success);
         Assert.Contains(planResult.Plan!.Parts[0].Steps, step => step is ExpandIndexedStep);
         Assert.Contains(planResult.Plan.Parts[0].Steps, step => step is SynthesizeChannelStep { Channel.FullName: "A", ConstantValue: 1 });
-
-        using var ddsStream = new MemoryStream();
-        var ddsWriter = ddsCodec.CreateWriter(ddsStream, planResult.Plan.TargetDescriptor);
-        ConversionExecutor.Execute(planResult.Plan, pngReader, pngCodec.Capabilities.SampleByteOrder, ddsWriter, ddsCodec.Capabilities.SampleByteOrder);
-
-        ddsStream.Position = 0;
-        var ddsReader = ddsCodec.OpenReader(ddsStream);
-        var rgba = new byte[width * height * 4];
-        ddsReader.Read(region, rgba);
         for (var pixel = 0; pixel < width * height; pixel++) {
             Assert.True(rgba.AsSpan(pixel * 4, 4).SequenceEqual(expectedColors[pixel]));
         }
@@ -759,29 +723,10 @@ public class ConversionEndToEndTests
         var indices = new byte[] { 0, 1 };
 
         var descriptor = IndexedPngDescriptor(width, height, palette, hasAlpha: true, transparency);
-        var region = new WorkRegion { Subresource = new SubresourceId(0, 0, 0, LevelKey.Base), Region = ImageBox.FromOrigin(width, height) };
-        var pngCodec = new PngCodec();
-        using var pngStream = new MemoryStream();
-        var pngWriter = pngCodec.CreateWriter(pngStream, descriptor);
-        pngWriter.Write(region, indices);
-        pngWriter.Finish();
-        pngStream.Position = 0;
-        var pngReader = pngCodec.OpenReader(pngStream);
-        var sourceDescriptor = pngReader.Describe();
+        var (planResult, rgba) = PlanAndConvertPngToDdsRaw(descriptor, indices, width, height);
 
-        var ddsCodec = new DdsCodec();
-        var planResult = ConversionPlanner.Plan(sourceDescriptor, ddsCodec.Capabilities, ConversionPolicy.Preview);
         Assert.True(planResult.Success);
         Assert.DoesNotContain(planResult.Plan!.Parts[0].Steps, step => step is SynthesizeChannelStep);
-
-        using var ddsStream = new MemoryStream();
-        var ddsWriter = ddsCodec.CreateWriter(ddsStream, planResult.Plan.TargetDescriptor);
-        ConversionExecutor.Execute(planResult.Plan, pngReader, pngCodec.Capabilities.SampleByteOrder, ddsWriter, ddsCodec.Capabilities.SampleByteOrder);
-
-        ddsStream.Position = 0;
-        var ddsReader = ddsCodec.OpenReader(ddsStream);
-        var rgba = new byte[width * height * 4];
-        ddsReader.Read(region, rgba);
         Assert.True(rgba.AsSpan(0, 4).SequenceEqual(new byte[] { 255, 0, 0, 128 }));
         Assert.True(rgba.AsSpan(4, 4).SequenceEqual(new byte[] { 0, 255, 0, 255 }));
     }
@@ -824,6 +769,41 @@ public class ConversionEndToEndTests
 
         Assert.False(result.Success);
         Assert.Contains(result.Diagnostics, d => d.Category == LossCategory.Transcode);
+    }
+
+    private static (ConversionPlanResult PlanResult, byte[] Rgba) PlanAndConvertPngToDdsRaw(
+        Lucitex.Core.Semantic.ImageAssetDescriptor descriptor, byte[] pixels, int width, int height) =>
+        PlanAndConvertPngToDdsRaw(descriptor, pixels, width, height, out _);
+
+    private static (ConversionPlanResult PlanResult, byte[] Rgba) PlanAndConvertPngToDdsRaw(
+        Lucitex.Core.Semantic.ImageAssetDescriptor descriptor, byte[] pixels, int width, int height,
+        out Lucitex.Core.Semantic.ImageAssetDescriptor sourceDescriptor)
+    {
+        var region = new WorkRegion { Subresource = new SubresourceId(0, 0, 0, LevelKey.Base), Region = ImageBox.FromOrigin(width, height) };
+        var pngCodec = new PngCodec();
+        using var pngStream = new MemoryStream();
+        var pngWriter = pngCodec.CreateWriter(pngStream, descriptor);
+        pngWriter.Write(region, pixels);
+        pngWriter.Finish();
+        pngStream.Position = 0;
+        var pngReader = pngCodec.OpenReader(pngStream);
+        sourceDescriptor = pngReader.Describe();
+
+        var ddsCodec = new DdsCodec();
+        var planResult = ConversionPlanner.Plan(sourceDescriptor, ddsCodec.Capabilities, ConversionPolicy.Preview);
+        if (!planResult.Success) {
+            return (planResult, []);
+        }
+
+        using var ddsStream = new MemoryStream();
+        var ddsWriter = ddsCodec.CreateWriter(ddsStream, planResult.Plan!.TargetDescriptor);
+        ConversionExecutor.Execute(planResult.Plan, pngReader, pngCodec.Capabilities.SampleByteOrder, ddsWriter, ddsCodec.Capabilities.SampleByteOrder);
+
+        ddsStream.Position = 0;
+        var ddsReader = ddsCodec.OpenReader(ddsStream);
+        var rgba = new byte[width * height * 4];
+        ddsReader.Read(region, rgba);
+        return (planResult, rgba);
     }
 
     private static Lucitex.Core.Semantic.ImageAssetDescriptor IndexedPngDescriptor(int width, int height, byte[] palette, bool hasAlpha, byte[]? transparency = null)

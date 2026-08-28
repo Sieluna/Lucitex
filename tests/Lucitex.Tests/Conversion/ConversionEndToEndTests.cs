@@ -701,6 +701,172 @@ public class ConversionEndToEndTests
         }
     }
 
+    [Fact]
+    public void Execute_PngIndexed_ToDdsRaw_ExpandsPaletteAndSynthesizesAlpha()
+    {
+        const int width = 4;
+        const int height = 2;
+        var palette = new byte[] {
+            255, 0, 0,
+            0, 255, 0,
+            0, 0, 255,
+            255, 255, 0,
+        };
+        var indices = new byte[] { 0, 1, 2, 3, 3, 2, 1, 0 };
+        byte[][] expectedColors = [
+            [255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 0, 255],
+            [255, 255, 0, 255], [0, 0, 255, 255], [0, 255, 0, 255], [255, 0, 0, 255],
+        ];
+
+        var descriptor = IndexedPngDescriptor(width, height, palette, hasAlpha: false);
+        var region = new WorkRegion { Subresource = new SubresourceId(0, 0, 0, LevelKey.Base), Region = ImageBox.FromOrigin(width, height) };
+        var pngCodec = new PngCodec();
+        using var pngStream = new MemoryStream();
+        var pngWriter = pngCodec.CreateWriter(pngStream, descriptor);
+        pngWriter.Write(region, indices);
+        pngWriter.Finish();
+        pngStream.Position = 0;
+        var pngReader = pngCodec.OpenReader(pngStream);
+        var sourceDescriptor = pngReader.Describe();
+        Assert.IsType<Lucitex.Core.Representation.IndexedRepresentation>(sourceDescriptor.Parts[0].Representation);
+
+        var ddsCodec = new DdsCodec();
+        var planResult = ConversionPlanner.Plan(sourceDescriptor, ddsCodec.Capabilities, ConversionPolicy.Preview);
+        Assert.True(planResult.Success);
+        Assert.Contains(planResult.Plan!.Parts[0].Steps, step => step is ExpandIndexedStep);
+        Assert.Contains(planResult.Plan.Parts[0].Steps, step => step is SynthesizeChannelStep { Channel.FullName: "A", ConstantValue: 1 });
+
+        using var ddsStream = new MemoryStream();
+        var ddsWriter = ddsCodec.CreateWriter(ddsStream, planResult.Plan.TargetDescriptor);
+        ConversionExecutor.Execute(planResult.Plan, pngReader, pngCodec.Capabilities.SampleByteOrder, ddsWriter, ddsCodec.Capabilities.SampleByteOrder);
+
+        ddsStream.Position = 0;
+        var ddsReader = ddsCodec.OpenReader(ddsStream);
+        var rgba = new byte[width * height * 4];
+        ddsReader.Read(region, rgba);
+        for (var pixel = 0; pixel < width * height; pixel++) {
+            Assert.True(rgba.AsSpan(pixel * 4, 4).SequenceEqual(expectedColors[pixel]));
+        }
+    }
+
+    [Fact]
+    public void Execute_PngIndexedWithTransparency_ToDdsRaw_ExpandsPerEntryAlpha()
+    {
+        const int width = 2;
+        const int height = 1;
+        var palette = new byte[] { 255, 0, 0, 0, 255, 0 };
+        var transparency = new byte[] { 128 };
+        var indices = new byte[] { 0, 1 };
+
+        var descriptor = IndexedPngDescriptor(width, height, palette, hasAlpha: true, transparency);
+        var region = new WorkRegion { Subresource = new SubresourceId(0, 0, 0, LevelKey.Base), Region = ImageBox.FromOrigin(width, height) };
+        var pngCodec = new PngCodec();
+        using var pngStream = new MemoryStream();
+        var pngWriter = pngCodec.CreateWriter(pngStream, descriptor);
+        pngWriter.Write(region, indices);
+        pngWriter.Finish();
+        pngStream.Position = 0;
+        var pngReader = pngCodec.OpenReader(pngStream);
+        var sourceDescriptor = pngReader.Describe();
+
+        var ddsCodec = new DdsCodec();
+        var planResult = ConversionPlanner.Plan(sourceDescriptor, ddsCodec.Capabilities, ConversionPolicy.Preview);
+        Assert.True(planResult.Success);
+        Assert.DoesNotContain(planResult.Plan!.Parts[0].Steps, step => step is SynthesizeChannelStep);
+
+        using var ddsStream = new MemoryStream();
+        var ddsWriter = ddsCodec.CreateWriter(ddsStream, planResult.Plan.TargetDescriptor);
+        ConversionExecutor.Execute(planResult.Plan, pngReader, pngCodec.Capabilities.SampleByteOrder, ddsWriter, ddsCodec.Capabilities.SampleByteOrder);
+
+        ddsStream.Position = 0;
+        var ddsReader = ddsCodec.OpenReader(ddsStream);
+        var rgba = new byte[width * height * 4];
+        ddsReader.Read(region, rgba);
+        Assert.True(rgba.AsSpan(0, 4).SequenceEqual(new byte[] { 255, 0, 0, 128 }));
+        Assert.True(rgba.AsSpan(4, 4).SequenceEqual(new byte[] { 0, 255, 0, 255 }));
+    }
+
+    [Fact]
+    public void Plan_IndexedWithoutPaletteContent_FailsCleanly()
+    {
+        var descriptor = PlainKtxDescriptor(4, 4, 3);
+        var indexedPart = descriptor.Parts[0] with {
+            Channels = new ChannelSchema { Channels = [new ChannelDescriptor { Name = "Index", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit }] },
+            Representation = new Lucitex.Core.Representation.IndexedRepresentation {
+                IndexType = SampleType.UNorm8,
+                Palette = new Lucitex.Core.Representation.PaletteDescriptor {
+                    EntryCount = 4,
+                    EntryChannels = new ChannelSchema {
+                        Channels = [
+                            new ChannelDescriptor { Name = "R", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit },
+                            new ChannelDescriptor { Name = "G", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit },
+                            new ChannelDescriptor { Name = "B", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit },
+                        ],
+                    },
+                    EntrySampleType = SampleType.UNorm8,
+                },
+            },
+        };
+        var indexedDescriptor = descriptor with { Parts = [indexedPart] };
+
+        var result = ConversionPlanner.Plan(indexedDescriptor, new DdsCodec().Capabilities, ConversionPolicy.Preview);
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Diagnostics, d => d.Category == LossCategory.Transcode);
+    }
+
+    [Fact]
+    public void Plan_IndexedWithSubBytePaletteIndex_FailsCleanly()
+    {
+        var descriptor = PngFixtures.Palette4Bit();
+
+        var result = ConversionPlanner.Plan(descriptor, new DdsCodec().Capabilities, ConversionPolicy.Preview);
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Diagnostics, d => d.Category == LossCategory.Transcode);
+    }
+
+    private static Lucitex.Core.Semantic.ImageAssetDescriptor IndexedPngDescriptor(int width, int height, byte[] palette, bool hasAlpha, byte[]? transparency = null)
+    {
+        var entryChannels = new List<ChannelDescriptor> {
+            new() { Name = "R", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit },
+            new() { Name = "G", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit },
+            new() { Name = "B", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit },
+        };
+        if (hasAlpha) {
+            entryChannels.Add(new ChannelDescriptor { Name = "A", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit });
+        }
+
+        var metadataEntries = new List<Lucitex.Core.Metadata.MetadataEntry> {
+            new() { Namespace = "png", Name = "PLTE", RawRepresentation = palette },
+        };
+        if (transparency is not null) {
+            metadataEntries.Add(new Lucitex.Core.Metadata.MetadataEntry { Namespace = "png", Name = "tRNS", RawRepresentation = transparency });
+        }
+
+        var part = new Lucitex.Core.Semantic.ImagePartDescriptor {
+            Name = "image",
+            Spatial = new SpatialDomain { DataWindow = ImageBox.FromOrigin(width, height), DisplayWindow = ImageBox.FromOrigin(width, height) },
+            Topology = new ResourceTopology {
+                SpatialDimensions = 2,
+                BaseExtent = new Extent3L(width, height, 1),
+                Levels = [new ResolutionLevel { Key = LevelKey.Base, Extent = new Extent3L(width, height, 1) }],
+            },
+            Channels = new ChannelSchema { Channels = [new ChannelDescriptor { Name = "Index", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit }] },
+            Representation = new Lucitex.Core.Representation.IndexedRepresentation {
+                IndexType = SampleType.UNorm8,
+                Palette = new Lucitex.Core.Representation.PaletteDescriptor {
+                    EntryCount = palette.Length / 3,
+                    EntryChannels = new ChannelSchema { Channels = entryChannels },
+                    EntrySampleType = SampleType.UNorm8,
+                },
+            },
+            Metadata = new Lucitex.Core.Metadata.MetadataCollection { Entries = metadataEntries },
+        };
+
+        return new Lucitex.Core.Semantic.ImageAssetDescriptor { Parts = [part] };
+    }
+
     private static Lucitex.Core.Semantic.ImageAssetDescriptor Resize(Lucitex.Core.Semantic.ImageAssetDescriptor descriptor, int width, int height)
     {
         var part = descriptor.Parts[0];

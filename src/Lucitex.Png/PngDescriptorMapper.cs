@@ -66,12 +66,25 @@ internal static class PngDescriptorMapper
                 entryChannels.Add(Channel("A", SampleType.UNorm8));
             }
 
+            var channelsPerEntry = entryChannels.Count;
+            var rawEntries = new byte[document.Palette.Count * channelsPerEntry];
+            for (var i = 0; i < document.Palette.Count; i++) {
+                var entryOffset = i * channelsPerEntry;
+                rawEntries[entryOffset + 0] = document.Palette[i].R;
+                rawEntries[entryOffset + 1] = document.Palette[i].G;
+                rawEntries[entryOffset + 2] = document.Palette[i].B;
+                if (hasAlpha) {
+                    rawEntries[entryOffset + 3] = document.TransparencyData is { } transparency && i < transparency.Length ? transparency[i] : (byte)255;
+                }
+            }
+
             var representation = new IndexedRepresentation {
                 IndexType = indexSampleType,
                 Palette = new PaletteDescriptor {
                     EntryCount = document.Palette.Count,
                     EntryChannels = new ChannelSchema { Channels = entryChannels },
                     EntrySampleType = SampleType.UNorm8,
+                    RawEntries = rawEntries,
                 },
             };
 

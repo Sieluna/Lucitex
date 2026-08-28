@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Lucitex.Conversion.Kernels;
 using Lucitex.Core.Color;
 using Lucitex.Core.Execution;
@@ -42,7 +43,7 @@ public static class ConversionExecutor
             foreach (var step in partPlan.Steps) {
                 if (step is not (SelectPartStep or SelectChannelsStep or ConvertSampleTypeStep or PremultiplyAlphaStep or UnpremultiplyAlphaStep
                     or ApplyOrientationStep or ColorTransformStep or DropMetadataStep or PreserveMetadataStep
-                    or DecodeEncodedElementsStep or EncodeEncodedElementsStep or TranscodeEncodedElementsStep or SynthesizeChannelStep)) {
+                    or DecodeEncodedElementsStep or EncodeEncodedElementsStep or TranscodeEncodedElementsStep or SynthesizeChannelStep or ExpandIndexedStep)) {
                     throw new NotSupportedException($"ConversionExecutor does not support {step.GetType().Name} yet.");
                 }
             }
@@ -152,6 +153,41 @@ public static class ConversionExecutor
                     var values = new float[pixelCount];
                     SampleTypeConversionKernel.ToFloat32(raw, SampleType.UNorm8, SampleByteOrder.LittleEndian, values);
                     floatChannels[sourcePart.Channels.Channels[channelIndex].Name] = values;
+                }
+            }
+            else if (sourcePart.Representation is IndexedRepresentation indexed &&
+                partPlan.Steps.OfType<ExpandIndexedStep>().Any()) {
+                var indexBytesPerSample = indexed.IndexType.Bits / 8;
+                var indexBuffer = new byte[checked(pixelCount * indexBytesPerSample)];
+                source.Read(region, indexBuffer);
+
+                var indices = new int[pixelCount];
+                for (var pixel = 0; pixel < pixelCount; pixel++) {
+                    indices[pixel] = indexBytesPerSample switch {
+                        1 => indexBuffer[pixel],
+                        2 => sourceByteOrder == SampleByteOrder.LittleEndian
+                            ? BinaryPrimitives.ReadUInt16LittleEndian(indexBuffer.AsSpan(pixel * 2, 2))
+                            : BinaryPrimitives.ReadUInt16BigEndian(indexBuffer.AsSpan(pixel * 2, 2)),
+                        _ => throw new NotSupportedException($"ConversionExecutor does not support a {indexed.IndexType.Bits}-bit palette index."),
+                    };
+                }
+
+                var rawEntries = indexed.Palette.RawEntries
+                    ?? throw new NotSupportedException("ConversionExecutor cannot expand an indexed representation without palette content.");
+                var entryChannels = indexed.Palette.EntryChannels.Channels;
+                var entryBytesPerSample = indexed.Palette.EntrySampleType.Bits / 8;
+                var entryStride = entryChannels.Count * entryBytesPerSample;
+
+                for (var channelIndex = 0; channelIndex < entryChannels.Count; channelIndex++) {
+                    var raw = new byte[checked(pixelCount * entryBytesPerSample)];
+                    for (var pixel = 0; pixel < pixelCount; pixel++) {
+                        var entryOffset = (indices[pixel] * entryStride) + (channelIndex * entryBytesPerSample);
+                        rawEntries.AsSpan(entryOffset, entryBytesPerSample).CopyTo(raw.AsSpan(pixel * entryBytesPerSample, entryBytesPerSample));
+                    }
+
+                    var values = new float[pixelCount];
+                    SampleTypeConversionKernel.ToFloat32(raw, indexed.Palette.EntrySampleType, sourceByteOrder, values);
+                    floatChannels[entryChannels[channelIndex].Name] = values;
                 }
             }
             else {

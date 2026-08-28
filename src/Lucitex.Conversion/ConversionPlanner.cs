@@ -53,8 +53,10 @@ public static class ConversionPlanner
             }
 
             PlainSampleRepresentation plain;
+            ChannelSchema sourceChannels;
             if (sourcePart.Representation is PlainSampleRepresentation sourcePlain) {
                 plain = sourcePlain;
+                sourceChannels = sourcePart.Channels;
             }
             else if (sourcePart.Representation is EncodedElementRepresentation encoded &&
                 targetCapabilities.SupportsEncodedFormat(encoded.Format) &&
@@ -81,11 +83,44 @@ public static class ConversionPlanner
             }
             else if (sourcePart.Representation is EncodedElementRepresentation decodable && CanDecodeEncoded(decodable.Format)) {
                 steps.Add(new DecodeEncodedElementsStep(decodable.Format));
+                sourceChannels = sourcePart.Channels;
                 plain = new PlainSampleRepresentation {
                     Planes =
                     [
                         new SamplePlaneDescriptor {
-                            Channels = sourcePart.Channels.Channels.Select(channel => channel.Name).ToList(),
+                            Channels = sourceChannels.Channels.Select(channel => channel.Name).ToList(),
+                            Extent = sourcePart.Topology.BaseExtent,
+                            Layout = PlaneLayout.Interleaved,
+                        },
+                    ],
+                };
+            }
+            else if (sourcePart.Representation is IndexedRepresentation indexed) {
+                if (indexed.Palette.RawEntries is null) {
+                    return ConversionPlanResult.Failure([
+                        new LossDiagnostic {
+                            Category = LossCategory.Transcode,
+                            Message = $"Part {partIndex} is indexed but its source reader did not attach the palette content, so it can't be expanded.",
+                        },
+                    ]);
+                }
+
+                if (indexed.IndexType.Bits % 8 != 0) {
+                    return ConversionPlanResult.Failure([
+                        new LossDiagnostic {
+                            Category = LossCategory.Transcode,
+                            Message = $"Part {partIndex} uses a {indexed.IndexType.Bits}-bit palette index, which this planner can't expand yet.",
+                        },
+                    ]);
+                }
+
+                steps.Add(new ExpandIndexedStep());
+                sourceChannels = indexed.Palette.EntryChannels;
+                plain = new PlainSampleRepresentation {
+                    Planes =
+                    [
+                        new SamplePlaneDescriptor {
+                            Channels = sourceChannels.Channels.Select(channel => channel.Name).ToList(),
                             Extent = sourcePart.Topology.BaseExtent,
                             Layout = PlaneLayout.Interleaved,
                         },
@@ -101,7 +136,7 @@ public static class ConversionPlanner
                 ]);
             }
 
-            var (channelSteps, resultChannels, channelDiagnostics) = PlanChannels(sourcePart.Channels, targetCapabilities, policy);
+            var (channelSteps, resultChannels, channelDiagnostics) = PlanChannels(sourceChannels, targetCapabilities, policy);
             if (channelDiagnostics.Count > 0 && !AllowsLoss(policy, channelDiagnostics)) {
                 return ConversionPlanResult.Failure(channelDiagnostics);
             }

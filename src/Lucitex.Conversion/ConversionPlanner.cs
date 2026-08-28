@@ -365,12 +365,8 @@ public static class ConversionPlanner
         return (true, steps, new ChannelSchema { Channels = result }, diagnostics);
     }
 
-    // DDS/KTX2 pick one fixed-layout pixel format for a whole part, and their tables only define
-    // 1, 2, or 4-channel formats - there is no 3-channel 8-bit hardware format. A 3-channel source
-    // (an opaque RGB PNG is the common case) gets an opaque alpha channel synthesized so it lands on
-    // a channel count the target can actually represent, the same way PlanEncodedChannels already
-    // does for encoded formats that require alpha. Only a shortfall of exactly one channel is
-    // recoverable this way; anything else means the target genuinely cannot represent this many
+    // Synthesizes an opaque alpha channel when that's enough to reach a supported channel count
+    // (e.g. RGB -> RGBA for DDS/KTX2); otherwise the target genuinely can't represent this many
     // channels as a single fixed-layout element.
     private static (bool Success, IReadOnlyList<ConversionStep> Steps, ChannelSchema Channels, IReadOnlyList<LossDiagnostic> Diagnostics)
         PadChannelCount(ChannelSchema channels, IReadOnlyList<int> supportedChannelCounts)

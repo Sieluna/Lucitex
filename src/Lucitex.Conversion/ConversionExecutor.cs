@@ -11,22 +11,8 @@ using Lucitex.Compression;
 
 namespace Lucitex.Conversion;
 
-// Executes a ConversionPlan against a real reader/writer pair. Every channel's samples are decoded
-// into a canonical float32 buffer (via SampleTypeConversionKernel.ToFloat32), then re-encoded into
-// the target's sample types (via FromFloat32) - this is what lets ConvertSampleType steps fall out
-// "for free" once both ends agree on float32 as the interchange representation.
-//
-// A part's planes can mix layouts (e.g. EXR reports one Planar plane per channel; PNG/DDS/KTX2 report
-// one Interleaved plane for all channels), and both are handled by the same per-channel byte-offset
-// formula: for a channel c, byteOffset(x, y) = y*rowStride + rowRelativeBase(c) + x*perPixelStride(c).
-// perPixelStride(c) is that channel's own byte size under Planar (channels form separate row-length
-// blocks) or the whole plane's bytes-per-pixel under Interleaved (channels are pixel-adjacent);
-// rowRelativeBase(c) is the cumulative size of everything before it in plane/channel declaration order.
-//
-// Scope: a single whole-window WorkRegion per part (no chunked/streaming reads yet), and only
-// SelectChannels/ConvertSampleType/PremultiplyAlpha/UnpremultiplyAlpha/ApplyOrientation/ColorTransform
-// steps are implemented - Execute throws NotSupportedException with the step name for anything else,
-// so a gap here is loud rather than silently wrong.
+// Every channel decodes into a canonical float32 buffer and re-encodes from there, so a
+// ConvertSampleType step falls out for free once both ends agree on float32 as the interchange type.
 public static class ConversionExecutor
 {
     private readonly record struct ChannelLocation(int RowRelativeBase, int PerPixelStride, int BytesPerSample);

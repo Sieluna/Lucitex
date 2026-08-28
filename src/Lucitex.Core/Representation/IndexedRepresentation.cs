@@ -10,10 +10,8 @@ public sealed record PaletteDescriptor
 
     public required SampleType EntrySampleType { get; init; }
 
-    // Entry values, interleaved in EntryChannels order using EntrySampleType's byte width, one entry
-    // after another - the same layout a single-pixel-tall interleaved plane would use. Null means the
-    // reader that produced this descriptor didn't attach the palette content (only its shape), so a
-    // consumer can't expand the indexed representation on its own.
+    // Entry values interleaved in EntryChannels order; null if the reader only described the
+    // palette's shape without attaching its content.
     public byte[]? RawEntries { get; init; }
 }
 

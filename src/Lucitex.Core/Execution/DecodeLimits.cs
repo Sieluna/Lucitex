@@ -10,7 +10,7 @@ public sealed record DecodeLimits
 
     public int MaxChannels { get; init; } = 256;
 
-    public int MaxLevels { get; init; } = 32;
+    public int MaxLevels { get; init; } = 512;
 
     public int MaxArrayElements { get; init; } = 4096;
 

@@ -1,4 +1,5 @@
 using Lucitex.Core.Execution;
+using Lucitex.Core.Semantic;
 using Lucitex.Core.Spatial;
 using Lucitex.Core.Topology;
 using Lucitex.Exr;
@@ -54,34 +55,131 @@ public class TiledExrTests
         Assert.Equal(source, destination);
     }
 
-    [Fact]
-    public void Read_RejectsMipmapTiledFiles_ButDescribeStillSucceeds()
+
+    private static WorkRegion LevelRegion(LevelKey level, long minX, long minY, long width, long height) => new() {
+        Subresource = new SubresourceId(0, 0, 0, level),
+        Region = ImageBox.FromExclusive(minX, minY, minX + width, minY + height),
+    };
+
+    private static Dictionary<LevelKey, byte[]> RoundTripAllLevels(
+        ImageAssetDescriptor asset,
+        ExrTileDesc tiles,
+        ExrCompressionId compression,
+        out ImageAssetDescriptor described)
     {
-        var header = new ExrHeader {
-            Channels = [new ExrChannelInfo { Name = "R", PixelType = ExrPixelType.Float }],
-            Compression = ExrCompressionId.None,
-            DataWindow = new ExrBox2i(0, 0, 15, 15),
-            DisplayWindow = new ExrBox2i(0, 0, 15, 15),
-            Tiles = new ExrTileDesc(8, 8, ExrTileLevelMode.MipmapLevels, ExrTileRoundingMode.RoundDown),
-            ChunkCount = 1,
-        };
+        var window = asset.Parts[0].Spatial.DataWindow;
+        var header = ExrDescriptorMapper.ToExrHeader(asset, compression);
+        var bytesPerPixel = header.Channels.Sum(c => c.BytesPerSample);
 
+        var levels = ExrTiling.Levels(tiles, window.Width, window.Height);
+        var sources = new Dictionary<LevelKey, byte[]>();
+        var random = new Random(9182);
+
+        var codec = new ExrCodec(compression, tiles);
         using var stream = new MemoryStream();
-        var writer = new ExrBinaryWriter(stream);
-        ExrHeaderWriter.WriteFileVersion(writer, ExrVersionFlags.Tiled);
-        ExrHeaderWriter.WriteHeader(writer, header);
-        writer.WriteInt64(stream.Position + 8);
-        writer.WriteInt32(0);
-        writer.WriteInt32(0);
+        var writer = codec.CreateWriter(stream, asset);
+
+        foreach (var level in levels) {
+            var key = ExrDescriptorMapper.ToLevelKey(tiles.LevelMode, level);
+            var source = new byte[level.Width * level.Height * bytesPerPixel];
+            random.NextBytes(source);
+            sources[key] = source;
+
+            writer.Write(LevelRegion(key, window.MinX, window.MinY, level.Width, level.Height), source);
+        }
+
+        writer.Finish();
+
         stream.Position = 0;
-
-        var codec = new ExrCodec();
         var reader = codec.OpenReader(stream);
-        var described = reader.Describe();
-        Assert.Single(described.Parts);
+        described = reader.Describe();
 
-        var destination = new byte[16 * 16 * 4];
-        var exception = Assert.Throws<ImageFormatException>(() => reader.Read(FullRegion(16, 16), destination));
-        Assert.Contains("MipRipmapTiles", exception.Code);
+        foreach (var level in levels) {
+            var key = ExrDescriptorMapper.ToLevelKey(tiles.LevelMode, level);
+            var destination = new byte[sources[key].Length];
+            var read = reader.Read(LevelRegion(key, window.MinX, window.MinY, level.Width, level.Height), destination);
+
+            Assert.Equal(sources[key].Length, read);
+            Assert.Equal(sources[key], destination);
+        }
+
+        return sources;
+    }
+
+    [Theory]
+    [InlineData(ExrCompressionId.None, ExrTileRoundingMode.RoundDown)]
+    [InlineData(ExrCompressionId.Zip, ExrTileRoundingMode.RoundDown)]
+    [InlineData(ExrCompressionId.Rle, ExrTileRoundingMode.RoundUp)]
+    [InlineData(ExrCompressionId.Zip, ExrTileRoundingMode.RoundUp)]
+    public void RoundTrip_MipmapTiled_PreservesEveryLevel(ExrCompressionId compression, ExrTileRoundingMode rounding)
+    {
+        var asset = ExrFixtures.SimpleRgba();
+        var tiles = new ExrTileDesc(16, 16, ExrTileLevelMode.MipmapLevels, rounding);
+
+        RoundTripAllLevels(asset, tiles, compression, out var described);
+
+        var levels = described.Parts[0].Topology.Levels;
+        Assert.Equal(7, levels.Count);
+        Assert.Equal(new Extent3L(64, 32, 1), levels[0].Extent);
+        Assert.Equal(new Extent3L(32, 16, 1), levels[1].Extent);
+        Assert.Equal(new Extent3L(1, 1, 1), levels[6].Extent);
+        Assert.Equal(LevelKey.Mip(3), levels[3].Key);
+    }
+
+    [Theory]
+    [InlineData(ExrCompressionId.None)]
+    [InlineData(ExrCompressionId.Zip)]
+    public void RoundTrip_RipmapTiled_PreservesEveryLevel(ExrCompressionId compression)
+    {
+        var asset = ExrFixtures.SimpleRgba();
+        var tiles = new ExrTileDesc(8, 8, ExrTileLevelMode.RipmapLevels, ExrTileRoundingMode.RoundDown);
+
+        RoundTripAllLevels(asset, tiles, compression, out var described);
+
+        var levels = described.Parts[0].Topology.Levels;
+        Assert.Equal(7 * 6, levels.Count);
+
+        var byKey = levels.ToDictionary(level => level.Key, level => level.Extent);
+        Assert.Equal(new Extent3L(64, 32, 1), byKey[new LevelKey(0, 0, 0)]);
+        Assert.Equal(new Extent3L(16, 32, 1), byKey[new LevelKey(2, 0, 0)]);
+        Assert.Equal(new Extent3L(64, 4, 1), byKey[new LevelKey(0, 3, 0)]);
+        Assert.Equal(new Extent3L(1, 1, 1), byKey[new LevelKey(6, 5, 0)]);
+    }
+
+    [Fact]
+    public void RoundTrip_MipmapTiled_WithRoundUpAndOddExtent_PreservesEveryLevel()
+    {
+        var asset = ExrFixtures.NegativeDataWindow();
+        var tiles = new ExrTileDesc(4, 4, ExrTileLevelMode.MipmapLevels, ExrTileRoundingMode.RoundUp);
+
+        RoundTripAllLevels(asset, tiles, ExrCompressionId.Zip, out var described);
+
+        var window = asset.Parts[0].Spatial.DataWindow;
+        var levels = described.Parts[0].Topology.Levels;
+
+        Assert.Equal(new Extent3L(window.Width, window.Height, 1), levels[0].Extent);
+        Assert.Equal(new Extent3L(1, 1, 1), levels[^1].Extent);
+    }
+
+    [Fact]
+    public void Read_RejectsLevelThatDoesNotExist()
+    {
+        var asset = ExrFixtures.SimpleRgba();
+        var tiles = new ExrTileDesc(16, 16, ExrTileLevelMode.OneLevel, ExrTileRoundingMode.RoundDown);
+        var codec = new ExrCodec(ExrCompressionId.Zip, tiles);
+        using var stream = new MemoryStream();
+
+        var header = ExrDescriptorMapper.ToExrHeader(asset, ExrCompressionId.Zip);
+        var bytesPerPixel = header.Channels.Sum(c => c.BytesPerSample);
+
+        var writer = codec.CreateWriter(stream, asset);
+        writer.Write(FullRegion(64, 32), new byte[64 * 32 * bytesPerPixel]);
+        writer.Finish();
+
+        stream.Position = 0;
+        var reader = codec.OpenReader(stream);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => reader.Read(LevelRegion(LevelKey.Mip(1), 0, 0, 32, 16), new byte[32 * 16 * bytesPerPixel]));
     }
 }

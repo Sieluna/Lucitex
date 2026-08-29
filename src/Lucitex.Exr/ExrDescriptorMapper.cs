@@ -58,7 +58,7 @@ internal static class ExrDescriptorMapper
         var topology = new ResourceTopology {
             SpatialDimensions = 2,
             BaseExtent = new Extent3L(dataWindow.Width, dataWindow.Height, 1),
-            Levels = [new ResolutionLevel { Key = LevelKey.Base, Extent = new Extent3L(dataWindow.Width, dataWindow.Height, 1) }],
+            Levels = ToResolutionLevels(header.Tiles, dataWindow.Width, dataWindow.Height),
         };
 
         var alpha = header.Channels.Any(c => c.Name == "A")
@@ -103,6 +103,25 @@ internal static class ExrDescriptorMapper
             PixelAspectRatio = (float)part.Spatial.PixelAspectRatio,
             PartName = part.Name,
         };
+    }
+
+    public static LevelKey ToLevelKey(ExrTileLevelMode levelMode, ExrTileLevel level) => levelMode switch {
+        ExrTileLevelMode.RipmapLevels => new LevelKey(level.LevelX, level.LevelY, 0),
+        _ => LevelKey.Mip(level.LevelX),
+    };
+
+    private static IReadOnlyList<ResolutionLevel> ToResolutionLevels(ExrTileDesc? tiles, long width, long height)
+    {
+        if (tiles is not { LevelMode: ExrTileLevelMode.MipmapLevels or ExrTileLevelMode.RipmapLevels } multiLevel) {
+            return [new ResolutionLevel { Key = LevelKey.Base, Extent = new Extent3L(width, height, 1) }];
+        }
+
+        return ExrTiling.Levels(multiLevel, width, height)
+            .Select(level => new ResolutionLevel {
+                Key = ToLevelKey(multiLevel.LevelMode, level),
+                Extent = new Extent3L(level.Width, level.Height, 1),
+            })
+            .ToList();
     }
 
     private static MetadataCollection ToMetadata(ExrHeader header)

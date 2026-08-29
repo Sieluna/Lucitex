@@ -24,7 +24,7 @@ internal sealed class ExrReader : IImageReader
 
         public required long Height { get; init; }
 
-        public required int RowStrideBytes { get; init; }
+        public required ExrBlockLayout Layout { get; init; }
 
         public long[] ChunkOffsets { get; set; } = [];
 
@@ -104,9 +104,11 @@ internal sealed class ExrReader : IImageReader
 
         var startRow = (int)(region.Region.MinY - part.DataMinY);
         var rowCount = (int)region.Region.Height;
-        var byteCount = rowCount * part.RowStrideBytes;
 
-        part.DecodedPixels!.AsSpan(startRow * part.RowStrideBytes, byteCount).CopyTo(destination);
+        var start = part.Layout.RowOffset(startRow);
+        var byteCount = checked((int)(part.Layout.RowOffset(startRow + rowCount) - start));
+
+        part.DecodedPixels!.AsSpan(checked((int)start), byteCount).CopyTo(destination);
         return byteCount;
     }
 
@@ -118,8 +120,15 @@ internal sealed class ExrReader : IImageReader
         DataMinY = header.DataWindow.YMin,
         Width = header.DataWindow.Width,
         Height = header.DataWindow.Height,
-        RowStrideBytes = ComputeChannelOffsets(header.Channels, header.DataWindow.Width).RowStride,
+        Layout = BuildImageLayout(header),
     };
+
+    private static ExrBlockLayout BuildImageLayout(ExrHeader header) => new(
+        header.Channels,
+        header.DataWindow.XMin,
+        header.DataWindow.XMax,
+        header.DataWindow.YMin,
+        header.DataWindow.YMax);
 
     private static int ComputeChunkCount(PartState part)
     {
@@ -158,15 +167,15 @@ internal sealed class ExrReader : IImageReader
                 $"EXR compression '{part.Header.Compression}' is not implemented.");
         }
 
-        if (part.Header.Channels.Any(c => c.XSampling != 1 || c.YSampling != 1)) {
-            throw new ImageFormatException("exr", "Unsupported.Exr.ChannelSubsampling", "Subsampled channels are not decodable yet.");
+        if (part.IsTiled && part.Layout.HasSubsampling) {
+            throw new ImageFormatException("exr", "BadChannel", "Tiled EXR parts must not use subsampled channels.");
         }
 
         if (part.IsTiled && part.Header.Tiles!.Value.LevelMode != ExrTileLevelMode.OneLevel) {
             throw new ImageFormatException("exr", "Unsupported.Exr.MipRipmapTiles", "Mipmapped/ripmapped tiled EXR files are not supported yet.");
         }
 
-        var totalBytes = checked((long)part.RowStrideBytes * part.Height);
+        var totalBytes = part.Layout.TotalBytes;
         if (totalBytes > _limits.MaxDecodedBytes) {
             throw new ImageFormatException(
                 "exr",
@@ -194,6 +203,7 @@ internal sealed class ExrReader : IImageReader
     private void DecodeScanlines(PartState part, byte[] buffer)
     {
         var linesPerChunk = ExrCompressor.NumScanlinesPerChunk(part.Header.Compression);
+        var lastRow = checked((int)part.DataMinY + (int)part.Height - 1);
 
         for (var chunkIndex = 0; chunkIndex < part.ChunkOffsets.Length; chunkIndex++) {
             var offset = part.ChunkOffsets[chunkIndex];
@@ -211,11 +221,16 @@ internal sealed class ExrReader : IImageReader
             var packedSize = _binaryReader.ReadInt32();
             var packed = _binaryReader.ReadBytes(packedSize);
 
-            var rowInChunkStart = y - (int)part.DataMinY;
-            var rowsInThisChunk = Math.Min(linesPerChunk, (int)part.Height - rowInChunkStart);
-            var unpackedSize = part.RowStrideBytes * rowsInThisChunk;
+            var chunkLayout = new ExrBlockLayout(
+                part.Header.Channels,
+                part.Header.DataWindow.XMin,
+                part.Header.DataWindow.XMax,
+                y,
+                Math.Min(y + linesPerChunk - 1, lastRow));
 
-            var destinationOffset = rowInChunkStart * part.RowStrideBytes;
+            var destinationOffset = checked((int)part.Layout.RowOffset(y - (int)part.DataMinY));
+            var unpackedSize = checked((int)chunkLayout.TotalBytes);
+
             ExrCompressor.Decompress(part.Header.Compression, packed, buffer.AsSpan(destinationOffset, unpackedSize));
         }
     }
@@ -223,7 +238,7 @@ internal sealed class ExrReader : IImageReader
     private void DecodeTiles(PartState part, byte[] buffer)
     {
         var tiles = part.Header.Tiles!.Value;
-        var fullImageOffsets = ComputeChannelOffsets(part.Header.Channels, part.Width);
+        var imageRowStride = part.Layout.UniformRowBytes;
 
         var (tilesX, _) = ExrTiling.TileGrid(part.Width, part.Height, tiles.XSize, tiles.YSize);
         for (var chunkIndex = 0; chunkIndex < part.ChunkOffsets.Length; chunkIndex++) {
@@ -254,11 +269,11 @@ internal sealed class ExrReader : IImageReader
             var tileWidth = (int)Math.Min(tiles.XSize, part.Width - x0);
             var tileHeight = (int)Math.Min(tiles.YSize, part.Height - y0);
 
-            var tileOffsets = ComputeChannelOffsets(part.Header.Channels, tileWidth);
-            var unpacked = new byte[tileOffsets.RowStride * tileHeight];
+            var tileLayout = new ExrBlockLayout(part.Header.Channels, 0, tileWidth - 1, 0, tileHeight - 1);
+            var unpacked = new byte[tileLayout.TotalBytes];
             ExrCompressor.Decompress(part.Header.Compression, packed, unpacked);
 
-            ScatterTileIntoImage(buffer, part.RowStrideBytes, unpacked, tileOffsets, fullImageOffsets, x0, y0, tileWidth, tileHeight, part.Header.Channels.Count);
+            ScatterTileIntoImage(buffer, imageRowStride, unpacked, tileLayout, part.Layout, x0, y0, tileWidth, tileHeight);
         }
     }
 
@@ -276,45 +291,28 @@ internal sealed class ExrReader : IImageReader
         byte[] imageBuffer,
         int imageRowStride,
         byte[] tileBuffer,
-        ChannelOffsets tileOffsets,
-        ChannelOffsets fullImageOffsets,
+        ExrBlockLayout tileLayout,
+        ExrBlockLayout imageLayout,
         int x0,
         int y0,
         int tileWidth,
-        int tileHeight,
-        int channelCount)
+        int tileHeight)
     {
         for (var row = 0; row < tileHeight; row++) {
-            var tileRowBase = row * tileOffsets.RowStride;
+            var tileRowBase = row * tileLayout.UniformRowBytes;
             var imageRowBase = (y0 + row) * imageRowStride;
 
-            for (var c = 0; c < channelCount; c++) {
-                var bytesPerSample = tileOffsets.BytesPerSample[c];
+            for (var c = 0; c < tileLayout.ChannelCount; c++) {
+                var bytesPerSample = tileLayout.BytesPerSample(c);
                 var length = tileWidth * bytesPerSample;
 
-                var source = tileBuffer.AsSpan(tileRowBase + tileOffsets.Offsets[c], length);
-                var destination = imageBuffer.AsSpan(imageRowBase + fullImageOffsets.Offsets[c] + (x0 * bytesPerSample), length);
+                var source = tileBuffer.AsSpan(tileRowBase + tileLayout.ChannelOffsetInRow(0, c), length);
+                var destination = imageBuffer.AsSpan(
+                    imageRowBase + imageLayout.ChannelOffsetInRow(0, c) + (x0 * bytesPerSample), length);
 
                 source.CopyTo(destination);
             }
         }
-    }
-
-    internal readonly record struct ChannelOffsets(int[] Offsets, int[] BytesPerSample, int RowStride);
-
-    internal static ChannelOffsets ComputeChannelOffsets(IReadOnlyList<ExrChannelInfo> channels, long width)
-    {
-        var offsets = new int[channels.Count];
-        var bytesPerSample = new int[channels.Count];
-        var running = 0;
-
-        for (var i = 0; i < channels.Count; i++) {
-            offsets[i] = running;
-            bytesPerSample[i] = channels[i].BytesPerSample;
-            running = checked(running + checked((int)width) * channels[i].BytesPerSample);
-        }
-
-        return new ChannelOffsets(offsets, bytesPerSample, running);
     }
 
     private static void ValidateHeaders(IReadOnlyList<ExrHeader> headers, DecodeLimits limits)

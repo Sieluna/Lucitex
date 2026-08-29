@@ -109,6 +109,7 @@ public class SubsampledExrTests
     [InlineData(ExrCompressionId.Rle)]
     [InlineData(ExrCompressionId.Zips)]
     [InlineData(ExrCompressionId.Zip)]
+    [InlineData(ExrCompressionId.Piz)]
     public void RoundTrip_SubsampledChromaFixture_PreservesEveryStoredSample(ExrCompressionId compression)
     {
         var asset = ExrFixtures.SubsampledChannels();

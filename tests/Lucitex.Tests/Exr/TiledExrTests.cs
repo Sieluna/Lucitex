@@ -21,6 +21,8 @@ public class TiledExrTests
     [InlineData(9u, 7u, ExrCompressionId.Rle)]
     [InlineData(9u, 7u, ExrCompressionId.Zips)]
     [InlineData(100u, 100u, ExrCompressionId.Zip)]
+    [InlineData(16u, 16u, ExrCompressionId.Piz)]
+    [InlineData(9u, 7u, ExrCompressionId.Piz)]
     public void RoundTrip_TiledOneLevel_PreservesPixelsAndDescriptor(uint tileX, uint tileY, ExrCompressionId compression)
     {
         var asset = ExrFixtures.SimpleRgba();
@@ -111,6 +113,7 @@ public class TiledExrTests
     [InlineData(ExrCompressionId.Zip, ExrTileRoundingMode.RoundDown)]
     [InlineData(ExrCompressionId.Rle, ExrTileRoundingMode.RoundUp)]
     [InlineData(ExrCompressionId.Zip, ExrTileRoundingMode.RoundUp)]
+    [InlineData(ExrCompressionId.Piz, ExrTileRoundingMode.RoundDown)]
     public void RoundTrip_MipmapTiled_PreservesEveryLevel(ExrCompressionId compression, ExrTileRoundingMode rounding)
     {
         var asset = ExrFixtures.SimpleRgba();

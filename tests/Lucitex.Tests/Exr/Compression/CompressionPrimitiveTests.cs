@@ -103,17 +103,82 @@ public class CompressionPrimitiveTests
     [InlineData(ExrCompressionId.Rle)]
     [InlineData(ExrCompressionId.Zips)]
     [InlineData(ExrCompressionId.Zip)]
+    [InlineData(ExrCompressionId.Piz)]
     public void ExrCompressor_IncompressibleInput_FallsBackToOriginalBytes(ExrCompressionId compression)
     {
+        var layout = new ExrBlockLayout([new ExrChannelInfo { Name = "R", PixelType = ExrPixelType.Half }], 0, 519, 0, 0);
         var input = new byte[1040];
         new Random(17).NextBytes(input);
 
-        var packed = ExrCompressor.Compress(compression, input);
+        var packed = ExrCompressor.Compress(compression, input, layout);
 
         Assert.Equal(input, packed);
 
         var output = new byte[input.Length];
-        ExrCompressor.Decompress(compression, packed, output);
+        ExrCompressor.Decompress(compression, packed, output, layout);
         Assert.Equal(input, output);
+    }
+
+    [Fact]
+    public void ExrHuffman_SkewedDistribution_RoundTripsCodesLongerThanTheDecodeTable()
+    {
+        var frequencies = new long[24];
+        frequencies[0] = 1;
+        frequencies[1] = 1;
+        for (var i = 2; i < frequencies.Length; i++) {
+            frequencies[i] = frequencies[i - 1] + frequencies[i - 2];
+        }
+
+        var samples = new List<ushort>();
+        for (var symbol = 0; symbol < frequencies.Length; symbol++) {
+            for (var i = 0L; i < frequencies[symbol]; i++) {
+                samples.Add((ushort)(symbol * 37));
+            }
+        }
+
+        var shuffled = samples.ToArray();
+        var random = new Random(5);
+        for (var i = shuffled.Length - 1; i > 0; i--) {
+            var j = random.Next(i + 1);
+            (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
+        }
+
+        var compressed = ExrHuffman.Compress(shuffled);
+        var decompressed = new ushort[shuffled.Length];
+        ExrHuffman.Uncompress(compressed, decompressed);
+
+        Assert.Equal(shuffled, decompressed);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(1000)]
+    public void ExrHuffman_SingleRepeatedSymbol_RoundTrips(int count)
+    {
+        var samples = new ushort[count];
+        Array.Fill(samples, (ushort)4242);
+
+        var compressed = ExrHuffman.Compress(samples);
+        var decompressed = new ushort[count];
+        ExrHuffman.Uncompress(compressed, decompressed);
+
+        Assert.Equal(samples, decompressed);
+    }
+
+    [Fact]
+    public void ExrHuffman_RunsLongerThanOneRunLengthCode_RoundTrip()
+    {
+        var samples = new ushort[3000];
+        for (var i = 0; i < samples.Length; i++) {
+            samples[i] = (ushort)(i / 700);
+        }
+
+        var compressed = ExrHuffman.Compress(samples);
+        var decompressed = new ushort[samples.Length];
+        ExrHuffman.Uncompress(compressed, decompressed);
+
+        Assert.Equal(samples, decompressed);
+        Assert.True(compressed.Length < samples.Length, $"Huffman produced {compressed.Length} bytes for {samples.Length} samples.");
     }
 }

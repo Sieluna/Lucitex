@@ -79,7 +79,6 @@ public class UnsupportedFeatureTests
     }
 
     [Theory]
-    [InlineData(ExrCompressionId.Piz)]
     [InlineData(ExrCompressionId.Pxr24)]
     [InlineData(ExrCompressionId.B44)]
     [InlineData(ExrCompressionId.B44A)]
@@ -103,7 +102,7 @@ public class UnsupportedFeatureTests
     public void CreateWriter_RejectsUnimplementedCompression()
     {
         var asset = Lucitex.Tests.Fixtures.ExrFixtures.SimpleRgba();
-        var codec = new Lucitex.Exr.ExrCodec(ExrCompressionId.Piz);
+        var codec = new Lucitex.Exr.ExrCodec(ExrCompressionId.Pxr24);
         using var stream = new MemoryStream();
 
         Assert.Throws<NotSupportedException>(() => codec.CreateWriter(stream, asset));

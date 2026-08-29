@@ -19,9 +19,9 @@ internal static class ExrCompressor
     };
 
     public static bool IsSupported(ExrCompressionId compression) => compression is
-        ExrCompressionId.None or ExrCompressionId.Rle or ExrCompressionId.Zips or ExrCompressionId.Zip;
+        ExrCompressionId.None or ExrCompressionId.Rle or ExrCompressionId.Zips or ExrCompressionId.Zip or ExrCompressionId.Piz;
 
-    public static byte[] Compress(ExrCompressionId compression, ReadOnlySpan<byte> uncompressed)
+    public static byte[] Compress(ExrCompressionId compression, ReadOnlySpan<byte> uncompressed, ExrBlockLayout layout)
     {
         if (compression == ExrCompressionId.None) {
             return uncompressed.ToArray();
@@ -31,13 +31,14 @@ internal static class ExrCompressor
             ExrCompressionId.Rle => ExrRle.Compress(uncompressed),
             ExrCompressionId.Zips => ExrZip.Compress(uncompressed),
             ExrCompressionId.Zip => ExrZip.Compress(uncompressed),
+            ExrCompressionId.Piz => ExrPiz.Compress(uncompressed, layout),
             _ => throw new NotSupportedException($"EXR compression '{compression}' is not supported."),
         };
 
         return compressed.Length < uncompressed.Length ? compressed : uncompressed.ToArray();
     }
 
-    public static void Decompress(ExrCompressionId compression, ReadOnlySpan<byte> compressed, Span<byte> destination)
+    public static void Decompress(ExrCompressionId compression, ReadOnlySpan<byte> compressed, Span<byte> destination, ExrBlockLayout layout)
     {
         if (compressed.Length == destination.Length) {
             compressed.CopyTo(destination);
@@ -61,6 +62,9 @@ internal static class ExrCompressor
             case ExrCompressionId.Zips:
             case ExrCompressionId.Zip:
                 ExrZip.Decompress(compressed, destination);
+                break;
+            case ExrCompressionId.Piz:
+                ExrPiz.Decompress(compressed, destination, layout);
                 break;
             default:
                 throw new NotSupportedException($"EXR compression '{compression}' is not supported.");

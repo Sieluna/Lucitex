@@ -21,6 +21,7 @@ public class ExrCodecEndToEndTests
     [InlineData(ExrCompressionId.Rle)]
     [InlineData(ExrCompressionId.Zips)]
     [InlineData(ExrCompressionId.Zip)]
+    [InlineData(ExrCompressionId.Piz)]
     public void RoundTrip_SimpleRgba_PreservesPixelsAndDescriptor(ExrCompressionId compression)
     {
         var asset = ExrFixtures.SimpleRgba();

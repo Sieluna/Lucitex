@@ -241,7 +241,14 @@ internal sealed class ExrWriter : IImageWriter
             var start = checked((int)layout.RowOffset(rowStart));
             var rawSize = checked((int)layout.RowOffset(rowStart + rowsInChunk)) - start;
 
-            var payload = ExrCompressor.Compress(part.Header.Compression, buffer.AsSpan(start, rawSize));
+            var chunkLayout = new ExrBlockLayout(
+                part.Header.Channels,
+                part.Header.DataWindow.XMin,
+                part.Header.DataWindow.XMax,
+                (int)part.DataMinY + rowStart,
+                (int)part.DataMinY + rowStart + rowsInChunk - 1);
+
+            var payload = ExrCompressor.Compress(part.Header.Compression, buffer.AsSpan(start, rawSize), chunkLayout);
             chunks[chunkIndex] = new ExrChunk((int)part.DataMinY + rowStart, 0, 0, 0, 0, payload);
         }
 
@@ -270,7 +277,7 @@ internal sealed class ExrWriter : IImageWriter
 
                     GatherTileFromImage(buffer, layout, tileBuffer, tileLayout, x0, y0, tileWidth, tileHeight);
 
-                    var payload = ExrCompressor.Compress(part.Header.Compression, tileBuffer);
+                    var payload = ExrCompressor.Compress(part.Header.Compression, tileBuffer, tileLayout);
                     chunks.Add(new ExrChunk(0, dx, dy, level.LevelX, level.LevelY, payload));
                 }
             }

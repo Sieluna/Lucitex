@@ -261,7 +261,7 @@ internal sealed class ExrReader : IImageReader
             var destinationOffset = checked((int)part.BaseLayout.RowOffset(y - (int)part.DataMinY));
             var unpackedSize = checked((int)chunkLayout.TotalBytes);
 
-            ExrCompressor.Decompress(part.Header.Compression, packed, buffer.AsSpan(destinationOffset, unpackedSize));
+            ExrCompressor.Decompress(part.Header.Compression, packed, buffer.AsSpan(destinationOffset, unpackedSize), chunkLayout);
         }
     }
 
@@ -308,7 +308,7 @@ internal sealed class ExrReader : IImageReader
 
             var tileLayout = new ExrBlockLayout(part.Header.Channels, 0, tileWidth - 1, 0, tileHeight - 1);
             var unpacked = new byte[tileLayout.TotalBytes];
-            ExrCompressor.Decompress(part.Header.Compression, packed, unpacked);
+            ExrCompressor.Decompress(part.Header.Compression, packed, unpacked, tileLayout);
 
             ScatterTileIntoImage(
                 buffers[expected.LevelIndex],

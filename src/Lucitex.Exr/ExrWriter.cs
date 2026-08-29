@@ -179,19 +179,20 @@ internal sealed class ExrWriter : IImageWriter
     {
         var header = ExrDescriptorMapper.ToExrHeader(part, compression) with { Tiles = tiles };
 
-        if (isMultiPart) {
-            header = header with {
-                PartName = header.PartName ?? $"part{index}",
-                PartType = tiles is null ? "scanlineimage" : "tiledimage",
-            };
-        }
-
         var width = header.DataWindow.Width;
         var height = header.DataWindow.Height;
 
         var levels = tiles is { } tileDesc
             ? ExrTiling.Levels(tileDesc, width, height)
             : [new ExrTileLevel(0, 0, (int)width, (int)height, 0, 0)];
+
+        if (isMultiPart) {
+            header = header with {
+                PartName = header.PartName ?? $"part{index}",
+                PartType = tiles is null ? "scanlineimage" : "tiledimage",
+                ChunkCount = CountChunks(levels, tiles, compression, height),
+            };
+        }
 
         var levelMode = tiles?.LevelMode ?? ExrTileLevelMode.OneLevel;
         var layouts = new ExrBlockLayout[levels.Count];
@@ -221,6 +222,20 @@ internal sealed class ExrWriter : IImageWriter
             Width = width,
             Height = height,
         };
+    }
+
+    private static int CountChunks(
+        IReadOnlyList<ExrTileLevel> levels,
+        ExrTileDesc? tiles,
+        ExrCompressionId compression,
+        long height)
+    {
+        if (tiles is not null) {
+            return levels.Aggregate(0, (total, level) => checked(total + level.TileCount));
+        }
+
+        var linesPerChunk = ExrCompressor.NumScanlinesPerChunk(compression);
+        return checked((int)((height + linesPerChunk - 1) / linesPerChunk));
     }
 
     private static ExrChunk[] BuildChunksForPart(PartState part) =>

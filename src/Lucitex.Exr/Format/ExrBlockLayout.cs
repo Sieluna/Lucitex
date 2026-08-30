@@ -1,3 +1,6 @@
+using Lucitex.Core.Sampling;
+using Lucitex.Core.Spatial;
+
 namespace Lucitex.Exr.Format;
 
 internal sealed class ExrBlockLayout
@@ -109,14 +112,9 @@ internal sealed class ExrBlockLayout
         return offset;
     }
 
-    public static int NumSamples(int sampling, int min, int max)
-    {
-        if (max < min) {
-            return 0;
-        }
+    public static int NumSamples(int sampling, int min, int max) =>
+        checked((int)Grid(sampling).CountColumns(min, max));
 
-        var first = min / sampling;
-        var last = max / sampling;
-        return last - first + (first * sampling < min ? 0 : 1);
-    }
+    private static SampleGrid Grid(int sampling) =>
+        new() { Origin = Long3.Zero, Step = new Int3(sampling, sampling, 1) };
 }

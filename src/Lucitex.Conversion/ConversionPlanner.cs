@@ -136,6 +136,15 @@ public static class ConversionPlanner
                 ]);
             }
 
+            var (samplingSteps, unitSampledChannels, samplingDiagnostics) = PlanSampling(sourceChannels);
+            if (samplingDiagnostics.Count > 0 && !AllowsLoss(policy, samplingDiagnostics)) {
+                return ConversionPlanResult.Failure(samplingDiagnostics);
+            }
+
+            steps.AddRange(samplingSteps);
+            diagnostics.AddRange(samplingDiagnostics);
+            sourceChannels = unitSampledChannels;
+
             var (channelSteps, resultChannels, channelDiagnostics) = PlanChannels(sourceChannels, targetCapabilities, policy);
             if (channelDiagnostics.Count > 0 && !AllowsLoss(policy, channelDiagnostics)) {
                 return ConversionPlanResult.Failure(channelDiagnostics);
@@ -422,6 +431,39 @@ public static class ConversionPlanner
         }
 
         return (steps, new ChannelSchema { Channels = result }, diagnostics);
+    }
+
+    private static (IReadOnlyList<ConversionStep> Steps, ChannelSchema Channels, IReadOnlyList<LossDiagnostic> Diagnostics) PlanSampling(
+        ChannelSchema sourceChannels)
+    {
+        if (sourceChannels.Channels.All(channel => channel.Sampling.IsUnit)) {
+            return ([], sourceChannels, []);
+        }
+
+        var steps = new List<ConversionStep>();
+        var diagnostics = new List<LossDiagnostic>();
+        var resultChannels = new List<ChannelDescriptor>();
+
+        foreach (var channel in sourceChannels.Channels) {
+            if (channel.Sampling.IsUnit) {
+                resultChannels.Add(channel);
+                continue;
+            }
+
+            steps.Add(new ChangeSampleGridStep(channel.Name, channel.Sampling, SampleGrid.Unit));
+            diagnostics.Add(new LossDiagnostic {
+                Category = LossCategory.Sampling,
+                ChannelName = channel.Name.FullName,
+                IsSemanticLoss = false,
+                Message =
+                    $"Channel '{channel.Name.FullName}' is stored at {channel.Sampling.Step.X}x{channel.Sampling.Step.Y} " +
+                    "subsampling and is replicated to full resolution; no stored sample is discarded.",
+            });
+
+            resultChannels.Add(channel with { Sampling = SampleGrid.Unit });
+        }
+
+        return (steps, new ChannelSchema { Channels = resultChannels }, diagnostics);
     }
 
     private static (IReadOnlyList<ConversionStep> Steps, ChannelSchema Channels, IReadOnlyList<LossDiagnostic> Diagnostics) PlanChannels(

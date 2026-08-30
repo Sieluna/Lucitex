@@ -15,7 +15,7 @@ namespace Lucitex.Conversion;
 // ConvertSampleType step falls out for free once both ends agree on float32 as the interchange type.
 public static class ConversionExecutor
 {
-    private readonly record struct ChannelLocation(int RowRelativeBase, int PerPixelStride, int BytesPerSample);
+    private readonly record struct ChannelPlacement(int PlaneIndex, int BaseOffset, int PerSampleStride, int BytesPerSample);
 
     private static readonly HashSet<string> s_ColorChannelNames = ["R", "G", "B", "Y"];
 
@@ -29,7 +29,8 @@ public static class ConversionExecutor
             foreach (var step in partPlan.Steps) {
                 if (step is not (SelectPartStep or SelectChannelsStep or ConvertSampleTypeStep or PremultiplyAlphaStep or UnpremultiplyAlphaStep
                     or ApplyOrientationStep or ColorTransformStep or DropMetadataStep or PreserveMetadataStep
-                    or DecodeEncodedElementsStep or EncodeEncodedElementsStep or TranscodeEncodedElementsStep or SynthesizeChannelStep or ExpandIndexedStep)) {
+                    or DecodeEncodedElementsStep or EncodeEncodedElementsStep or TranscodeEncodedElementsStep or SynthesizeChannelStep or ExpandIndexedStep
+                    or ChangeSampleGridStep)) {
                     throw new NotSupportedException($"ConversionExecutor does not support {step.GetType().Name} yet.");
                 }
             }
@@ -53,21 +54,23 @@ public static class ConversionExecutor
             var floatChannels = new Dictionary<ChannelPath, float[]>();
             if (sourcePart.Representation is PlainSampleRepresentation sourcePlain) {
                 var sourceChannels = sourcePart.Channels.Channels.ToDictionary(c => c.Name);
-                var (sourceLocations, sourceRowStride) = ComputeLayout(sourcePlain.Planes, sourceChannels, width);
-                var sourceBuffer = new byte[height * sourceRowStride];
+                var sourceLayout = new SampleLayout(sourcePlain.Planes, sourceChannels, window);
+                var sourceBuffer = new byte[sourceLayout.TotalBytes];
                 source.Read(region, sourceBuffer);
 
                 foreach (var plane in sourcePlain.Planes) {
                     foreach (var channelName in plane.Channels) {
                         var channel = sourceChannels[channelName];
-                        var location = sourceLocations[channelName];
+                        var bytesPerSample = sourceLayout.BytesPerSample(channelName);
+                        var rowBases = sourceLayout.BuildRowBases(channelName, height);
+                        var columnOffsets = sourceLayout.BuildColumnOffsets(channelName, width);
 
-                        var raw = new byte[pixelCount * location.BytesPerSample];
+                        var raw = new byte[pixelCount * bytesPerSample];
                         for (var y = 0; y < height; y++) {
-                            var rowBase = (y * sourceRowStride) + location.RowRelativeBase;
+                            var rowBase = rowBases[y];
                             for (var x = 0; x < width; x++) {
-                                sourceBuffer.AsSpan(rowBase + (x * location.PerPixelStride), location.BytesPerSample)
-                                    .CopyTo(raw.AsSpan(((y * width) + x) * location.BytesPerSample, location.BytesPerSample));
+                                sourceBuffer.AsSpan(checked((int)(rowBase + columnOffsets[x])), bytesPerSample)
+                                    .CopyTo(raw.AsSpan(((y * width) + x) * bytesPerSample, bytesPerSample));
                             }
                         }
 
@@ -286,23 +289,25 @@ public static class ConversionExecutor
             }
 
             var targetChannels = targetPart.Channels.Channels.ToDictionary(c => c.Name);
-            var (targetLocations, targetRowStride) = ComputeLayout(targetPlain.Planes, targetChannels, width);
+            var targetLayout = new SampleLayout(targetPlain.Planes, targetChannels, window);
 
-            var targetBuffer = new byte[height * targetRowStride];
+            var targetBuffer = new byte[targetLayout.TotalBytes];
             foreach (var plane in targetPlain.Planes) {
                 foreach (var channelName in plane.Channels) {
                     var channel = targetChannels[channelName];
-                    var location = targetLocations[channelName];
                     var floats = floatChannels[channelName];
+                    var bytesPerSample = targetLayout.BytesPerSample(channelName);
+                    var rowBases = targetLayout.BuildRowBases(channelName, height);
+                    var columnOffsets = targetLayout.BuildColumnOffsets(channelName, width);
 
-                    var raw = new byte[pixelCount * location.BytesPerSample];
+                    var raw = new byte[pixelCount * bytesPerSample];
                     SampleTypeConversionKernel.FromFloat32(floats, channel.SampleType, targetByteOrder, raw);
 
                     for (var y = 0; y < height; y++) {
-                        var rowBase = (y * targetRowStride) + location.RowRelativeBase;
+                        var rowBase = rowBases[y];
                         for (var x = 0; x < width; x++) {
-                            raw.AsSpan(((y * width) + x) * location.BytesPerSample, location.BytesPerSample)
-                                .CopyTo(targetBuffer.AsSpan(rowBase + (x * location.PerPixelStride), location.BytesPerSample));
+                            raw.AsSpan(((y * width) + x) * bytesPerSample, bytesPerSample)
+                                .CopyTo(targetBuffer.AsSpan(checked((int)(rowBase + columnOffsets[x])), bytesPerSample));
                         }
                     }
                 }
@@ -314,28 +319,157 @@ public static class ConversionExecutor
         target.Finish();
     }
 
-    private static (Dictionary<ChannelPath, ChannelLocation> Locations, int RowStrideBytes) ComputeLayout(
-        IReadOnlyList<SamplePlaneDescriptor> planes, IReadOnlyDictionary<ChannelPath, ChannelDescriptor> channels, int width)
+    private sealed class SampleLayout
     {
-        var locations = new Dictionary<ChannelPath, ChannelLocation>();
-        var rowOffset = 0;
+        private readonly ImageBox _window;
+        private readonly int _rowCount;
+        private readonly SampleGrid[] _planeSampling;
+        private readonly int[] _planeRowBytes;
+        private readonly Dictionary<ChannelPath, ChannelPlacement> _placements = [];
+        private readonly long[]? _rowOffsets;
+        private readonly int _uniformRowBytes;
 
-        foreach (var plane in planes) {
-            var bytesPerSample = plane.Channels.ToDictionary(c => c, c => BytesPerSample(channels[c]));
-            var planeBytesPerPixel = bytesPerSample.Values.Sum();
-            var withinPlaneOffset = 0;
+        public SampleLayout(
+            IReadOnlyList<SamplePlaneDescriptor> planes,
+            IReadOnlyDictionary<ChannelPath, ChannelDescriptor> channels,
+            ImageBox window)
+        {
+            _window = window;
+            _rowCount = checked((int)window.Height);
+            _planeSampling = new SampleGrid[planes.Count];
+            _planeRowBytes = new int[planes.Count];
 
-            foreach (var channelName in plane.Channels) {
-                var sampleSize = bytesPerSample[channelName];
-                var perPixelStride = plane.Layout == PlaneLayout.Interleaved ? planeBytesPerPixel : sampleSize;
-                locations[channelName] = new ChannelLocation(rowOffset + withinPlaneOffset, perPixelStride, sampleSize);
-                withinPlaneOffset += plane.Layout == PlaneLayout.Interleaved ? sampleSize : sampleSize * width;
+            var ragged = false;
+
+            for (var planeIndex = 0; planeIndex < planes.Count; planeIndex++) {
+                var plane = planes[planeIndex];
+                var sampling = PlaneSampling(plane, channels);
+                var sampleCountX = checked((int)sampling.CountColumns(window.MinX, window.MaxXExclusive - 1));
+
+                _planeSampling[planeIndex] = sampling;
+                ragged |= sampling.Step.Y != 1;
+
+                var bytesPerPixel = plane.Channels.Sum(name => ConversionExecutor.BytesPerSample(channels[name]));
+                _planeRowBytes[planeIndex] = checked(sampleCountX * bytesPerPixel);
+
+                var offset = 0;
+                foreach (var name in plane.Channels) {
+                    var bytesPerSample = ConversionExecutor.BytesPerSample(channels[name]);
+                    _placements[name] = new ChannelPlacement(
+                        planeIndex,
+                        offset,
+                        plane.Layout == PlaneLayout.Interleaved ? bytesPerPixel : bytesPerSample,
+                        bytesPerSample);
+
+                    offset += plane.Layout == PlaneLayout.Interleaved ? bytesPerSample : sampleCountX * bytesPerSample;
+                }
             }
 
-            rowOffset += planeBytesPerPixel * width;
+            if (ragged) {
+                _rowOffsets = new long[_rowCount + 1];
+                for (var row = 0; row < _rowCount; row++) {
+                    _rowOffsets[row + 1] = _rowOffsets[row] + RowBytes(row);
+                }
+
+                TotalBytes = _rowOffsets[_rowCount];
+            }
+            else {
+                _uniformRowBytes = _planeRowBytes.Sum();
+                TotalBytes = (long)_uniformRowBytes * _rowCount;
+            }
         }
 
-        return (locations, rowOffset);
+        public long TotalBytes { get; }
+
+        public int BytesPerSample(ChannelPath channel) => _placements[channel].BytesPerSample;
+
+        public long[] BuildRowBases(ChannelPath channel, int height)
+        {
+            var placement = _placements[channel];
+            var sampling = _planeSampling[placement.PlaneIndex];
+            var bases = new long[height];
+
+            for (var y = 0; y < height; y++) {
+                var row = SourceRow(sampling, y);
+                bases[y] = RowOffset(row) + PlaneOffsetInRow(row, placement.PlaneIndex) + placement.BaseOffset;
+            }
+
+            return bases;
+        }
+
+        public int[] BuildColumnOffsets(ChannelPath channel, int width)
+        {
+            var placement = _placements[channel];
+            var sampling = _planeSampling[placement.PlaneIndex];
+            var offsets = new int[width];
+
+            for (var x = 0; x < width; x++) {
+                var column = sampling.ClampColumnToSample(_window.MinX + x, _window.MinX);
+                var index = sampling.CountColumns(_window.MinX, column) - 1;
+                offsets[x] = checked((int)(index * placement.PerSampleStride));
+            }
+
+            return offsets;
+        }
+
+        private int SourceRow(SampleGrid sampling, int y)
+        {
+            var row = sampling.ClampRowToSample(_window.MinY + y, _window.MinY) - _window.MinY;
+
+            while (row >= _rowCount) {
+                row -= sampling.Step.Y;
+            }
+
+            if (row < 0) {
+                throw new NotSupportedException(
+                    $"Channel sampling leaves no stored row inside the data window for image row {y}.");
+            }
+
+            return checked((int)row);
+        }
+
+        private long RowOffset(int row) => _rowOffsets?[row] ?? ((long)row * _uniformRowBytes);
+
+        private int RowBytes(int row)
+        {
+            var total = 0;
+            for (var planeIndex = 0; planeIndex < _planeRowBytes.Length; planeIndex++) {
+                if (_planeSampling[planeIndex].IncludesRow(_window.MinY + row)) {
+                    total = checked(total + _planeRowBytes[planeIndex]);
+                }
+            }
+
+            return total;
+        }
+
+        private int PlaneOffsetInRow(int row, int planeIndex)
+        {
+            var offset = 0;
+
+            for (var i = 0; i < planeIndex; i++) {
+                if (_planeSampling[i].IncludesRow(_window.MinY + row)) {
+                    offset += _planeRowBytes[i];
+                }
+            }
+
+            return offset;
+        }
+
+        private static SampleGrid PlaneSampling(
+            SamplePlaneDescriptor plane,
+            IReadOnlyDictionary<ChannelPath, ChannelDescriptor> channels)
+        {
+            var sampling = channels[plane.Channels[0]].Sampling;
+
+            foreach (var name in plane.Channels) {
+                if (channels[name].Sampling != sampling) {
+                    throw new NotSupportedException(
+                        $"Plane containing '{name}' mixes sampling grids, which ConversionExecutor cannot address.");
+                }
+            }
+
+            return sampling;
+        }
     }
 
     private static int BytesPerSample(ChannelDescriptor channel)

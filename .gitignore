@@ -30,6 +30,9 @@ artifacts/
 # vcpkg manifest installed packages
 vcpkg_installed/
 
+# Benchmark outputs
+BenchmarkDotNet.Artifacts/
+
 # IDE / editor
 .vscode/
 .idea/

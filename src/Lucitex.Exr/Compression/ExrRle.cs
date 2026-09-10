@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace Lucitex.Exr.Compression;
 
 internal static class ExrRle
@@ -11,7 +13,17 @@ internal static class ExrRle
             return [];
         }
 
-        var output = new byte[Math.Max(64, input.Length * 2)];
+        var rented = ArrayPool<byte>.Shared.Rent(Math.Max(64, input.Length * 2));
+        try {
+            return Compress(input, rented);
+        }
+        finally {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    private static byte[] Compress(ReadOnlySpan<byte> input, Span<byte> output)
+    {
         var outPos = 0;
         var runStart = 0;
         var runEnd = 1;
@@ -46,7 +58,7 @@ internal static class ExrRle
             runEnd++;
         }
 
-        return output[..outPos];
+        return output[..outPos].ToArray();
     }
 
     public static int Decompress(ReadOnlySpan<byte> input, Span<byte> output)

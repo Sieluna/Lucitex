@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 
 namespace Lucitex.Exr.Compression;
@@ -25,31 +26,46 @@ internal static class ExrHuffman
         }
 
         var frequencies = new long[k_EncodeSize];
-        foreach (var value in raw) {
-            frequencies[value]++;
-        }
-
-        var codes = BuildEncodeTable(frequencies, out var minSymbol, out var maxSymbol);
+        var codes = new long[k_EncodeSize];
+        var link = ArrayPool<int>.Shared.Rent(k_EncodeSize);
+        var heap = ArrayPool<int>.Shared.Rent(k_EncodeSize);
 
         var tableWriter = new BitWriter();
-        PackEncodeTable(codes, minSymbol, maxSymbol, tableWriter);
-        var table = tableWriter.ToArray();
-
         var payloadWriter = new BitWriter();
-        EncodeSymbols(codes, raw, maxSymbol, payloadWriter);
-        var bitCount = payloadWriter.BitCount;
-        var payload = payloadWriter.ToArray();
 
-        var result = new byte[k_HeaderBytes + table.Length + payload.Length];
-        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(0), (uint)minSymbol);
-        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(4), (uint)maxSymbol);
-        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(8), (uint)table.Length);
-        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(12), (uint)bitCount);
-        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(16), 0);
-        table.CopyTo(result.AsSpan(k_HeaderBytes));
-        payload.CopyTo(result.AsSpan(k_HeaderBytes + table.Length));
+        try {
+            foreach (var value in raw) {
+                frequencies[value]++;
+            }
 
-        return result;
+            BuildEncodeTable(frequencies, link, heap, codes, out var minSymbol, out var maxSymbol);
+
+            PackEncodeTable(codes, minSymbol, maxSymbol, tableWriter);
+            tableWriter.Flush();
+            var table = tableWriter.Written;
+
+            EncodeSymbols(codes, raw, maxSymbol, payloadWriter);
+            var bitCount = payloadWriter.BitCount;
+            payloadWriter.Flush();
+            var payload = payloadWriter.Written;
+
+            var result = new byte[k_HeaderBytes + table.Length + payload.Length];
+            BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(0), (uint)minSymbol);
+            BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(4), (uint)maxSymbol);
+            BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(8), (uint)table.Length);
+            BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(12), (uint)bitCount);
+            BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(16), 0);
+            table.CopyTo(result.AsSpan(k_HeaderBytes));
+            payload.CopyTo(result.AsSpan(k_HeaderBytes + table.Length));
+
+            return result;
+        }
+        finally {
+            payloadWriter.Dispose();
+            tableWriter.Dispose();
+            ArrayPool<int>.Shared.Return(heap);
+            ArrayPool<int>.Shared.Return(link);
+        }
     }
 
     public static void Uncompress(ReadOnlySpan<byte> compressed, Span<ushort> raw)
@@ -76,7 +92,7 @@ internal static class ExrHuffman
 
         var codes = new long[k_EncodeSize];
         var reader = new BitReader(compressed[k_HeaderBytes..]);
-        UnpackEncodeTable(reader, minSymbol, maxSymbol, codes);
+        UnpackEncodeTable(ref reader, minSymbol, maxSymbol, codes);
         CanonicalCodeTable(codes);
 
         var payloadStart = k_HeaderBytes + reader.BytesConsumed;
@@ -88,10 +104,8 @@ internal static class ExrHuffman
         DecodeSymbols(codes, table, compressed[payloadStart..], bitCount, maxSymbol, raw);
     }
 
-    private static long[] BuildEncodeTable(long[] frequencies, out int minSymbol, out int maxSymbol)
+    private static void BuildEncodeTable(long[] frequencies, int[] link, int[] heap, long[] lengths, out int minSymbol, out int maxSymbol)
     {
-        var link = new int[k_EncodeSize];
-        var heap = new int[k_EncodeSize];
         var count = 0;
 
         minSymbol = 0;
@@ -116,8 +130,6 @@ internal static class ExrHuffman
         for (var i = (count / 2) - 1; i >= 0; i--) {
             SiftDown(heap, count, i, frequencies);
         }
-
-        var lengths = new long[k_EncodeSize];
 
         while (count > 1) {
             var first = heap[0];
@@ -145,7 +157,6 @@ internal static class ExrHuffman
         }
 
         CanonicalCodeTable(lengths);
-        return lengths;
     }
 
     private static void SiftDown(int[] heap, int count, int index, long[] frequencies)
@@ -236,7 +247,7 @@ internal static class ExrHuffman
         }
     }
 
-    private static void UnpackEncodeTable(BitReader reader, int minSymbol, int maxSymbol, long[] codes)
+    private static void UnpackEncodeTable(ref BitReader reader, int minSymbol, int maxSymbol, long[] codes)
     {
         for (var symbol = minSymbol; symbol <= maxSymbol; symbol++) {
             var length = (int)reader.Read(6);
@@ -505,11 +516,14 @@ internal static class ExrHuffman
 
     private sealed class BitWriter
     {
-        private readonly List<byte> _bytes = [];
+        private byte[] _buffer = ArrayPool<byte>.Shared.Rent(1 << 16);
+        private int _length;
         private ulong _accumulator;
         private int _available;
 
         public long BitCount { get; private set; }
+
+        public ReadOnlySpan<byte> Written => _buffer.AsSpan(0, _length);
 
         public void Write(int bits, long value)
         {
@@ -523,31 +537,66 @@ internal static class ExrHuffman
             _available += bits;
             BitCount += bits;
 
+            if (_available < 8) {
+                return;
+            }
+
+            EnsureCapacity(sizeof(uint) + 3);
+
+            if (_available >= 32) {
+                _available -= 32;
+                BinaryPrimitives.WriteUInt32BigEndian(_buffer.AsSpan(_length), (uint)(_accumulator >> _available));
+                _length += sizeof(uint);
+            }
+
             while (_available >= 8) {
                 _available -= 8;
-                _bytes.Add((byte)(_accumulator >> _available));
+                _buffer[_length++] = (byte)(_accumulator >> _available);
             }
         }
 
-        public byte[] ToArray()
+        public void Flush()
         {
-            if (_available > 0) {
-                _bytes.Add((byte)(_accumulator << (8 - _available)));
-                _available = 0;
+            if (_available <= 0) {
+                return;
             }
 
-            return _bytes.ToArray();
+            EnsureCapacity(1);
+            _buffer[_length++] = (byte)(_accumulator << (8 - _available));
+            _available = 0;
+        }
+
+        public void Dispose()
+        {
+            if (_buffer.Length == 0) {
+                return;
+            }
+
+            ArrayPool<byte>.Shared.Return(_buffer);
+            _buffer = [];
+        }
+
+        private void EnsureCapacity(int extra)
+        {
+            if (_length + extra <= _buffer.Length) {
+                return;
+            }
+
+            var grown = ArrayPool<byte>.Shared.Rent(Math.Max(_buffer.Length * 2, _length + extra));
+            _buffer.AsSpan(0, _length).CopyTo(grown);
+            ArrayPool<byte>.Shared.Return(_buffer);
+            _buffer = grown;
         }
     }
 
-    private sealed class BitReader
+    private ref struct BitReader
     {
-        private readonly byte[] _source;
+        private readonly ReadOnlySpan<byte> _source;
         private ulong _accumulator;
         private int _available;
         private int _position;
 
-        public BitReader(ReadOnlySpan<byte> source) => _source = source.ToArray();
+        public BitReader(ReadOnlySpan<byte> source) => _source = source;
 
         public int BytesConsumed => _position;
 

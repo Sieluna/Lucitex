@@ -180,13 +180,9 @@ internal static class ExrWavelet
         var shifted = (a + k_Offset) & k_ModMask;
         var mean = (shifted + b) >> 1;
         var difference = shifted - b;
+        var negative = difference >> 31;
 
-        if (difference < 0) {
-            mean = (mean + k_Offset) & k_ModMask;
-            difference += 1 << k_Bits;
-        }
-
-        low = (ushort)mean;
+        low = (ushort)((mean + (k_Offset & negative)) & k_ModMask);
         high = (ushort)(difference & k_ModMask);
     }
 

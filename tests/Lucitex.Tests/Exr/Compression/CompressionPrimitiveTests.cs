@@ -181,4 +181,64 @@ public class CompressionPrimitiveTests
         Assert.Equal(samples, decompressed);
         Assert.True(compressed.Length < samples.Length, $"Huffman produced {compressed.Length} bytes for {samples.Length} samples.");
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(15)]
+    [InlineData(16)]
+    [InlineData(17)]
+    [InlineData(31)]
+    [InlineData(64)]
+    [InlineData(65)]
+    [InlineData(4099)]
+    public void ByteReorder_Split_MatchesScalarDefinition(int length)
+    {
+        var original = RandomBytes(length, length + 11);
+        var actual = new byte[length];
+        var expected = new byte[length];
+
+        ByteReorder.Split(original, actual);
+
+        var half = (length + 1) / 2;
+        var even = 0;
+        var odd = half;
+        for (var i = 0; i < length; i++) {
+            if (i % 2 == 0) {
+                expected[even++] = original[i];
+            }
+            else {
+                expected[odd++] = original[i];
+            }
+        }
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(15)]
+    [InlineData(16)]
+    [InlineData(17)]
+    [InlineData(31)]
+    [InlineData(64)]
+    [InlineData(65)]
+    [InlineData(4099)]
+    public void BytePredictor_Remove_MatchesScalarDefinition(int length)
+    {
+        var original = RandomBytes(length, length + 13);
+        var actual = (byte[])original.Clone();
+        var expected = (byte[])original.Clone();
+
+        BytePredictor.Remove(actual);
+
+        for (var i = 1; i < expected.Length; i++) {
+            expected[i] = unchecked((byte)(expected[i - 1] + expected[i] - 128));
+        }
+
+        Assert.Equal(expected, actual);
+    }
 }

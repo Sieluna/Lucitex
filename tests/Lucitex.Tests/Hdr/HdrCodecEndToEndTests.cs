@@ -13,6 +13,13 @@ public class HdrCodecEndToEndTests
     [Theory]
     [InlineData(32, 19)]
     [InlineData(4, 7)]
+    [InlineData(8, 3)]
+    [InlineData(9, 2)]
+    [InlineData(31, 5)]
+    [InlineData(33, 5)]
+    [InlineData(37, 11)]
+    [InlineData(64, 3)]
+    [InlineData(257, 4)]
     public void RoundTrip_PreservesRgbeElements(int width, int height)
     {
         var descriptor = WithSize(HdrFixtures.Rgbe(), width, height);
@@ -95,5 +102,49 @@ public class HdrCodecEndToEndTests
                 },
             ],
         };
+    }
+
+    [Theory]
+    [InlineData(64, 4)]
+    [InlineData(300, 3)]
+    public void RoundTrip_WithLongRuns_PreservesRgbeElements(int width, int height)
+    {
+        var descriptor = WithSize(HdrFixtures.Rgbe(), width, height);
+        var pixels = new byte[width * height * 4];
+        var random = new Random(7);
+
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                var offset = ((y * width) + x) * 4;
+                var flat = (x / 40) % 2 == 0;
+                pixels[offset] = flat ? (byte)200 : (byte)random.Next(256);
+                pixels[offset + 1] = flat ? (byte)200 : (byte)random.Next(256);
+                pixels[offset + 2] = flat ? (byte)200 : (byte)random.Next(256);
+                pixels[offset + 3] = 128;
+            }
+        }
+
+        Assert.Equal(pixels, RoundTrip(descriptor, pixels, width, height));
+    }
+
+    private static byte[] RoundTrip(ImageAssetDescriptor descriptor, byte[] pixels, int width, int height)
+    {
+        var region = new WorkRegion {
+            Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
+            Region = ImageBox.FromOrigin(width, height),
+        };
+
+        var codec = new HdrCodec();
+        using var stream = new MemoryStream();
+        var writer = codec.CreateWriter(stream, descriptor);
+        writer.Write(region, pixels);
+        writer.Finish();
+
+        stream.Position = 0;
+        var reader = codec.OpenReader(stream);
+        var destination = new byte[pixels.Length];
+        reader.Read(region, destination);
+
+        return destination;
     }
 }

@@ -59,11 +59,7 @@ internal sealed class HdrWriter : IImageWriter
         }
 
         HdrHeaderIo.Write(_stream, _width, _height, _orientation);
-        var rowBytes = checked(_width * 4);
-        var channelBuffer = new byte[_width];
-        for (var y = 0; y < _height; y++) {
-            HdrRle.EncodeScanline(_stream, _pixels.AsSpan(y * rowBytes, rowBytes), _width, channelBuffer);
-        }
+        HdrRle.Encode(_stream, _pixels, _width, _height);
 
         _finished = true;
     }

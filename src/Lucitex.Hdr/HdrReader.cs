@@ -65,9 +65,7 @@ internal sealed class HdrReader : IImageReader
 
         var rowBytes = checked(_header.Width * 4);
         var pixels = new byte[checked(rowBytes * _header.Height)];
-        for (var y = 0; y < _header.Height; y++) {
-            HdrRle.DecodeScanline(_stream, pixels.AsSpan(y * rowBytes, rowBytes), _header.Width);
-        }
+        HdrRle.Decode(_stream, pixels, _header.Width, _header.Height);
 
         _pixels = pixels;
     }

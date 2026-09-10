@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -27,10 +28,10 @@ internal static class SampleTypeConversionKernel
                 UNorm8ToFloat32(source, destination);
                 return;
             case (ScalarKind.UnsignedInt, 16, NumericEncoding.UNorm):
-                UNorm16ToFloat32(ToHostOrderUInt16(source, byteOrder), destination);
+                UNorm16ToFloat32(source, byteOrder, destination);
                 return;
             case (ScalarKind.Float, 16, NumericEncoding.Raw):
-                Half16ToFloat32(ToHostOrderUInt16(source, byteOrder), destination);
+                Half16ToFloat32(source, byteOrder, destination);
                 return;
             case (ScalarKind.Float, 32, NumericEncoding.Raw):
                 Float32Passthrough(source, byteOrder, destination);
@@ -47,10 +48,10 @@ internal static class SampleTypeConversionKernel
                 Float32ToUNorm8(source, destination);
                 return;
             case (ScalarKind.UnsignedInt, 16, NumericEncoding.UNorm):
-                FromFloat32ToUInt16Then(source, destination, byteOrder, Float32ToUNorm16);
+                Float32ToUNorm16(source, byteOrder, destination);
                 return;
             case (ScalarKind.Float, 16, NumericEncoding.Raw):
-                FromFloat32ToUInt16Then(source, destination, byteOrder, Float32ToHalfBits);
+                Float32ToHalfBits(source, byteOrder, destination);
                 return;
             case (ScalarKind.Float, 32, NumericEncoding.Raw):
                 Float32FromPassthrough(source, byteOrder, destination);
@@ -118,7 +119,7 @@ internal static class SampleTypeConversionKernel
         }
 
         static Vector<float> ClampToBytes(Vector<float> value, Vector<float> zero, Vector<float> max) =>
-            Vector.Min(Vector.Max((value * 255f) + new Vector<float>(0.5f), zero), max);
+            Vector.Min(Vector.Max(Vector.Round(value * 255f), zero), max);
     }
 
     private static void UNorm16ToFloat32(ReadOnlySpan<ushort> source, Span<float> destination)
@@ -152,8 +153,8 @@ internal static class SampleTypeConversionKernel
             var zero = new Vector<float>(0f);
             var max = new Vector<float>(65535f);
             for (; i + (2 * floatLanes) <= source.Length; i += 2 * floatLanes) {
-                var a = Vector.Min(Vector.Max((new Vector<float>(source.Slice(i, floatLanes)) * 65535f) + new Vector<float>(0.5f), zero), max);
-                var b = Vector.Min(Vector.Max((new Vector<float>(source.Slice(i + floatLanes, floatLanes)) * 65535f) + new Vector<float>(0.5f), zero), max);
+                var a = Vector.Min(Vector.Max(Vector.Round(new Vector<float>(source.Slice(i, floatLanes)) * 65535f), zero), max);
+                var b = Vector.Min(Vector.Max(Vector.Round(new Vector<float>(source.Slice(i + floatLanes, floatLanes)) * 65535f), zero), max);
 
                 var uintsA = Vector.ConvertToUInt32(a);
                 var uintsB = Vector.ConvertToUInt32(b);
@@ -174,6 +175,8 @@ internal static class SampleTypeConversionKernel
     private static readonly Vector<float> s_HalfMagic = new(BitConverter.Int32BitsToSingle((254 - 15) << 23));
     private static readonly Vector<float> s_HalfWasInfNan = new(BitConverter.Int32BitsToSingle((127 + 16) << 23));
     private const uint k_InfNanExponentBits = 255u << 23;
+    private const uint k_SubnormalMagicBits = 126u << 23;
+    private static readonly Vector<float> s_SubnormalMagic = new(BitConverter.UInt32BitsToSingle(k_SubnormalMagicBits));
 
     private static void Half16ToFloat32(ReadOnlySpan<ushort> source, Span<float> destination)
     {
@@ -211,61 +214,123 @@ internal static class SampleTypeConversionKernel
 
     private static void Float32ToHalfBits(ReadOnlySpan<float> source, Span<ushort> destination)
     {
-        for (var i = 0; i < source.Length; i++) {
+        var i = 0;
+        var floatLanes = Vector<float>.Count;
+
+        if (Vector.IsHardwareAccelerated) {
+            for (; i + (2 * floatLanes) <= source.Length; i += 2 * floatLanes) {
+                var lo = HalfBitsFromFloat(new Vector<float>(source.Slice(i, floatLanes)));
+                var hi = HalfBitsFromFloat(new Vector<float>(source.Slice(i + floatLanes, floatLanes)));
+                Vector.Narrow(lo, hi).CopyTo(destination.Slice(i, 2 * floatLanes));
+            }
+        }
+
+        for (; i < source.Length; i++) {
             destination[i] = BitConverter.HalfToUInt16Bits((Half)source[i]);
         }
     }
 
+    private static Vector<uint> HalfBitsFromFloat(Vector<float> values)
+    {
+        var bits = Vector.As<float, uint>(values);
+        var sign = bits & new Vector<uint>(0x80000000u);
+        var magnitude = bits & new Vector<uint>(0x7FFFFFFFu);
+        var signedMagnitude = Vector.As<uint, int>(magnitude);
+
+        var isOverflow = Vector.GreaterThanOrEqual(signedMagnitude, new Vector<int>(0x47800000));
+        var isNaN = Vector.GreaterThan(signedMagnitude, new Vector<int>(0x7F800000));
+        var isSubnormal = Vector.LessThan(signedMagnitude, new Vector<int>(0x38800000));
+
+        var quietNaN = new Vector<uint>(0x7E00u) | ((magnitude >> 13) & new Vector<uint>(0x3FFu));
+        var overflow = Vector.ConditionalSelect(Vector.As<int, uint>(isNaN), quietNaN, new Vector<uint>(0x7C00u));
+
+        var shifted = Vector.As<float, uint>(Vector.As<uint, float>(magnitude) + s_SubnormalMagic) - new Vector<uint>(k_SubnormalMagicBits);
+
+        var rounded = (magnitude + new Vector<uint>(0xC8000FFFu) + ((magnitude >> 13) & Vector<uint>.One)) >> 13;
+
+        var finite = Vector.ConditionalSelect(Vector.As<int, uint>(isSubnormal), shifted, rounded);
+        var result = Vector.ConditionalSelect(Vector.As<int, uint>(isOverflow), overflow, finite);
+
+        return result | (sign >> 16);
+    }
+
     private static void Float32Passthrough(ReadOnlySpan<byte> source, SampleByteOrder byteOrder, Span<float> destination)
     {
+        var words = MemoryMarshal.Cast<byte, float>(source)[..destination.Length];
         if (byteOrder == SampleByteOrder.LittleEndian) {
-            MemoryMarshal.Cast<byte, float>(source).CopyTo(destination);
+            words.CopyTo(destination);
             return;
         }
 
-        for (var i = 0; i < destination.Length; i++) {
-            destination[i] = BinaryPrimitives.ReadSingleBigEndian(source.Slice(i * sizeof(float), sizeof(float)));
-        }
+        BinaryPrimitives.ReverseEndianness(
+            MemoryMarshal.Cast<float, uint>(words),
+            MemoryMarshal.Cast<float, uint>(destination));
     }
 
     private static void Float32FromPassthrough(ReadOnlySpan<float> source, SampleByteOrder byteOrder, Span<byte> destination)
     {
+        var words = MemoryMarshal.Cast<byte, float>(destination)[..source.Length];
+        source.CopyTo(words);
+        if (byteOrder == SampleByteOrder.BigEndian) {
+            var raw = MemoryMarshal.Cast<float, uint>(words);
+            BinaryPrimitives.ReverseEndianness(raw, raw);
+        }
+    }
+
+    private static void UNorm16ToFloat32(ReadOnlySpan<byte> source, SampleByteOrder byteOrder, Span<float> destination)
+    {
+        var words = MemoryMarshal.Cast<byte, ushort>(source);
         if (byteOrder == SampleByteOrder.LittleEndian) {
-            MemoryMarshal.AsBytes(source).CopyTo(destination);
+            UNorm16ToFloat32(words, destination);
             return;
         }
 
-        for (var i = 0; i < source.Length; i++) {
-            BinaryPrimitives.WriteSingleBigEndian(destination.Slice(i * sizeof(float), sizeof(float)), source[i]);
+        var rented = ArrayPool<ushort>.Shared.Rent(words.Length);
+        try {
+            var hostOrder = rented.AsSpan(0, words.Length);
+            BinaryPrimitives.ReverseEndianness(words, hostOrder);
+            UNorm16ToFloat32(hostOrder, destination);
+        }
+        finally {
+            ArrayPool<ushort>.Shared.Return(rented);
         }
     }
 
-    private static ReadOnlySpan<ushort> ToHostOrderUInt16(ReadOnlySpan<byte> source, SampleByteOrder byteOrder)
+    private static void Half16ToFloat32(ReadOnlySpan<byte> source, SampleByteOrder byteOrder, Span<float> destination)
     {
-        var count = source.Length / sizeof(ushort);
+        var words = MemoryMarshal.Cast<byte, ushort>(source);
         if (byteOrder == SampleByteOrder.LittleEndian) {
-            return MemoryMarshal.Cast<byte, ushort>(source);
-        }
-
-        var swapped = new ushort[count];
-        for (var i = 0; i < count; i++) {
-            swapped[i] = BinaryPrimitives.ReadUInt16BigEndian(source.Slice(i * sizeof(ushort), sizeof(ushort)));
-        }
-
-        return swapped;
-    }
-
-    private static void FromFloat32ToUInt16Then(ReadOnlySpan<float> source, Span<byte> destination, SampleByteOrder byteOrder, Action<ReadOnlySpan<float>, Span<ushort>> convert)
-    {
-        if (byteOrder == SampleByteOrder.LittleEndian) {
-            convert(source, MemoryMarshal.Cast<byte, ushort>(destination));
+            Half16ToFloat32(words, destination);
             return;
         }
 
-        var hostOrder = new ushort[source.Length];
-        convert(source, hostOrder);
-        for (var i = 0; i < hostOrder.Length; i++) {
-            BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(i * sizeof(ushort), sizeof(ushort)), hostOrder[i]);
+        var rented = ArrayPool<ushort>.Shared.Rent(words.Length);
+        try {
+            var hostOrder = rented.AsSpan(0, words.Length);
+            BinaryPrimitives.ReverseEndianness(words, hostOrder);
+            Half16ToFloat32(hostOrder, destination);
+        }
+        finally {
+            ArrayPool<ushort>.Shared.Return(rented);
         }
     }
+
+    private static void Float32ToUNorm16(ReadOnlySpan<float> source, SampleByteOrder byteOrder, Span<byte> destination)
+    {
+        var hostOrder = MemoryMarshal.Cast<byte, ushort>(destination)[..source.Length];
+        Float32ToUNorm16(source, hostOrder);
+        if (byteOrder == SampleByteOrder.BigEndian) {
+            BinaryPrimitives.ReverseEndianness(hostOrder, hostOrder);
+        }
+    }
+
+    private static void Float32ToHalfBits(ReadOnlySpan<float> source, SampleByteOrder byteOrder, Span<byte> destination)
+    {
+        var hostOrder = MemoryMarshal.Cast<byte, ushort>(destination)[..source.Length];
+        Float32ToHalfBits(source, hostOrder);
+        if (byteOrder == SampleByteOrder.BigEndian) {
+            BinaryPrimitives.ReverseEndianness(hostOrder, hostOrder);
+        }
+    }
+
 }

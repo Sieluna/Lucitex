@@ -31,7 +31,7 @@ public class BcEncodeStabilityTests
         BcFormat.Bc1 => "1EEF013FA8004DD9E9045F3343E8DA95",
         BcFormat.Bc2 => "6128D9BDC6AA842EA254AC9833FFEACF",
         BcFormat.Bc3 => "AFE98488D7DE6ACA0F7D2C860EBB874F",
-        BcFormat.Bc4 => "9DFEEC0146D75B701AF9B6D619602502",
+        BcFormat.Bc4 => "6A797FDF5CDD0E8D1AA438E6DFB45405",
         BcFormat.Bc5 => "1B09D1BA9EE620B06C195CFBDD5A9FFC",
         _ => throw new ArgumentOutOfRangeException(nameof(format)),
     };

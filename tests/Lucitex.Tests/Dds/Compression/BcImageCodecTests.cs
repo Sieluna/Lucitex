@@ -27,6 +27,25 @@ public class BcImageCodecTests
         Assert.All(decoded.AsSpan(source.Length).ToArray(), value => Assert.Equal(0xCD, value));
     }
 
+    [Fact]
+    public void SingleChannelEncode_DerivesEndpointsFromTheBlockAloneNotTheScratchBuffer()
+    {
+        var texels = new byte[16];
+        for (var i = 0; i < texels.Length; i++) {
+            texels[i] = (byte)(200 + (i * 3));
+        }
+
+        var viaImage = new byte[BcImageCodec.EncodedByteCount(BcFormat.Bc4, 4, 4)];
+        BcImageCodec.Encode(BcFormat.Bc4, texels.AsSpan(), 4, 4, viaImage.AsSpan());
+
+        var viaBlock = new byte[8];
+        Bc4Codec.Encode(texels, viaBlock);
+
+        Assert.Equal(viaBlock, viaImage);
+        Assert.Equal(texels.Max(), viaImage[0]);
+        Assert.Equal(texels.Min(), viaImage[1]);
+    }
+
     [Theory]
     [InlineData(0, 4)]
     [InlineData(1, 4)]

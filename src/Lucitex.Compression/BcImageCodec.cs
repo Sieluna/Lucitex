@@ -89,11 +89,12 @@ internal static class BcImageCodec
     {
         var channels = ChannelCount(format);
         var blockBytes = BlockByteSize(format);
+        var texels = blockPixels[..(16 * channels)];
 
         for (var blockX = 0; blockX < blocksWide; blockX++) {
             var blockIndex = (blockY * blocksWide) + blockX;
-            DecodeBlock(format, source.Slice(blockIndex * blockBytes, blockBytes), blockPixels);
-            StoreBlock(blockPixels, destination, width, height, channels, blockX * 4, blockY * 4);
+            DecodeBlock(format, source.Slice(blockIndex * blockBytes, blockBytes), texels);
+            StoreBlock(texels, destination, width, height, channels, blockX * 4, blockY * 4);
         }
     }
 
@@ -109,11 +110,12 @@ internal static class BcImageCodec
     {
         var channels = ChannelCount(format);
         var blockBytes = BlockByteSize(format);
+        var texels = blockPixels[..(16 * channels)];
 
         for (var blockX = 0; blockX < blocksWide; blockX++) {
-            LoadBlock(source, blockPixels, width, height, channels, blockX * 4, blockY * 4);
+            LoadBlock(source, texels, width, height, channels, blockX * 4, blockY * 4);
             var blockIndex = (blockY * blocksWide) + blockX;
-            EncodeBlock(format, blockPixels, destination.Slice(blockIndex * blockBytes, blockBytes));
+            EncodeBlock(format, texels, destination.Slice(blockIndex * blockBytes, blockBytes));
         }
     }
 

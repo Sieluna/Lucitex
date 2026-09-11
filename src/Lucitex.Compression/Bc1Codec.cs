@@ -1,4 +1,7 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace Lucitex.Compression;
 
@@ -126,14 +129,35 @@ internal static class Bc1Codec
         return (ushort)((r5 << 11) | (g6 << 5) | b5);
     }
 
+    private static readonly Vector256<int> s_LaneLow = Vector256.Create(0, 1, 2, 3, 4, 5, 6, 7);
+    private static readonly Vector256<int> s_LaneHigh = Vector256.Create(8, 9, 10, 11, 12, 13, 14, 15);
+    private static readonly Vector256<int> s_RankLow = Vector256.Create(31, 30, 29, 28, 27, 26, 25, 24);
+    private static readonly Vector256<int> s_RankHigh = Vector256.Create(23, 22, 21, 20, 19, 18, 17, 16);
+
     private static void FindEndpoints(ReadOnlySpan<byte> rgba, out (byte R, byte G, byte B) colorA, out (byte R, byte G, byte B) colorB)
     {
         // The two endpoints of a BC1 block must lie on the single line every texel gets
         // interpolated along, so picking them independently per channel (a naive bounding
         // box) can invent a line that passes nowhere near the actual pixels. Picking the
         // two actual texels that are farthest apart keeps the line anchored to real data.
-        var bestI = 0;
-        var bestJ = 1;
+        int bestI;
+        int bestJ;
+
+        if (Avx2.IsSupported) {
+            FarthestPairBatched(rgba, out bestI, out bestJ);
+        }
+        else {
+            FarthestPairScalar(rgba, out bestI, out bestJ);
+        }
+
+        colorA = (rgba[bestI * 4], rgba[(bestI * 4) + 1], rgba[(bestI * 4) + 2]);
+        colorB = (rgba[bestJ * 4], rgba[(bestJ * 4) + 1], rgba[(bestJ * 4) + 2]);
+    }
+
+    private static void FarthestPairScalar(ReadOnlySpan<byte> rgba, out int bestI, out int bestJ)
+    {
+        bestI = 0;
+        bestJ = 1;
         var bestDistance = -1;
 
         for (var i = 0; i < 16; i++) {
@@ -152,8 +176,95 @@ internal static class Bc1Codec
                 }
             }
         }
-
-        colorA = (rgba[bestI * 4], rgba[(bestI * 4) + 1], rgba[(bestI * 4) + 2]);
-        colorB = (rgba[bestJ * 4], rgba[(bestJ * 4) + 1], rgba[(bestJ * 4) + 2]);
     }
+
+    private static void FarthestPairBatched(ReadOnlySpan<byte> rgba, out int bestI, out int bestJ)
+    {
+        Deinterleave(rgba, out var red, out var green, out var blue);
+
+        Span<byte> reds = stackalloc byte[16];
+        Span<byte> greens = stackalloc byte[16];
+        Span<byte> blues = stackalloc byte[16];
+        red.CopyTo(reds);
+        green.CopyTo(greens);
+        blue.CopyTo(blues);
+
+        var redLow = Avx2.ConvertToVector256Int32(red);
+        var redHigh = Avx2.ConvertToVector256Int32(Sse2.ShiftRightLogical128BitLane(red, 8));
+        var greenLow = Avx2.ConvertToVector256Int32(green);
+        var greenHigh = Avx2.ConvertToVector256Int32(Sse2.ShiftRightLogical128BitLane(green, 8));
+        var blueLow = Avx2.ConvertToVector256Int32(blue);
+        var blueHigh = Avx2.ConvertToVector256Int32(Sse2.ShiftRightLogical128BitLane(blue, 8));
+
+        var excluded = Vector256.Create(-1);
+
+        bestI = 0;
+        bestJ = 1;
+        var bestDistance = -1;
+
+        for (var i = 0; i < 16; i++) {
+            var row = Vector256.Create(i);
+            var low = Ranked(redLow, greenLow, blueLow, reds[i], greens[i], blues[i], s_RankLow);
+            var high = Ranked(redHigh, greenHigh, blueHigh, reds[i], greens[i], blues[i], s_RankHigh);
+
+            low = Avx2.BlendVariable(excluded, low, Avx2.CompareGreaterThan(s_LaneLow, row));
+            high = Avx2.BlendVariable(excluded, high, Avx2.CompareGreaterThan(s_LaneHigh, row));
+
+            var ranked = HorizontalMax(Avx2.Max(low, high));
+            var distance = ranked >> 5;
+
+            if (distance > bestDistance) {
+                bestDistance = distance;
+                bestI = i;
+                bestJ = 31 - (ranked & 31);
+            }
+        }
+    }
+
+    private static Vector256<int> Ranked(
+        Vector256<int> red,
+        Vector256<int> green,
+        Vector256<int> blue,
+        byte anchorRed,
+        byte anchorGreen,
+        byte anchorBlue,
+        Vector256<int> rank)
+    {
+        var dr = Avx2.Subtract(red, Vector256.Create((int)anchorRed));
+        var dg = Avx2.Subtract(green, Vector256.Create((int)anchorGreen));
+        var db = Avx2.Subtract(blue, Vector256.Create((int)anchorBlue));
+
+        var distance = Avx2.Add(
+            Avx2.Add(Avx2.MultiplyLow(dr, dr), Avx2.MultiplyLow(dg, dg)),
+            Avx2.MultiplyLow(db, db));
+
+        return Avx2.Or(Avx2.ShiftLeftLogical(distance, 5), rank);
+    }
+
+    private static int HorizontalMax(Vector256<int> value)
+    {
+        var folded = Sse41.Max(value.GetLower(), value.GetUpper());
+        folded = Sse41.Max(folded, Sse2.Shuffle(folded, 0x4E));
+        folded = Sse41.Max(folded, Sse2.Shuffle(folded, 0xB1));
+
+        return folded.ToScalar();
+    }
+
+    private static void Deinterleave(ReadOnlySpan<byte> rgba, out Vector128<byte> red, out Vector128<byte> green, out Vector128<byte> blue)
+    {
+        ref var source = ref MemoryMarshal.GetReference(rgba);
+        var a = Vector128.LoadUnsafe(ref source, 0x00).AsUInt32();
+        var b = Vector128.LoadUnsafe(ref source, 0x10).AsUInt32();
+        var c = Vector128.LoadUnsafe(ref source, 0x20).AsUInt32();
+        var d = Vector128.LoadUnsafe(ref source, 0x30).AsUInt32();
+
+        var mask = Vector128.Create(0xFFu);
+
+        red = Pack(a & mask, b & mask, c & mask, d & mask);
+        green = Pack((a >> 8) & mask, (b >> 8) & mask, (c >> 8) & mask, (d >> 8) & mask);
+        blue = Pack((a >> 16) & mask, (b >> 16) & mask, (c >> 16) & mask, (d >> 16) & mask);
+    }
+
+    private static Vector128<byte> Pack(Vector128<uint> a, Vector128<uint> b, Vector128<uint> c, Vector128<uint> d) =>
+        Vector128.Narrow(Vector128.Narrow(a, b), Vector128.Narrow(c, d));
 }

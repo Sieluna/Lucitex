@@ -60,7 +60,47 @@ internal static class Bc1Codec
         Span<(byte R, byte G, byte B, byte A)> palette = stackalloc (byte, byte, byte, byte)[4];
         BuildPalette(color0, color1, palette);
 
+        BinaryPrimitives.WriteUInt32LittleEndian(block[4..], SelectIndices(rgba, palette));
+    }
+
+    private static readonly Vector128<byte> s_RedLanes = Vector128.Create((byte)0, 255, 255, 255, 4, 255, 255, 255, 8, 255, 255, 255, 12, 255, 255, 255);
+    private static readonly Vector128<byte> s_GreenLanes = Vector128.Create((byte)1, 255, 255, 255, 5, 255, 255, 255, 9, 255, 255, 255, 13, 255, 255, 255);
+    private static readonly Vector128<byte> s_BlueLanes = Vector128.Create((byte)2, 255, 255, 255, 6, 255, 255, 255, 10, 255, 255, 255, 14, 255, 255, 255);
+
+    // Four texels' worth of RGBA widen into one lane-per-texel vector, so the four palette entries are
+    // scored against a whole quad at once rather than one channel difference at a time.
+    private static uint SelectIndices(ReadOnlySpan<byte> rgba, ReadOnlySpan<(byte R, byte G, byte B, byte A)> palette)
+    {
         uint indices = 0;
+
+        if (Vector128.IsHardwareAccelerated) {
+            ref var source = ref MemoryMarshal.GetReference(rgba);
+
+            for (var quad = 0; quad < 4; quad++) {
+                var texels = Vector128.LoadUnsafe(ref source, (nuint)(quad * 16));
+                var red = Vector128.Shuffle(texels, s_RedLanes).AsInt32();
+                var green = Vector128.Shuffle(texels, s_GreenLanes).AsInt32();
+                var blue = Vector128.Shuffle(texels, s_BlueLanes).AsInt32();
+
+                var bestDistance = Distance(red, green, blue, palette[0]);
+                var bestIndex = Vector128<int>.Zero;
+
+                for (var i = 1; i < 4; i++) {
+                    var distance = Distance(red, green, blue, palette[i]);
+                    var closer = Vector128.LessThan(distance, bestDistance);
+
+                    bestDistance = Vector128.ConditionalSelect(closer, distance, bestDistance);
+                    bestIndex = Vector128.ConditionalSelect(closer, Vector128.Create(i), bestIndex);
+                }
+
+                for (var lane = 0; lane < 4; lane++) {
+                    indices |= (uint)bestIndex.GetElement(lane) << (((quad * 4) + lane) * 2);
+                }
+            }
+
+            return indices;
+        }
+
         for (var texel = 0; texel < 16; texel++) {
             var offset = texel * 4;
             var best = 0;
@@ -80,7 +120,16 @@ internal static class Bc1Codec
             indices |= (uint)best << (texel * 2);
         }
 
-        BinaryPrimitives.WriteUInt32LittleEndian(block[4..], indices);
+        return indices;
+    }
+
+    private static Vector128<int> Distance(Vector128<int> red, Vector128<int> green, Vector128<int> blue, (byte R, byte G, byte B, byte A) entry)
+    {
+        var dr = red - Vector128.Create((int)entry.R);
+        var dg = green - Vector128.Create((int)entry.G);
+        var db = blue - Vector128.Create((int)entry.B);
+
+        return (dr * dr) + (dg * dg) + (db * db);
     }
 
     private static void BuildPalette(ushort color0, ushort color1, Span<(byte R, byte G, byte B, byte A)> palette)

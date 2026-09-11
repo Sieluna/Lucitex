@@ -250,7 +250,7 @@ internal sealed class ExrWriter : IImageWriter
 
         var chunks = new ExrChunk[chunkCount];
 
-        for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
+        ExecutionScheduler.For(0, chunkCount, chunkIndex => {
             var rowStart = chunkIndex * linesPerChunk;
             var rowsInChunk = Math.Min(linesPerChunk, (int)part.Height - rowStart);
             var start = checked((int)layout.RowOffset(rowStart));
@@ -265,40 +265,45 @@ internal sealed class ExrWriter : IImageWriter
 
             var payload = ExrCompressor.Compress(part.Header.Compression, buffer.AsSpan(start, rawSize), chunkLayout);
             chunks[chunkIndex] = new ExrChunk((int)part.DataMinY + rowStart, 0, 0, 0, 0, payload);
-        }
+        });
 
         return chunks;
     }
 
     private static ExrChunk[] BuildTiledChunks(PartState part, ExrTileDesc tiles)
     {
-        var chunks = new List<ExrChunk>();
+        var coordinates = new List<(int LevelIndex, int Dx, int Dy)>();
 
         for (var levelIndex = 0; levelIndex < part.Levels.Count; levelIndex++) {
             var level = part.Levels[levelIndex];
-            var layout = part.LevelLayouts[levelIndex];
-            var buffer = part.LevelBuffers[levelIndex];
-
             for (var dy = 0; dy < level.TilesY; dy++) {
-                var y0 = dy * (int)tiles.YSize;
-                var tileHeight = (int)Math.Min(tiles.YSize, level.Height - y0);
-
                 for (var dx = 0; dx < level.TilesX; dx++) {
-                    var x0 = dx * (int)tiles.XSize;
-                    var tileWidth = (int)Math.Min(tiles.XSize, level.Width - x0);
-
-                    var tileLayout = new ExrBlockLayout(part.Header.Channels, 0, tileWidth - 1, 0, tileHeight - 1);
-                    var tileBuffer = new byte[tileLayout.TotalBytes];
-
-                    GatherTileFromImage(buffer, layout, tileBuffer, tileLayout, x0, y0, tileWidth, tileHeight);
-
-                    var payload = ExrCompressor.Compress(part.Header.Compression, tileBuffer, tileLayout);
-                    chunks.Add(new ExrChunk(0, dx, dy, level.LevelX, level.LevelY, payload));
+                    coordinates.Add((levelIndex, dx, dy));
                 }
             }
         }
 
-        return chunks.ToArray();
+        var chunks = new ExrChunk[coordinates.Count];
+
+        ExecutionScheduler.For(0, chunks.Length, chunkIndex => {
+            var (levelIndex, dx, dy) = coordinates[chunkIndex];
+            var level = part.Levels[levelIndex];
+
+            var x0 = dx * (int)tiles.XSize;
+            var y0 = dy * (int)tiles.YSize;
+            var tileWidth = (int)Math.Min(tiles.XSize, level.Width - x0);
+            var tileHeight = (int)Math.Min(tiles.YSize, level.Height - y0);
+
+            var tileLayout = new ExrBlockLayout(part.Header.Channels, 0, tileWidth - 1, 0, tileHeight - 1);
+            var tileBuffer = new byte[tileLayout.TotalBytes];
+
+            GatherTileFromImage(part.LevelBuffers[levelIndex], part.LevelLayouts[levelIndex], tileBuffer, tileLayout, x0, y0, tileWidth, tileHeight);
+
+            var payload = ExrCompressor.Compress(part.Header.Compression, tileBuffer, tileLayout);
+            chunks[chunkIndex] = new ExrChunk(0, dx, dy, level.LevelX, level.LevelY, payload);
+        });
+
+        return chunks;
     }
 
     private static void GatherTileFromImage(

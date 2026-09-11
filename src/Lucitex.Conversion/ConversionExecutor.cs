@@ -17,6 +17,8 @@ public static class ConversionExecutor
 {
     private readonly record struct ChannelPlacement(int PlaneIndex, int BaseOffset, int PerSampleStride, int BytesPerSample);
 
+    private const int k_ParallelPixelThreshold = 64 * 64;
+
     private static readonly HashSet<string> s_ColorChannelNames = ["R", "G", "B", "Y"];
 
     public static void Execute(ConversionPlan plan, IImageReader source, SampleByteOrder sourceByteOrder, IImageWriter target, SampleByteOrder targetByteOrder)
@@ -58,18 +60,24 @@ public static class ConversionExecutor
                 var sourceBuffer = new byte[sourceLayout.TotalBytes];
                 source.Read(region, sourceBuffer);
 
-                foreach (var plane in sourcePlain.Planes) {
-                    foreach (var channelName in plane.Channels) {
-                        var channel = sourceChannels[channelName];
-                        var bytesPerSample = sourceLayout.BytesPerSample(channelName);
+                var sourceNames = sourcePlain.Planes.SelectMany(plane => plane.Channels).ToArray();
+                var decoded = new float[sourceNames.Length][];
 
-                        var raw = new byte[pixelCount * bytesPerSample];
-                        GatherChannel(sourceBuffer, sourceLayout, channelName, width, height, raw);
+                RunPerChannel(sourceNames.Length, pixelCount, index => {
+                    var channelName = sourceNames[index];
+                    var channel = sourceChannels[channelName];
+                    var bytesPerSample = sourceLayout.BytesPerSample(channelName);
 
-                        var floats = new float[pixelCount];
-                        SampleTypeConversionKernel.ToFloat32(raw, channel.SampleType, sourceByteOrder, floats);
-                        floatChannels[channelName] = floats;
-                    }
+                    var raw = new byte[pixelCount * bytesPerSample];
+                    GatherChannel(sourceBuffer, sourceLayout, channelName, width, height, raw);
+
+                    var floats = new float[pixelCount];
+                    SampleTypeConversionKernel.ToFloat32(raw, channel.SampleType, sourceByteOrder, floats);
+                    decoded[index] = floats;
+                });
+
+                for (var index = 0; index < sourceNames.Length; index++) {
+                    floatChannels[sourceNames[index]] = decoded[index];
                 }
             }
             else if (sourcePart.Representation is EncodedElementRepresentation { Format.Name: nameof(EncodedFormatId.Rgbe) } &&
@@ -217,24 +225,29 @@ public static class ConversionExecutor
 
                         break;
 
-                    case ColorTransformStep colorStep:
-                        foreach (var (name, values) in floatChannels) {
-                            if (!s_ColorChannelNames.Contains(name.FullName)) {
-                                continue;
-                            }
-
-                            if (colorStep is { From: TransferFunction.Linear, To: TransferFunction.Srgb }) {
-                                ColorTransformKernel.LinearToSrgb(values);
-                            }
-                            else if (colorStep is { From: TransferFunction.Srgb, To: TransferFunction.Linear }) {
-                                ColorTransformKernel.SrgbToLinear(values);
-                            }
-                            else {
+                    case ColorTransformStep colorStep: {
+                            if (colorStep is not ({ From: TransferFunction.Linear, To: TransferFunction.Srgb } or
+                                { From: TransferFunction.Srgb, To: TransferFunction.Linear })) {
                                 throw new NotSupportedException($"ConversionExecutor does not support a color transform from {colorStep.From} to {colorStep.To}.");
                             }
-                        }
 
-                        break;
+                            var toSrgb = colorStep.To == TransferFunction.Srgb;
+                            var colorValues = floatChannels
+                                .Where(entry => s_ColorChannelNames.Contains(entry.Key.FullName))
+                                .Select(entry => entry.Value)
+                                .ToArray();
+
+                            RunPerChannel(colorValues.Length, pixelCount, index => {
+                                if (toSrgb) {
+                                    ColorTransformKernel.LinearToSrgb(colorValues[index]);
+                                }
+                                else {
+                                    ColorTransformKernel.SrgbToLinear(colorValues[index]);
+                                }
+                            });
+
+                            break;
+                        }
                 }
             }
 
@@ -284,22 +297,37 @@ public static class ConversionExecutor
             var targetLayout = new SampleLayout(targetPlain.Planes, targetChannels, window);
 
             var targetBuffer = new byte[targetLayout.TotalBytes];
-            foreach (var plane in targetPlain.Planes) {
-                foreach (var channelName in plane.Channels) {
-                    var channel = targetChannels[channelName];
-                    var floats = floatChannels[channelName];
-                    var bytesPerSample = targetLayout.BytesPerSample(channelName);
+            var targetNames = targetPlain.Planes.SelectMany(plane => plane.Channels).ToArray();
 
-                    var raw = new byte[pixelCount * bytesPerSample];
-                    SampleTypeConversionKernel.FromFloat32(floats, channel.SampleType, targetByteOrder, raw);
-                    ScatterChannel(raw, targetLayout, channelName, width, height, targetBuffer);
-                }
-            }
+            RunPerChannel(targetNames.Length, pixelCount, index => {
+                var channelName = targetNames[index];
+                var channel = targetChannels[channelName];
+                var bytesPerSample = targetLayout.BytesPerSample(channelName);
+
+                var raw = new byte[pixelCount * bytesPerSample];
+                SampleTypeConversionKernel.FromFloat32(floatChannels[channelName], channel.SampleType, targetByteOrder, raw);
+                ScatterChannel(raw, targetLayout, channelName, width, height, targetBuffer);
+            });
 
             target.Write(region, targetBuffer);
         }
 
         target.Finish();
+    }
+
+    // Channels decode, transform and re-encode independently of one another, so they only need to be
+    // sequenced once the image is big enough for the per-channel work to outweigh dispatching it.
+    private static void RunPerChannel(int channelCount, int pixelCount, Action<int> action)
+    {
+        if (pixelCount < k_ParallelPixelThreshold) {
+            for (var index = 0; index < channelCount; index++) {
+                action(index);
+            }
+
+            return;
+        }
+
+        ExecutionScheduler.For(0, channelCount, action);
     }
 
     private static void GatherChannel(

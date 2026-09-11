@@ -1,3 +1,6 @@
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+
 namespace Lucitex.Compression;
 
 internal static class Bc4Codec
@@ -39,23 +42,55 @@ internal static class Bc4Codec
         Span<byte> palette = stackalloc byte[8];
         BuildPalette(max, min, palette);
 
-        ulong bits = 0;
-        for (var texel = 0; texel < 16; texel++) {
-            var best = 0;
-            var bestDistance = int.MaxValue;
+        WriteIndexBits(SelectIndices(channel16, palette), block[2..]);
+    }
 
-            for (var i = 0; i < 8; i++) {
-                var distance = Math.Abs(channel16[texel] - palette[i]);
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    best = i;
-                }
+    // The whole block fits one 16-byte vector, so the search walks the eight palette entries once and
+    // keeps a per-texel running best, instead of scanning the palette again for every texel.
+    private static ulong SelectIndices(ReadOnlySpan<byte> channel16, ReadOnlySpan<byte> palette)
+    {
+        Span<byte> indices = stackalloc byte[16];
+
+        if (Vector128.IsHardwareAccelerated && channel16.Length >= 16) {
+            var texels = Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(channel16));
+            var seed = Vector128.Create(palette[0]);
+            var bestDistance = Vector128.Max(texels, seed) - Vector128.Min(texels, seed);
+            var bestIndex = Vector128<byte>.Zero;
+
+            for (var i = 1; i < 8; i++) {
+                var entry = Vector128.Create(palette[i]);
+                var distance = Vector128.Max(texels, entry) - Vector128.Min(texels, entry);
+                var closer = Vector128.LessThan(distance, bestDistance);
+
+                bestDistance = Vector128.ConditionalSelect(closer, distance, bestDistance);
+                bestIndex = Vector128.ConditionalSelect(closer, Vector128.Create((byte)i), bestIndex);
             }
 
-            bits |= (ulong)best << (texel * 3);
+            bestIndex.StoreUnsafe(ref MemoryMarshal.GetReference(indices));
+        }
+        else {
+            for (var texel = 0; texel < 16; texel++) {
+                var best = 0;
+                var bestDistance = int.MaxValue;
+
+                for (var i = 0; i < 8; i++) {
+                    var distance = Math.Abs(channel16[texel] - palette[i]);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = i;
+                    }
+                }
+
+                indices[texel] = (byte)best;
+            }
         }
 
-        WriteIndexBits(bits, block[2..]);
+        ulong bits = 0;
+        for (var texel = 0; texel < 16; texel++) {
+            bits |= (ulong)indices[texel] << (texel * 3);
+        }
+
+        return bits;
     }
 
     private static void BuildPalette(byte v0, byte v1, Span<byte> palette)

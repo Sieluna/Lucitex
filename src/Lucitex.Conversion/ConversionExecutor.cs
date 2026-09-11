@@ -62,17 +62,9 @@ public static class ConversionExecutor
                     foreach (var channelName in plane.Channels) {
                         var channel = sourceChannels[channelName];
                         var bytesPerSample = sourceLayout.BytesPerSample(channelName);
-                        var rowBases = sourceLayout.BuildRowBases(channelName, height);
-                        var columnOffsets = sourceLayout.BuildColumnOffsets(channelName, width);
 
                         var raw = new byte[pixelCount * bytesPerSample];
-                        for (var y = 0; y < height; y++) {
-                            var rowBase = rowBases[y];
-                            for (var x = 0; x < width; x++) {
-                                sourceBuffer.AsSpan(checked((int)(rowBase + columnOffsets[x])), bytesPerSample)
-                                    .CopyTo(raw.AsSpan(((y * width) + x) * bytesPerSample, bytesPerSample));
-                            }
-                        }
+                        GatherChannel(sourceBuffer, sourceLayout, channelName, width, height, raw);
 
                         var floats = new float[pixelCount];
                         SampleTypeConversionKernel.ToFloat32(raw, channel.SampleType, sourceByteOrder, floats);
@@ -297,19 +289,10 @@ public static class ConversionExecutor
                     var channel = targetChannels[channelName];
                     var floats = floatChannels[channelName];
                     var bytesPerSample = targetLayout.BytesPerSample(channelName);
-                    var rowBases = targetLayout.BuildRowBases(channelName, height);
-                    var columnOffsets = targetLayout.BuildColumnOffsets(channelName, width);
 
                     var raw = new byte[pixelCount * bytesPerSample];
                     SampleTypeConversionKernel.FromFloat32(floats, channel.SampleType, targetByteOrder, raw);
-
-                    for (var y = 0; y < height; y++) {
-                        var rowBase = rowBases[y];
-                        for (var x = 0; x < width; x++) {
-                            raw.AsSpan(((y * width) + x) * bytesPerSample, bytesPerSample)
-                                .CopyTo(targetBuffer.AsSpan(checked((int)(rowBase + columnOffsets[x])), bytesPerSample));
-                        }
-                    }
+                    ScatterChannel(raw, targetLayout, channelName, width, height, targetBuffer);
                 }
             }
 
@@ -317,6 +300,76 @@ public static class ConversionExecutor
         }
 
         target.Finish();
+    }
+
+    private static void GatherChannel(
+        ReadOnlySpan<byte> source,
+        SampleLayout layout,
+        ChannelPath channel,
+        int width,
+        int height,
+        Span<byte> destination)
+    {
+        var bytesPerSample = layout.BytesPerSample(channel);
+        var rowBases = layout.BuildRowBases(channel, height);
+        var rowBytes = width * bytesPerSample;
+
+        if (layout.TryGetColumnStride(channel, out var stride)) {
+            for (var y = 0; y < height; y++) {
+                SampleInterleaveKernel.Gather(
+                    source[checked((int)rowBases[y])..],
+                    destination.Slice(y * rowBytes, rowBytes),
+                    stride,
+                    bytesPerSample,
+                    width);
+            }
+
+            return;
+        }
+
+        var columnOffsets = layout.BuildColumnOffsets(channel, width);
+        for (var y = 0; y < height; y++) {
+            var rowBase = rowBases[y];
+            for (var x = 0; x < width; x++) {
+                source.Slice(checked((int)(rowBase + columnOffsets[x])), bytesPerSample)
+                    .CopyTo(destination.Slice((y * rowBytes) + (x * bytesPerSample), bytesPerSample));
+            }
+        }
+    }
+
+    private static void ScatterChannel(
+        ReadOnlySpan<byte> source,
+        SampleLayout layout,
+        ChannelPath channel,
+        int width,
+        int height,
+        Span<byte> destination)
+    {
+        var bytesPerSample = layout.BytesPerSample(channel);
+        var rowBases = layout.BuildRowBases(channel, height);
+        var rowBytes = width * bytesPerSample;
+
+        if (layout.TryGetColumnStride(channel, out var stride)) {
+            for (var y = 0; y < height; y++) {
+                SampleInterleaveKernel.Scatter(
+                    source.Slice(y * rowBytes, rowBytes),
+                    destination[checked((int)rowBases[y])..],
+                    stride,
+                    bytesPerSample,
+                    width);
+            }
+
+            return;
+        }
+
+        var columnOffsets = layout.BuildColumnOffsets(channel, width);
+        for (var y = 0; y < height; y++) {
+            var rowBase = rowBases[y];
+            for (var x = 0; x < width; x++) {
+                source.Slice((y * rowBytes) + (x * bytesPerSample), bytesPerSample)
+                    .CopyTo(destination.Slice(checked((int)(rowBase + columnOffsets[x])), bytesPerSample));
+            }
+        }
     }
 
     private sealed class SampleLayout
@@ -395,6 +448,16 @@ public static class ConversionExecutor
             }
 
             return bases;
+        }
+
+        // Without column subsampling every sample sits one fixed stride after the previous one, so the
+        // per-column offset table collapses to that stride.
+        public bool TryGetColumnStride(ChannelPath channel, out int stride)
+        {
+            var placement = _placements[channel];
+            stride = placement.PerSampleStride;
+
+            return _planeSampling[placement.PlaneIndex].Step.X == 1;
         }
 
         public int[] BuildColumnOffsets(ChannelPath channel, int width)

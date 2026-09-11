@@ -25,8 +25,8 @@ internal static class ExrHuffman
             return [];
         }
 
-        var frequencies = new long[k_EncodeSize];
-        var codes = new long[k_EncodeSize];
+        var frequencies = ArrayPool<long>.Shared.Rent(k_EncodeSize);
+        var codes = ArrayPool<long>.Shared.Rent(k_EncodeSize);
         var link = ArrayPool<int>.Shared.Rent(k_EncodeSize);
         var heap = ArrayPool<int>.Shared.Rent(k_EncodeSize);
 
@@ -34,6 +34,9 @@ internal static class ExrHuffman
         var payloadWriter = new BitWriter();
 
         try {
+            Array.Clear(frequencies, 0, k_EncodeSize);
+            Array.Clear(codes, 0, k_EncodeSize);
+
             foreach (var value in raw) {
                 frequencies[value]++;
             }
@@ -65,6 +68,8 @@ internal static class ExrHuffman
             tableWriter.Dispose();
             ArrayPool<int>.Shared.Return(heap);
             ArrayPool<int>.Shared.Return(link);
+            ArrayPool<long>.Shared.Return(codes);
+            ArrayPool<long>.Shared.Return(frequencies);
         }
     }
 
@@ -90,18 +95,34 @@ internal static class ExrHuffman
             throw new InvalidDataException($"Huffman symbol range [{minSymbol},{maxSymbol}] is invalid.");
         }
 
-        var codes = new long[k_EncodeSize];
-        var reader = new BitReader(compressed[k_HeaderBytes..]);
-        UnpackEncodeTable(ref reader, minSymbol, maxSymbol, codes);
-        CanonicalCodeTable(codes);
+        var codes = ArrayPool<long>.Shared.Rent(k_EncodeSize);
+        var lengths = ArrayPool<int>.Shared.Rent(k_DecodeSize);
+        var symbols = ArrayPool<int>.Shared.Rent(k_DecodeSize);
+        var overflow = ArrayPool<List<int>?>.Shared.Rent(k_DecodeSize);
 
-        var payloadStart = k_HeaderBytes + reader.BytesConsumed;
-        if (bitCount < 0 || bitCount > 8L * (compressed.Length - payloadStart)) {
-            throw new InvalidDataException("Huffman payload declares more bits than the chunk contains.");
+        try {
+            Array.Clear(codes, 0, k_EncodeSize);
+            Array.Clear(lengths, 0, k_DecodeSize);
+            Array.Clear(overflow, 0, k_DecodeSize);
+
+            var reader = new BitReader(compressed[k_HeaderBytes..]);
+            UnpackEncodeTable(ref reader, minSymbol, maxSymbol, codes);
+            CanonicalCodeTable(codes);
+
+            var payloadStart = k_HeaderBytes + reader.BytesConsumed;
+            if (bitCount < 0 || bitCount > 8L * (compressed.Length - payloadStart)) {
+                throw new InvalidDataException("Huffman payload declares more bits than the chunk contains.");
+            }
+
+            var table = BuildDecodeTable(codes, minSymbol, maxSymbol, lengths, symbols, overflow);
+            DecodeSymbols(codes, table, compressed[payloadStart..], bitCount, maxSymbol, raw);
         }
-
-        var table = BuildDecodeTable(codes, minSymbol, maxSymbol);
-        DecodeSymbols(codes, table, compressed[payloadStart..], bitCount, maxSymbol, raw);
+        finally {
+            ArrayPool<List<int>?>.Shared.Return(overflow, clearArray: true);
+            ArrayPool<int>.Shared.Return(symbols);
+            ArrayPool<int>.Shared.Return(lengths);
+            ArrayPool<long>.Shared.Return(codes);
+        }
     }
 
     private static void BuildEncodeTable(long[] frequencies, int[] link, int[] heap, long[] lengths, out int minSymbol, out int maxSymbol)
@@ -327,12 +348,14 @@ internal static class ExrHuffman
         writer.Write(length, CodeOf(code));
     }
 
-    private static (int[] Lengths, int[] Symbols, List<int>?[] Overflow) BuildDecodeTable(long[] codes, int minSymbol, int maxSymbol)
+    private static (int[] Lengths, int[] Symbols, List<int>?[] Overflow) BuildDecodeTable(
+        long[] codes,
+        int minSymbol,
+        int maxSymbol,
+        int[] lengths,
+        int[] symbols,
+        List<int>?[] overflow)
     {
-        var lengths = new int[k_DecodeSize];
-        var symbols = new int[k_DecodeSize];
-        var overflow = new List<int>?[k_DecodeSize];
-
         for (var symbol = minSymbol; symbol <= maxSymbol; symbol++) {
             var code = CodeOf(codes[symbol]);
             var length = LengthOf(codes[symbol]);

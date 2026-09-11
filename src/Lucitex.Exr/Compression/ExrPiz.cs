@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using Lucitex.Exr.Format;
@@ -23,41 +24,49 @@ internal static class ExrPiz
             return [];
         }
 
-        var words = new ushort[totalWords];
-        Gather(uncompressed, layout, planes, words);
+        var words = ArrayPool<ushort>.Shared.Rent(totalWords);
+        var lut = ArrayPool<ushort>.Shared.Rent(k_ValueRange);
 
-        var bitmap = new byte[k_BitmapBytes];
-        BuildBitmap(words, bitmap, out var minNonZero, out var maxNonZero);
+        try {
+            var samples = words.AsSpan(0, totalWords);
+            Gather(uncompressed, layout, planes, samples);
 
-        var lut = new ushort[k_ValueRange];
-        var maxValue = BuildForwardLut(bitmap, lut);
-        ApplyLut(lut, words);
+            var bitmap = new byte[k_BitmapBytes];
+            BuildBitmap(samples, bitmap, out var minNonZero, out var maxNonZero);
 
-        for (var i = 0; i < planes.Length; i++) {
-            var plane = planes[i];
-            for (var component = 0; component < plane.WordsPerSample; component++) {
-                ExrWavelet.Encode(
-                    words,
-                    plane.Start + component,
-                    plane.SampleCount,
-                    plane.WordsPerSample,
-                    plane.RowCount,
-                    plane.WordsPerRow,
-                    maxValue);
+            var maxValue = BuildForwardLut(bitmap, lut);
+            ApplyLut(lut, samples);
+
+            for (var i = 0; i < planes.Length; i++) {
+                var plane = planes[i];
+                for (var component = 0; component < plane.WordsPerSample; component++) {
+                    ExrWavelet.Encode(
+                        samples,
+                        plane.Start + component,
+                        plane.SampleCount,
+                        plane.WordsPerSample,
+                        plane.RowCount,
+                        plane.WordsPerRow,
+                        maxValue);
+                }
             }
+
+            var payload = ExrHuffman.Compress(samples);
+            var bitmapBytes = minNonZero <= maxNonZero ? maxNonZero - minNonZero + 1 : 0;
+
+            var result = new byte[4 + bitmapBytes + 4 + payload.Length];
+            BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(0), (ushort)minNonZero);
+            BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(2), (ushort)maxNonZero);
+            bitmap.AsSpan(minNonZero, bitmapBytes).CopyTo(result.AsSpan(4));
+            BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(4 + bitmapBytes), payload.Length);
+            payload.CopyTo(result.AsSpan(4 + bitmapBytes + 4));
+
+            return result;
         }
-
-        var payload = ExrHuffman.Compress(words);
-        var bitmapBytes = minNonZero <= maxNonZero ? maxNonZero - minNonZero + 1 : 0;
-
-        var result = new byte[4 + bitmapBytes + 4 + payload.Length];
-        BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(0), (ushort)minNonZero);
-        BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(2), (ushort)maxNonZero);
-        bitmap.AsSpan(minNonZero, bitmapBytes).CopyTo(result.AsSpan(4));
-        BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(4 + bitmapBytes), payload.Length);
-        payload.CopyTo(result.AsSpan(4 + bitmapBytes + 4));
-
-        return result;
+        finally {
+            ArrayPool<ushort>.Shared.Return(lut);
+            ArrayPool<ushort>.Shared.Return(words);
+        }
     }
 
     public static void Decompress(ReadOnlySpan<byte> compressed, Span<byte> destination, ExrBlockLayout layout)
@@ -87,35 +96,43 @@ internal static class ExrPiz
 
         compressed.Slice(4, bitmapBytes).CopyTo(bitmap.AsSpan(minNonZero));
 
-        var lut = new ushort[k_ValueRange];
-        var maxValue = BuildReverseLut(bitmap, lut);
+        var lut = ArrayPool<ushort>.Shared.Rent(k_ValueRange);
+        var words = ArrayPool<ushort>.Shared.Rent(totalWords);
 
-        var payloadLength = BinaryPrimitives.ReadInt32LittleEndian(compressed[(4 + bitmapBytes)..]);
-        var payloadStart = 4 + bitmapBytes + 4;
+        try {
+            var maxValue = BuildReverseLut(bitmap, lut);
 
-        if (payloadLength < 0 || payloadStart + payloadLength > compressed.Length) {
-            throw new InvalidDataException($"PIZ payload declares {payloadLength} bytes, which is outside the chunk.");
-        }
+            var payloadLength = BinaryPrimitives.ReadInt32LittleEndian(compressed[(4 + bitmapBytes)..]);
+            var payloadStart = 4 + bitmapBytes + 4;
 
-        var words = new ushort[totalWords];
-        ExrHuffman.Uncompress(compressed.Slice(payloadStart, payloadLength), words);
-
-        for (var i = 0; i < planes.Length; i++) {
-            var plane = planes[i];
-            for (var component = 0; component < plane.WordsPerSample; component++) {
-                ExrWavelet.Decode(
-                    words,
-                    plane.Start + component,
-                    plane.SampleCount,
-                    plane.WordsPerSample,
-                    plane.RowCount,
-                    plane.WordsPerRow,
-                    maxValue);
+            if (payloadLength < 0 || payloadStart + payloadLength > compressed.Length) {
+                throw new InvalidDataException($"PIZ payload declares {payloadLength} bytes, which is outside the chunk.");
             }
-        }
 
-        ApplyLut(lut, words);
-        Scatter(words, layout, planes, destination);
+            var samples = words.AsSpan(0, totalWords);
+            ExrHuffman.Uncompress(compressed.Slice(payloadStart, payloadLength), samples);
+
+            for (var i = 0; i < planes.Length; i++) {
+                var plane = planes[i];
+                for (var component = 0; component < plane.WordsPerSample; component++) {
+                    ExrWavelet.Decode(
+                        samples,
+                        plane.Start + component,
+                        plane.SampleCount,
+                        plane.WordsPerSample,
+                        plane.RowCount,
+                        plane.WordsPerRow,
+                        maxValue);
+                }
+            }
+
+            ApplyLut(lut, samples);
+            Scatter(samples, layout, planes, destination);
+        }
+        finally {
+            ArrayPool<ushort>.Shared.Return(words);
+            ArrayPool<ushort>.Shared.Return(lut);
+        }
     }
 
     private static ChannelPlane[] BuildPlanes(ExrBlockLayout layout, out int totalWords)

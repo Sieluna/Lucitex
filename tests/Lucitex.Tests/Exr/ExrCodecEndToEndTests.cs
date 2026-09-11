@@ -173,6 +173,37 @@ public class ExrCodecEndToEndTests
     }
 
     [Fact]
+    public void Read_ReportsCorruptedChunkPayloadAsMalformedData()
+    {
+        var asset = ExrFixtures.SimpleRgba();
+        var part = asset.Parts[0];
+        var width = part.Topology.BaseExtent.Width;
+        var height = part.Topology.BaseExtent.Height;
+        var rowStride = checked((int)(width * 8));
+        var codec = new ExrCodec(ExrCompressionId.Zip);
+
+        using var stream = new MemoryStream();
+        var writer = codec.CreateWriter(stream, asset);
+        writer.Write(FullRegion(width, height), new byte[rowStride * height]);
+        writer.Finish();
+        var bytes = stream.ToArray();
+
+        using var layoutStream = new MemoryStream(bytes, writable: false);
+        var binaryReader = new ExrBinaryReader(layoutStream);
+        var flags = ExrHeaderReader.ReadFileVersion(binaryReader, out _);
+        ExrHeaderReader.ReadHeaderList(binaryReader, flags.HasFlag(ExrVersionFlags.MultiPart));
+        var firstChunkOffset = checked((int)binaryReader.ReadInt64());
+
+        var payloadStart = firstChunkOffset + (2 * sizeof(int));
+        bytes.AsSpan(payloadStart, 8).Fill(0xA5);
+
+        using var malformedStream = new MemoryStream(bytes, writable: false);
+        var reader = codec.OpenReader(malformedStream);
+        var exception = Assert.Throws<ImageFormatException>(() => reader.Read(FullRegion(width, height), new byte[rowStride * height]));
+        Assert.Equal("MalformedData", exception.Code);
+    }
+
+    [Fact]
     public void Probe_RecognizesExrMagicBytes()
     {
         var codec = new ExrCodec();

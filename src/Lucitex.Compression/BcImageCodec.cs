@@ -206,6 +206,17 @@ internal static class BcImageCodec
 
     private static void LoadBlock(ReadOnlySpan<byte> source, Span<byte> block, int width, int height, int channels, int originX, int originY)
     {
+        var rowBytes = 4 * channels;
+
+        if (originX + 4 <= width && originY + 4 <= height) {
+            for (var y = 0; y < 4; y++) {
+                source.Slice((((originY + y) * width) + originX) * channels, rowBytes)
+                    .CopyTo(block.Slice(y * rowBytes, rowBytes));
+            }
+
+            return;
+        }
+
         for (var y = 0; y < 4; y++) {
             var sourceY = Math.Min(originY + y, height - 1);
             for (var x = 0; x < 4; x++) {

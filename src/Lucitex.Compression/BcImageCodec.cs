@@ -5,6 +5,8 @@ namespace Lucitex.Compression;
 
 internal static class BcImageCodec
 {
+    private const int k_ParallelBlockThreshold = 256;
+
     public static int ChannelCount(BcFormat format) => format switch {
         BcFormat.Bc1 or BcFormat.Bc2 or BcFormat.Bc3 or BcFormat.Bc7 => 4,
         BcFormat.Bc4 => 1,
@@ -23,48 +25,120 @@ internal static class BcImageCodec
 
     public static void Decode(BcFormat format, ReadOnlySpan<byte> source, int width, int height, Span<byte> destination)
     {
-        ValidateDimensions(width, height);
-        var channels = ChannelCount(format);
-        var encodedBytes = EncodedByteCount(format, width, height);
-        var decodedBytes = checked(width * height * channels);
-        if (source.Length < encodedBytes || destination.Length < decodedBytes) {
-            throw new ArgumentException("BC buffers are too small for the image dimensions.");
-        }
+        ValidateDecode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
 
-        var blockBytes = BlockByteSize(format);
-        var blocksWide = (width + 3) / 4;
-        var blocksHigh = (height + 3) / 4;
         Span<byte> blockPixels = stackalloc byte[64];
         for (var blockY = 0; blockY < blocksHigh; blockY++) {
-            for (var blockX = 0; blockX < blocksWide; blockX++) {
-                var blockIndex = (blockY * blocksWide) + blockX;
-                DecodeBlock(format, source.Slice(blockIndex * blockBytes, blockBytes), blockPixels);
-                StoreBlock(blockPixels, destination, width, height, channels, blockX * 4, blockY * 4);
-            }
+            DecodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
         }
+    }
+
+    public static void Decode(BcFormat format, byte[] source, int width, int height, byte[] destination)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        ValidateDecode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
+
+        if (blocksWide * blocksHigh < k_ParallelBlockThreshold || Environment.ProcessorCount == 1) {
+            Decode(format, source.AsSpan(), width, height, destination.AsSpan());
+            return;
+        }
+
+        Parallel.For(0, blocksHigh, blockY => {
+            Span<byte> blockPixels = stackalloc byte[64];
+            DecodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
+        });
     }
 
     public static void Encode(BcFormat format, ReadOnlySpan<byte> source, int width, int height, Span<byte> destination)
     {
-        ValidateDimensions(width, height);
+        ValidateEncode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
+
+        Span<byte> blockPixels = stackalloc byte[64];
+        for (var blockY = 0; blockY < blocksHigh; blockY++) {
+            EncodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
+        }
+    }
+
+    public static void Encode(BcFormat format, byte[] source, int width, int height, byte[] destination)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        ValidateEncode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
+
+        if (blocksWide * blocksHigh < k_ParallelBlockThreshold || Environment.ProcessorCount == 1) {
+            Encode(format, source.AsSpan(), width, height, destination.AsSpan());
+            return;
+        }
+
+        Parallel.For(0, blocksHigh, blockY => {
+            Span<byte> blockPixels = stackalloc byte[64];
+            EncodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
+        });
+    }
+
+    private static void DecodeBlockRow(
+        BcFormat format,
+        ReadOnlySpan<byte> source,
+        int width,
+        int height,
+        Span<byte> destination,
+        int blocksWide,
+        int blockY,
+        Span<byte> blockPixels)
+    {
         var channels = ChannelCount(format);
-        var decodedBytes = checked(width * height * channels);
-        var encodedBytes = EncodedByteCount(format, width, height);
-        if (source.Length < decodedBytes || destination.Length < encodedBytes) {
+        var blockBytes = BlockByteSize(format);
+
+        for (var blockX = 0; blockX < blocksWide; blockX++) {
+            var blockIndex = (blockY * blocksWide) + blockX;
+            DecodeBlock(format, source.Slice(blockIndex * blockBytes, blockBytes), blockPixels);
+            StoreBlock(blockPixels, destination, width, height, channels, blockX * 4, blockY * 4);
+        }
+    }
+
+    private static void EncodeBlockRow(
+        BcFormat format,
+        ReadOnlySpan<byte> source,
+        int width,
+        int height,
+        Span<byte> destination,
+        int blocksWide,
+        int blockY,
+        Span<byte> blockPixels)
+    {
+        var channels = ChannelCount(format);
+        var blockBytes = BlockByteSize(format);
+
+        for (var blockX = 0; blockX < blocksWide; blockX++) {
+            LoadBlock(source, blockPixels, width, height, channels, blockX * 4, blockY * 4);
+            var blockIndex = (blockY * blocksWide) + blockX;
+            EncodeBlock(format, blockPixels, destination.Slice(blockIndex * blockBytes, blockBytes));
+        }
+    }
+
+    private static void ValidateDecode(BcFormat format, int sourceLength, int width, int height, int destinationLength, out int blocksWide, out int blocksHigh)
+    {
+        ValidateDimensions(width, height);
+        var decodedBytes = checked(width * height * ChannelCount(format));
+        if (sourceLength < EncodedByteCount(format, width, height) || destinationLength < decodedBytes) {
             throw new ArgumentException("BC buffers are too small for the image dimensions.");
         }
 
-        var blockBytes = BlockByteSize(format);
-        var blocksWide = (width + 3) / 4;
-        var blocksHigh = (height + 3) / 4;
-        Span<byte> blockPixels = stackalloc byte[64];
-        for (var blockY = 0; blockY < blocksHigh; blockY++) {
-            for (var blockX = 0; blockX < blocksWide; blockX++) {
-                LoadBlock(source, blockPixels, width, height, channels, blockX * 4, blockY * 4);
-                var blockIndex = (blockY * blocksWide) + blockX;
-                EncodeBlock(format, blockPixels, destination.Slice(blockIndex * blockBytes, blockBytes));
-            }
+        blocksWide = (width + 3) / 4;
+        blocksHigh = (height + 3) / 4;
+    }
+
+    private static void ValidateEncode(BcFormat format, int sourceLength, int width, int height, int destinationLength, out int blocksWide, out int blocksHigh)
+    {
+        ValidateDimensions(width, height);
+        var decodedBytes = checked(width * height * ChannelCount(format));
+        if (sourceLength < decodedBytes || destinationLength < EncodedByteCount(format, width, height)) {
+            throw new ArgumentException("BC buffers are too small for the image dimensions.");
         }
+
+        blocksWide = (width + 3) / 4;
+        blocksHigh = (height + 3) / 4;
     }
 
     private static void DecodeBlock(BcFormat format, ReadOnlySpan<byte> source, Span<byte> destination)

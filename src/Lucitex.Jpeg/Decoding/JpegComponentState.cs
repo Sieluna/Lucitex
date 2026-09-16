@@ -1,0 +1,59 @@
+using Lucitex.Jpeg.Format;
+
+namespace Lucitex.Jpeg.Decoding;
+
+internal sealed class JpegComponentState
+{
+    public required JpegComponent Component { get; init; }
+
+    public required int SamplesPerLine { get; init; }
+
+    public required int SamplesPerColumn { get; init; }
+
+    public required int BlocksPerLine { get; init; }
+
+    public required int BlocksPerColumn { get; init; }
+
+    public required int BlocksPerLineForMcu { get; init; }
+
+    public required int BlocksPerColumnForMcu { get; init; }
+
+    public required int[] Coefficients { get; init; }
+
+    public int DcPredictor;
+
+    public int BlockOffset(int blockRow, int blockCol) => ((blockRow * BlocksPerLineForMcu) + blockCol) * 64;
+
+    public static JpegComponentState[] BuildAll(JpegFrameHeader frame)
+    {
+        var hMax = frame.HMax;
+        var vMax = frame.VMax;
+        var mcusPerLine = CeilDiv(frame.Width, 8 * hMax);
+        var mcusPerColumn = CeilDiv(frame.Height, 8 * vMax);
+
+        var states = new JpegComponentState[frame.Components.Count];
+        for (var i = 0; i < frame.Components.Count; i++) {
+            var component = frame.Components[i];
+
+            var blocksPerLine = CeilDiv(CeilDiv(frame.Width, 8) * component.HSampling, hMax);
+            var blocksPerColumn = CeilDiv(CeilDiv(frame.Height, 8) * component.VSampling, vMax);
+            var blocksPerLineForMcu = mcusPerLine * component.HSampling;
+            var blocksPerColumnForMcu = mcusPerColumn * component.VSampling;
+
+            states[i] = new JpegComponentState {
+                Component = component,
+                SamplesPerLine = CeilDiv(frame.Width * component.HSampling, hMax),
+                SamplesPerColumn = CeilDiv(frame.Height * component.VSampling, vMax),
+                BlocksPerLine = blocksPerLine,
+                BlocksPerColumn = blocksPerColumn,
+                BlocksPerLineForMcu = blocksPerLineForMcu,
+                BlocksPerColumnForMcu = blocksPerColumnForMcu,
+                Coefficients = new int[blocksPerLineForMcu * blocksPerColumnForMcu * 64],
+            };
+        }
+
+        return states;
+    }
+
+    internal static int CeilDiv(int numerator, int denominator) => (numerator + denominator - 1) / denominator;
+}

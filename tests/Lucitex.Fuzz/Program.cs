@@ -11,6 +11,7 @@ using Lucitex.Core.Topology;
 using Lucitex.Exr;
 using Lucitex.Exr.Format;
 using Lucitex.Hdr;
+using Lucitex.Jpeg;
 using Lucitex.Ktx2;
 using Lucitex.Png;
 
@@ -244,6 +245,7 @@ internal enum ImageFormat
     Exr,
     Hdr,
     Ktx2,
+    Jpeg,
 }
 
 internal static class ImageFormatExtensions
@@ -270,6 +272,11 @@ internal static class ImageFormatExtensions
             return true;
         }
 
+        if (string.Equals(value, "jpeg", StringComparison.OrdinalIgnoreCase) || string.Equals(value, "jpg", StringComparison.OrdinalIgnoreCase)) {
+            format = ImageFormat.Jpeg;
+            return true;
+        }
+
         format = default;
         return false;
     }
@@ -279,6 +286,7 @@ internal static class ImageFormatExtensions
         ImageFormat.Exr => "exr",
         ImageFormat.Hdr => "hdr",
         ImageFormat.Ktx2 => "ktx2",
+        ImageFormat.Jpeg => "jpg",
         _ => throw new ArgumentOutOfRangeException(nameof(format)),
     };
 }
@@ -327,6 +335,7 @@ internal static class ManagedDecoder
         ImageFormat.Exr => new ExrCodec(),
         ImageFormat.Hdr => new HdrCodec(),
         ImageFormat.Ktx2 => new Ktx2Codec(),
+        ImageFormat.Jpeg => new JpegCodec(),
         _ => throw new ArgumentOutOfRangeException(nameof(format)),
     };
 
@@ -367,6 +376,8 @@ internal static class SeedCorpus
             new("rgba-rle.exr", ImageFormat.Exr, WriteExr(ExrCompressionId.Rle, 6)),
             new("rgba-zip.exr", ImageFormat.Exr, WriteExr(ExrCompressionId.Zip, 7)),
             new("rgbe.hdr", ImageFormat.Hdr, WriteHdr(31, 12, 10)),
+            new("rgb8.jpg", ImageFormat.Jpeg, WriteJpegRgb8(24, 18, 14)),
+            new("gray8.jpg", ImageFormat.Jpeg, WriteJpegGray8(20, 16, 15)),
             new("rgba8.ktx2", ImageFormat.Ktx2, WriteKtx2Rgba8(12, 9, 8)),
             new("r32f.ktx2", ImageFormat.Ktx2, WriteKtx2R32Float(11, 6, 9)),
             new("r10g10b10a2.ktx2", ImageFormat.Ktx2, WriteKtx2Packed(EncodedFormatId.R10G10B10A2, 13, 7, 11)),
@@ -382,6 +393,7 @@ internal static class SeedCorpus
         yield return new SeedInput("rgba8.png", ImageFormat.Png, WritePng(PngDescriptor(width, height, rgbaChannels, SampleType.UNorm8), checked(width * height * 4), 101));
         yield return new SeedInput("rgba-zip.exr", ImageFormat.Exr, WriteExr(ExrCompressionId.Zip, width, height, 102));
         yield return new SeedInput("rgba8.ktx2", ImageFormat.Ktx2, WriteKtx2Rgba8(width, height, 103));
+        yield return new SeedInput("rgb8.jpg", ImageFormat.Jpeg, WriteJpegRgb8(width, height, 104));
     }
 
     private static ImageAssetDescriptor PngDescriptor(int width, int height, IReadOnlyList<string> names, SampleType sampleType)
@@ -439,6 +451,30 @@ internal static class SeedCorpus
 
     private static byte[] WritePng(ImageAssetDescriptor descriptor, int byteCount, int randomSeed) =>
         Write(new PngCodec(), descriptor, byteCount, randomSeed);
+
+    private static byte[] WriteJpegRgb8(int width, int height, int randomSeed)
+    {
+        var channels = new[] { "R", "G", "B" }.Select(name => new ChannelDescriptor {
+            Name = name,
+            SampleType = SampleType.UNorm8,
+            Sampling = SampleGrid.Unit,
+        }).ToList();
+        var descriptor = Asset(width, height, channels, new PlainSampleRepresentation {
+            Planes = [new SamplePlaneDescriptor { Channels = ["R", "G", "B"], Extent = new Extent3L(width, height, 1), Layout = PlaneLayout.Interleaved }],
+        });
+        return Write(new JpegCodec(), descriptor, width * height * 3, randomSeed);
+    }
+
+    private static byte[] WriteJpegGray8(int width, int height, int randomSeed)
+    {
+        var channels = new List<ChannelDescriptor> {
+            new() { Name = "Y", SampleType = SampleType.UNorm8, Sampling = SampleGrid.Unit },
+        };
+        var descriptor = Asset(width, height, channels, new PlainSampleRepresentation {
+            Planes = [new SamplePlaneDescriptor { Channels = ["Y"], Extent = new Extent3L(width, height, 1), Layout = PlaneLayout.Interleaved }],
+        });
+        return Write(new JpegCodec(), descriptor, width * height, randomSeed);
+    }
 
     private static byte[] WriteExr(ExrCompressionId compression, int randomSeed)
     {
@@ -624,7 +660,7 @@ internal static class Mutator
 
 internal static class NativeOracle
 {
-    public static bool Supports(ImageFormat format) => format is ImageFormat.Png or ImageFormat.Exr or ImageFormat.Ktx2;
+    public static bool Supports(ImageFormat format) => format is ImageFormat.Png or ImageFormat.Exr or ImageFormat.Ktx2 or ImageFormat.Jpeg;
 
     public static bool Accepts(string executable, ImageFormat format, byte[] data)
     {

@@ -1,10 +1,13 @@
 #include <OpenEXR/ImfRgbaFile.h>
+#include <jpeglib.h>
 #include <ktx.h>
 #include <png.h>
 
 #include <algorithm>
 #include <chrono>
+#include <csetjmp>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <iostream>
@@ -97,14 +100,91 @@ bool validate_ktx2(const char* path)
     ktxTexture_Destroy(ktxTexture(texture));
     return accepted;
 }
+
+struct jpeg_error_mgr_wrapper
+{
+    jpeg_error_mgr pub;
+    std::jmp_buf setjmp_buffer;
+};
+
+void jpeg_error_exit(j_common_ptr cinfo)
+{
+    auto* err = reinterpret_cast<jpeg_error_mgr_wrapper*>(cinfo->err);
+    std::longjmp(err->setjmp_buffer, 1);
+}
+
+void jpeg_emit_message_quiet(j_common_ptr, int)
+{
+}
+
+void jpeg_output_message_quiet(j_common_ptr)
+{
+}
+
+bool validate_jpeg(const char* path)
+{
+    FILE* file = nullptr;
+    if (fopen_s(&file, path, "rb") != 0 || file == nullptr)
+    {
+        return false;
+    }
+
+    jpeg_decompress_struct cinfo{};
+    jpeg_error_mgr_wrapper jerr{};
+    cinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = jpeg_error_exit;
+    jerr.pub.emit_message = jpeg_emit_message_quiet;
+    jerr.pub.output_message = jpeg_output_message_quiet;
+
+    if (setjmp(jerr.setjmp_buffer))
+    {
+        jpeg_destroy_decompress(&cinfo);
+        std::fclose(file);
+        return false;
+    }
+
+    jpeg_create_decompress(&cinfo);
+    jpeg_stdio_src(&cinfo, file);
+    jpeg_read_header(&cinfo, TRUE);
+
+    if (cinfo.image_width == 0 || cinfo.image_height == 0 || cinfo.image_width > 65536 || cinfo.image_height > 65536)
+    {
+        jpeg_destroy_decompress(&cinfo);
+        std::fclose(file);
+        return false;
+    }
+
+    jpeg_start_decompress(&cinfo);
+
+    const auto row_stride = static_cast<std::uint64_t>(cinfo.output_width) * cinfo.output_components;
+    const auto total_bytes = row_stride * cinfo.output_height;
+    if (total_bytes > max_decoded_bytes)
+    {
+        jpeg_destroy_decompress(&cinfo);
+        std::fclose(file);
+        return false;
+    }
+
+    std::vector<JSAMPLE> row(static_cast<std::size_t>(row_stride));
+    JSAMPROW row_pointer[1] = { row.data() };
+    while (cinfo.output_scanline < cinfo.output_height)
+    {
+        jpeg_read_scanlines(&cinfo, row_pointer, 1);
+    }
+
+    jpeg_finish_decompress(&cinfo);
+    jpeg_destroy_decompress(&cinfo);
+    std::fclose(file);
+    return true;
+}
 }
 
 int main(int argc, char** argv)
 {
     if (argc != 3 && argc != 5)
     {
-        std::cerr << "usage: lucitex_native_oracle <png|exr|ktx2> <path>\n";
-        std::cerr << "       lucitex_native_oracle bench <png|exr|ktx2> <path> <iterations>\n";
+        std::cerr << "usage: lucitex_native_oracle <png|exr|ktx2|jpg> <path>\n";
+        std::cerr << "       lucitex_native_oracle bench <png|exr|ktx2|jpg> <path> <iterations>\n";
         return 64;
     }
 
@@ -131,6 +211,11 @@ int main(int argc, char** argv)
             if (std::strcmp(argv[2], "ktx2") == 0)
             {
                 return validate_ktx2(argv[3]);
+            }
+
+            if (std::strcmp(argv[2], "jpg") == 0)
+            {
+                return validate_jpeg(argv[3]);
             }
 
             return false;
@@ -172,6 +257,11 @@ int main(int argc, char** argv)
     if (std::strcmp(argv[1], "ktx2") == 0)
     {
         return validate_ktx2(argv[2]) ? 0 : 1;
+    }
+
+    if (std::strcmp(argv[1], "jpg") == 0)
+    {
+        return validate_jpeg(argv[2]) ? 0 : 1;
     }
 
     std::cerr << "unknown format\n";

@@ -5,6 +5,7 @@
   "dependencies": [
     "libpng",
     "openexr",
-    "ktx"
+    "ktx",
+    "libjpeg-turbo"
   ]
 }

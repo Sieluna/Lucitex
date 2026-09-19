@@ -63,6 +63,11 @@ internal static class SampleInterleaveKernel
         var samples = MemoryMarshal.Cast<byte, T>(source);
         var packed = MemoryMarshal.Cast<byte, T>(destination);
 
+        if (step == 1) {
+            samples[..count].CopyTo(packed);
+            return;
+        }
+
         for (var i = 0; i < count; i++) {
             packed[i] = samples[i * step];
         }
@@ -74,6 +79,11 @@ internal static class SampleInterleaveKernel
         var step = stride / Unsafe.SizeOf<T>();
         var packed = MemoryMarshal.Cast<byte, T>(source);
         var samples = MemoryMarshal.Cast<byte, T>(destination);
+
+        if (step == 1) {
+            packed[..count].CopyTo(samples);
+            return;
+        }
 
         for (var i = 0; i < count; i++) {
             samples[i * step] = packed[i];

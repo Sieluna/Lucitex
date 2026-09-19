@@ -24,20 +24,49 @@ internal static class OrientationKernel
         var destWidth = swapsAxes ? height : width;
         var destHeight = swapsAxes ? width : height;
 
-        for (var sy = 0; sy < height; sy++) {
-            for (var sx = 0; sx < width; sx++) {
-                var lx = LogicalCoordinate(from.Permutation.X, from.Sign.X, sx, sy, width, height);
-                var ly = LogicalCoordinate(from.Permutation.Y, from.Sign.Y, sx, sy, width, height);
-                destination[(ly * destWidth) + lx] = source[(sy * width) + sx];
-            }
+        if (swapsAxes) {
+            ApplyWithAxisSwap(source, width, height, destWidth, from.Sign.X, from.Sign.Y, destination);
+        }
+        else {
+            ApplyWithoutAxisSwap(source, width, height, from.Sign.X, from.Sign.Y, destination);
         }
 
         return (destWidth, destHeight);
     }
 
-    private static int LogicalCoordinate(Axis permutationAxis, int sign, int sx, int sy, int width, int height) => permutationAxis switch {
-        Axis.X => sign == 1 ? sx : width - 1 - sx,
-        Axis.Y => sign == 1 ? sy : height - 1 - sy,
-        _ => throw new NotSupportedException("OrientationKernel only supports 2D orientations (identity Z axis)."),
-    };
+    private static void ApplyWithoutAxisSwap(ReadOnlySpan<float> source, int width, int height, int signX, int signY, Span<float> destination)
+    {
+        var mirrorsRow = signX != 1;
+
+        for (var sy = 0; sy < height; sy++) {
+            var destRow = signY == 1 ? sy : height - 1 - sy;
+            var destRowSpan = destination.Slice(destRow * width, width);
+
+            source.Slice(sy * width, width).CopyTo(destRowSpan);
+            if (mirrorsRow) {
+                destRowSpan.Reverse();
+            }
+        }
+    }
+
+    private static void ApplyWithAxisSwap(ReadOnlySpan<float> source, int width, int height, int destWidth, int signX, int signY, Span<float> destination)
+    {
+        var lastColumn = width - 1;
+
+        for (var sy = 0; sy < height; sy++) {
+            var lx = signX == 1 ? sy : height - 1 - sy;
+            var sourceRow = source.Slice(sy * width, width);
+
+            if (signY == 1) {
+                for (var sx = 0; sx < width; sx++) {
+                    destination[(sx * destWidth) + lx] = sourceRow[sx];
+                }
+            }
+            else {
+                for (var sx = 0; sx < width; sx++) {
+                    destination[((lastColumn - sx) * destWidth) + lx] = sourceRow[sx];
+                }
+            }
+        }
+    }
 }

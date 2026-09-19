@@ -1,3 +1,4 @@
+using System.Numerics;
 using Lucitex.Jpeg.Format;
 
 namespace Lucitex.Jpeg.Encoding;
@@ -219,19 +220,56 @@ internal static class JpegEncoder
         var cbFull = new float[pixelCount];
         var crFull = new float[pixelCount];
 
-        for (var i = 0; i < pixelCount; i++) {
-            var r = pixels[(i * 3) + 0];
-            var g = pixels[(i * 3) + 1];
-            var b = pixels[(i * 3) + 2];
-            yFull[i] = (0.299f * r) + (0.587f * g) + (0.114f * b);
-            cbFull[i] = 128f - (0.168736f * r) - (0.331264f * g) + (0.5f * b);
-            crFull[i] = 128f + (0.5f * r) - (0.418688f * g) - (0.081312f * b);
-        }
+        Parallel.For(0, height, y => RgbRowToYCbCr(pixels, y * width, width, yFull, cbFull, crFull));
 
         planes[0] = BuildFullPlane(yFull, width, height, mcusPerLine * hSampling[0] * 8, mcusPerColumn * vSampling[0] * 8, hMax / hSampling[0], vMax / vSampling[0]);
         planes[1] = BuildFullPlane(cbFull, width, height, mcusPerLine * hSampling[1] * 8, mcusPerColumn * vSampling[1] * 8, hMax / hSampling[1], vMax / vSampling[1]);
         planes[2] = BuildFullPlane(crFull, width, height, mcusPerLine * hSampling[2] * 8, mcusPerColumn * vSampling[2] * 8, hMax / hSampling[2], vMax / vSampling[2]);
         return planes;
+    }
+
+    private static void RgbRowToYCbCr(byte[] pixels, int rowBase, int width, float[] yFull, float[] cbFull, float[] crFull)
+    {
+        var pixelBase = rowBase * 3;
+        var x = 0;
+        var lanes = Vector<float>.Count;
+
+        if (Vector.IsHardwareAccelerated) {
+            Span<float> r = stackalloc float[lanes];
+            Span<float> g = stackalloc float[lanes];
+            Span<float> b = stackalloc float[lanes];
+
+            for (; x + lanes <= width; x += lanes) {
+                for (var lane = 0; lane < lanes; lane++) {
+                    var offset = pixelBase + ((x + lane) * 3);
+                    r[lane] = pixels[offset];
+                    g[lane] = pixels[offset + 1];
+                    b[lane] = pixels[offset + 2];
+                }
+
+                var rv = new Vector<float>(r);
+                var gv = new Vector<float>(g);
+                var bv = new Vector<float>(b);
+
+                var yv = (rv * 0.299f) + (gv * 0.587f) + (bv * 0.114f);
+                var cbv = new Vector<float>(128f) - (rv * 0.168736f) - (gv * 0.331264f) + (bv * 0.5f);
+                var crv = new Vector<float>(128f) + (rv * 0.5f) - (gv * 0.418688f) - (bv * 0.081312f);
+
+                yv.CopyTo(yFull.AsSpan(rowBase + x, lanes));
+                cbv.CopyTo(cbFull.AsSpan(rowBase + x, lanes));
+                crv.CopyTo(crFull.AsSpan(rowBase + x, lanes));
+            }
+        }
+
+        for (; x < width; x++) {
+            var offset = pixelBase + (x * 3);
+            var r = pixels[offset];
+            var g = pixels[offset + 1];
+            var b = pixels[offset + 2];
+            yFull[rowBase + x] = (0.299f * r) + (0.587f * g) + (0.114f * b);
+            cbFull[rowBase + x] = 128f - (0.168736f * r) - (0.331264f * g) + (0.5f * b);
+            crFull[rowBase + x] = 128f + (0.5f * r) - (0.418688f * g) - (0.081312f * b);
+        }
     }
 
     private static float[] BuildPaddedPlane(byte[] pixels, int width, int height, int paddedWidth, int paddedHeight)

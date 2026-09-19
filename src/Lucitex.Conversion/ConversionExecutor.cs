@@ -133,15 +133,18 @@ public static class ConversionExecutor
                 var channelCount = BcImageCodec.ChannelCount(bcFormat);
                 var decoded = new byte[checked(pixelCount * channelCount)];
                 BcImageCodec.Decode(bcFormat, encoded, width, height, decoded);
-                for (var channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+                var decodedChannels = new float[channelCount][];
+                RunPerChannel(channelCount, pixelCount, channelIndex => {
                     var raw = new byte[pixelCount];
-                    for (var pixel = 0; pixel < pixelCount; pixel++) {
-                        raw[pixel] = decoded[(pixel * channelCount) + channelIndex];
-                    }
+                    SampleInterleaveKernel.Gather(decoded.AsSpan(channelIndex), raw, channelCount, 1, pixelCount);
 
                     var values = new float[pixelCount];
                     SampleTypeConversionKernel.ToFloat32(raw, SampleType.UNorm8, SampleByteOrder.LittleEndian, values);
-                    floatChannels[sourcePart.Channels.Channels[channelIndex].Name] = values;
+                    decodedChannels[channelIndex] = values;
+                });
+
+                for (var channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+                    floatChannels[sourcePart.Channels.Channels[channelIndex].Name] = decodedChannels[channelIndex];
                 }
             }
             else if (sourcePart.Representation is IndexedRepresentation indexed &&
@@ -167,7 +170,8 @@ public static class ConversionExecutor
                 var entryBytesPerSample = indexed.Palette.EntrySampleType.Bits / 8;
                 var entryStride = entryChannels.Count * entryBytesPerSample;
 
-                for (var channelIndex = 0; channelIndex < entryChannels.Count; channelIndex++) {
+                var expandedChannels = new float[entryChannels.Count][];
+                RunPerChannel(entryChannels.Count, pixelCount, channelIndex => {
                     var raw = new byte[checked(pixelCount * entryBytesPerSample)];
                     for (var pixel = 0; pixel < pixelCount; pixel++) {
                         var entryOffset = (indices[pixel] * entryStride) + (channelIndex * entryBytesPerSample);
@@ -176,7 +180,11 @@ public static class ConversionExecutor
 
                     var values = new float[pixelCount];
                     SampleTypeConversionKernel.ToFloat32(raw, indexed.Palette.EntrySampleType, sourceByteOrder, values);
-                    floatChannels[entryChannels[channelIndex].Name] = values;
+                    expandedChannels[channelIndex] = values;
+                });
+
+                for (var channelIndex = 0; channelIndex < entryChannels.Count; channelIndex++) {
+                    floatChannels[entryChannels[channelIndex].Name] = expandedChannels[channelIndex];
                 }
             }
             else {
@@ -190,18 +198,23 @@ public static class ConversionExecutor
                         break;
 
                     case ApplyOrientationStep orientationStep: {
+                            var entries = floatChannels.ToArray();
+                            var destinations = new float[entries.Length][];
+                            var extents = new (int Width, int Height)[entries.Length];
+
+                            RunPerChannel(entries.Length, pixelCount, index => {
+                                var destination = new float[entries[index].Value.Length];
+                                extents[index] = OrientationKernel.ApplyToIdentity(entries[index].Value, width, height, orientationStep.From, destination);
+                                destinations[index] = destination;
+                            });
+
                             var reoriented = new Dictionary<ChannelPath, float[]>();
-                            var newWidth = width;
-                            var newHeight = height;
-                            foreach (var (name, values) in floatChannels) {
-                                var destination = new float[values.Length];
-                                (newWidth, newHeight) = OrientationKernel.ApplyToIdentity(values, width, height, orientationStep.From, destination);
-                                reoriented[name] = destination;
+                            for (var index = 0; index < entries.Length; index++) {
+                                reoriented[entries[index].Key] = destinations[index];
                             }
 
                             floatChannels = reoriented;
-                            width = newWidth;
-                            height = newHeight;
+                            (width, height) = extents[0];
                             pixelCount = width * height;
                             region = region with { Region = ImageBox.FromOrigin(width, height) };
                             break;
@@ -274,14 +287,12 @@ public static class ConversionExecutor
                 partPlan.Steps.OfType<EncodeEncodedElementsStep>().Any(step => step.Format == blockTarget.Format)) {
                 var channelCount = BcImageCodec.ChannelCount(targetBcFormat);
                 var interleaved = new byte[checked(pixelCount * channelCount)];
-                for (var channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+                RunPerChannel(channelCount, pixelCount, channelIndex => {
                     var channel = targetPart.Channels.Channels[channelIndex];
                     var raw = new byte[pixelCount];
                     SampleTypeConversionKernel.FromFloat32(floatChannels[channel.Name], SampleType.UNorm8, SampleByteOrder.LittleEndian, raw);
-                    for (var pixel = 0; pixel < pixelCount; pixel++) {
-                        interleaved[(pixel * channelCount) + channelIndex] = raw[pixel];
-                    }
-                }
+                    SampleInterleaveKernel.Scatter(raw, interleaved.AsSpan(channelIndex), channelCount, 1, pixelCount);
+                });
 
                 var encoded = new byte[BcImageCodec.EncodedByteCount(targetBcFormat, width, height)];
                 BcImageCodec.Encode(targetBcFormat, interleaved, width, height, encoded);

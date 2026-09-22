@@ -27,6 +27,27 @@ internal sealed class JpegByteCursor(Stream stream)
         _pushback.Push(JpegMarkers.Prefix);
     }
 
+    public void PushBackBytes(ReadOnlySpan<byte> bytes)
+    {
+        for (var i = bytes.Length - 1; i >= 0; i--) {
+            _pushback.Push(bytes[i]);
+        }
+    }
+
+    public int ReadBulk(Span<byte> destination)
+    {
+        var written = 0;
+        while (written < destination.Length && _pushback.Count > 0) {
+            destination[written++] = _pushback.Pop();
+        }
+
+        if (written < destination.Length) {
+            written += stream.Read(destination[written..]);
+        }
+
+        return written;
+    }
+
     public byte ReadMarker()
     {
         var first = ReadByte();

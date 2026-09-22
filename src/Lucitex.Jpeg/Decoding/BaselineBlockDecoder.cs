@@ -10,14 +10,21 @@ internal static class BaselineBlockDecoder
         JpegComponentState component,
         int blockOffset,
         JpegHuffmanDecodeTable dcTable,
+        JpegHuffmanDecodeTable acTable) =>
+        DecodeBlock(reader, component.Coefficients, blockOffset, ref component.DcPredictor, dcTable, acTable);
+
+    public static void DecodeBlock(
+        JpegBitReader reader,
+        short[] coefficients,
+        int blockOffset,
+        ref int dcPredictor,
+        JpegHuffmanDecodeTable dcTable,
         JpegHuffmanDecodeTable acTable)
     {
-        var coefficients = component.Coefficients;
-
         var dcSize = dcTable.Decode(reader);
         var diff = reader.ReceiveExtend(dcSize);
-        component.DcPredictor += diff;
-        coefficients[blockOffset] = component.DcPredictor;
+        dcPredictor += diff;
+        coefficients[blockOffset] = (short)dcPredictor;
 
         var k = 1;
         while (k <= 63) {
@@ -39,7 +46,7 @@ internal static class BaselineBlockDecoder
                 throw new ImageFormatException("jpeg", "BadEntropyData", "AC coefficient run exceeded the block bounds.");
             }
 
-            coefficients[blockOffset + JpegZigZag.Order[k]] = reader.ReceiveExtend(size);
+            coefficients[blockOffset + JpegZigZag.Order[k]] = (short)reader.ReceiveExtend(size);
             k++;
         }
     }

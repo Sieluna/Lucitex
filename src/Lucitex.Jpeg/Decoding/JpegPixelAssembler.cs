@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace Lucitex.Jpeg.Decoding;
 
 internal static class JpegPixelAssembler
@@ -37,14 +39,14 @@ internal static class JpegPixelAssembler
             var plane = planes[0];
             var component = decoder.Components[0];
             var xMap = xMaps[0];
-            for (var y = 0; y < height; y++) {
+            Parallel.For(0, height, y => {
                 var sampleY = Math.Min((y * component.Component.VSampling) / vMax, component.SamplesPerColumn - 1);
                 var rowBase = sampleY * component.SamplesPerLine;
                 var outRowBase = y * width;
                 for (var x = 0; x < width; x++) {
                     output[outRowBase + x] = plane[rowBase + xMap[x]];
                 }
-            }
+            });
 
             return output;
         }
@@ -59,7 +61,7 @@ internal static class JpegPixelAssembler
         var xMap1 = xMaps[1];
         var xMap2 = xMaps[2];
 
-        for (var y = 0; y < height; y++) {
+        Parallel.For(0, height, y => {
             var rowBase0 = Math.Min((y * component0.Component.VSampling) / vMax, component0.SamplesPerColumn - 1) * component0.SamplesPerLine;
             var rowBase1 = Math.Min((y * component1.Component.VSampling) / vMax, component1.SamplesPerColumn - 1) * component1.SamplesPerLine;
             var rowBase2 = Math.Min((y * component2.Component.VSampling) / vMax, component2.SamplesPerColumn - 1) * component2.SamplesPerLine;
@@ -82,7 +84,7 @@ internal static class JpegPixelAssembler
                     output[outIndex + 2] = sample2;
                 }
             }
-        }
+        });
 
         return output;
     }
@@ -122,15 +124,19 @@ internal static class JpegPixelAssembler
     private static byte[] ReconstructComponentPlane(JpegComponentState component, Format.JpegQuantizationTable quantTable)
     {
         var plane = new byte[component.SamplesPerLine * component.SamplesPerColumn];
-        Span<int> dequantized = stackalloc int[64];
-        Span<float> spatial = stackalloc float[64];
+        var coefficients = component.Coefficients;
+        var quantValues = quantTable.Values;
+        var blocksPerLine = component.BlocksPerLine;
+        var samplesPerLine = component.SamplesPerLine;
+        var samplesPerColumn = component.SamplesPerColumn;
 
-        for (var blockRow = 0; blockRow < component.BlocksPerColumn; blockRow++) {
-            for (var blockCol = 0; blockCol < component.BlocksPerLine; blockCol++) {
+        Parallel.For(0, component.BlocksPerColumn, blockRow => {
+            Span<int> dequantized = stackalloc int[64];
+            Span<float> spatial = stackalloc float[64];
+
+            for (var blockCol = 0; blockCol < blocksPerLine; blockCol++) {
                 var blockOffset = component.BlockOffset(blockRow, blockCol);
-                for (var i = 0; i < 64; i++) {
-                    dequantized[i] = component.Coefficients[blockOffset + i] * quantTable.Values[i];
-                }
+                Dequantize(coefficients.AsSpan(blockOffset, 64), quantValues, dequantized);
 
                 InverseDct.Transform(dequantized, spatial);
 
@@ -138,23 +144,46 @@ internal static class JpegPixelAssembler
                 var originX = blockCol * 8;
                 for (var y = 0; y < 8; y++) {
                     var sampleY = originY + y;
-                    if (sampleY >= component.SamplesPerColumn) {
+                    if (sampleY >= samplesPerColumn) {
                         continue;
                     }
 
                     for (var x = 0; x < 8; x++) {
                         var sampleX = originX + x;
-                        if (sampleX >= component.SamplesPerLine) {
+                        if (sampleX >= samplesPerLine) {
                             continue;
                         }
 
                         var value = spatial[(y * 8) + x] + 128.5f;
-                        plane[(sampleY * component.SamplesPerLine) + sampleX] = (byte)Math.Clamp((int)value, 0, 255);
+                        plane[(sampleY * samplesPerLine) + sampleX] = (byte)Math.Clamp((int)value, 0, 255);
                     }
                 }
             }
-        }
+        });
 
         return plane;
+    }
+
+    private static void Dequantize(ReadOnlySpan<short> coefficients, ushort[] quantValues, Span<int> dequantized)
+    {
+        var i = 0;
+        var lanes = Vector<short>.Count;
+
+        if (Vector.IsHardwareAccelerated) {
+            for (; i + lanes <= 64; i += lanes) {
+                var c = new Vector<short>(coefficients.Slice(i, lanes));
+                var q = new Vector<ushort>(quantValues.AsSpan(i, lanes));
+
+                Vector.Widen(c, out var cLo, out var cHi);
+                Vector.Widen(q, out var qLo, out var qHi);
+
+                (cLo * Vector.AsVectorInt32(qLo)).CopyTo(dequantized.Slice(i, lanes / 2));
+                (cHi * Vector.AsVectorInt32(qHi)).CopyTo(dequantized.Slice(i + (lanes / 2), lanes / 2));
+            }
+        }
+
+        for (; i < 64; i++) {
+            dequantized[i] = coefficients[i] * quantValues[i];
+        }
     }
 }

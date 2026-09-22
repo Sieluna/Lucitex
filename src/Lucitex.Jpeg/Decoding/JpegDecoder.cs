@@ -256,6 +256,11 @@ internal sealed class JpegDecoder
             active[i].Component.DcPredictor = 0;
         }
 
+        if (!Frame.Progressive && _restartInterval > 0) {
+            DecodeBaselineScanParallel(active);
+            return;
+        }
+
         var reader = new JpegBitReader(_cursor);
         var eobRun = 0;
 
@@ -267,6 +272,131 @@ internal sealed class JpegDecoder
         }
 
         reader.FinishSegment();
+    }
+
+    private void DecodeBaselineScanParallel((JpegComponentState Component, JpegScanComponent Scan)[] active)
+    {
+        var (buffer, length, segmentStarts) = ReadRestartSegments();
+        var restartInterval = _restartInterval;
+        var segmentCount = segmentStarts.Count;
+
+        var dcTables = new JpegHuffmanDecodeTable[active.Length];
+        var acTables = new JpegHuffmanDecodeTable[active.Length];
+        for (var i = 0; i < active.Length; i++) {
+            dcTables[i] = GetDcTable(active[i].Scan.DcTableSelector);
+            acTables[i] = GetAcTable(active[i].Scan.AcTableSelector);
+        }
+
+        if (active.Length > 1) {
+            var mcusPerLine = JpegComponentState.CeilDiv(Frame.Width, 8 * Frame.HMax);
+            var mcusPerColumn = JpegComponentState.CeilDiv(Frame.Height, 8 * Frame.VMax);
+            var totalMcus = mcusPerLine * mcusPerColumn;
+
+            ExecutionScheduler.For(0, segmentCount, segmentIndex => {
+                var mcuStart = segmentIndex * restartInterval;
+                var mcuEnd = Math.Min(mcuStart + restartInterval, totalMcus);
+                var segmentOffset = segmentStarts[segmentIndex];
+                var segmentReader = new JpegBitReader(new JpegByteCursor(new MemoryStream(buffer, segmentOffset, length - segmentOffset, writable: false)));
+                var dcPredictors = new int[active.Length];
+
+                for (var mcuIndex = mcuStart; mcuIndex < mcuEnd; mcuIndex++) {
+                    var mcuRow = mcuIndex / mcusPerLine;
+                    var mcuCol = mcuIndex % mcusPerLine;
+
+                    for (var i = 0; i < active.Length; i++) {
+                        var component = active[i].Component;
+
+                        for (var v = 0; v < component.Component.VSampling; v++) {
+                            for (var h = 0; h < component.Component.HSampling; h++) {
+                                var blockRow = (mcuRow * component.Component.VSampling) + v;
+                                var blockCol = (mcuCol * component.Component.HSampling) + h;
+                                var blockOffset = component.BlockOffset(blockRow, blockCol);
+                                BaselineBlockDecoder.DecodeBlock(segmentReader, component.Coefficients, blockOffset, ref dcPredictors[i], dcTables[i], acTables[i]);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        else {
+            var component = active[0].Component;
+            var dcTable = dcTables[0];
+            var acTable = acTables[0];
+            var total = component.BlocksPerLine * component.BlocksPerColumn;
+
+            ExecutionScheduler.For(0, segmentCount, segmentIndex => {
+                var blockStart = segmentIndex * restartInterval;
+                var blockEnd = Math.Min(blockStart + restartInterval, total);
+                var segmentOffset = segmentStarts[segmentIndex];
+                var segmentReader = new JpegBitReader(new JpegByteCursor(new MemoryStream(buffer, segmentOffset, length - segmentOffset, writable: false)));
+                var dcPredictor = 0;
+
+                for (var blockIndex = blockStart; blockIndex < blockEnd; blockIndex++) {
+                    var blockRow = blockIndex / component.BlocksPerLine;
+                    var blockCol = blockIndex % component.BlocksPerLine;
+                    var blockOffset = component.BlockOffset(blockRow, blockCol);
+                    BaselineBlockDecoder.DecodeBlock(segmentReader, component.Coefficients, blockOffset, ref dcPredictor, dcTable, acTable);
+                }
+            });
+        }
+    }
+
+    private const int k_SegmentRefillPadding = 8;
+
+    private (byte[] Buffer, int Length, List<int> SegmentStarts) ReadRestartSegments()
+    {
+        var buffer = new byte[8192];
+        var length = 0;
+        var searched = 0;
+        var segmentStarts = new List<int> { 0 };
+
+        while (true) {
+            while (true) {
+                var relativeIndex = buffer.AsSpan(searched, length - searched).IndexOf(JpegMarkers.Prefix);
+                if (relativeIndex < 0) {
+                    searched = length;
+                    break;
+                }
+
+                var ffIndex = searched + relativeIndex;
+                if (ffIndex + 1 >= length) {
+                    searched = ffIndex;
+                    break;
+                }
+
+                var next = buffer[ffIndex + 1];
+                if (next == JpegMarkers.Padding) {
+                    searched = ffIndex + 2;
+                    continue;
+                }
+
+                if (JpegMarkers.IsRestart(next)) {
+                    segmentStarts.Add(ffIndex + 2);
+                    searched = ffIndex + 2;
+                    continue;
+                }
+
+                _cursor.PushBackBytes(buffer.AsSpan(ffIndex, length - ffIndex));
+
+                var paddedLength = ffIndex + k_SegmentRefillPadding;
+                if (buffer.Length < paddedLength) {
+                    Array.Resize(ref buffer, paddedLength);
+                }
+
+                return (buffer, paddedLength, segmentStarts);
+            }
+
+            if (length == buffer.Length) {
+                Array.Resize(ref buffer, buffer.Length * 2);
+            }
+
+            var read = _cursor.ReadBulk(buffer.AsSpan(length));
+            if (read == 0) {
+                throw new ImageFormatException("jpeg", "BadEntropyData", "JPEG scan data ended before a terminating marker was found.");
+            }
+
+            length += read;
+        }
     }
 
     private void DecodeInterleavedScan(JpegBitReader reader, (JpegComponentState Component, JpegScanComponent Scan)[] active, JpegScanHeader scan, ref int eobRun)

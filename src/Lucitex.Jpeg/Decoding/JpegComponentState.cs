@@ -18,7 +18,7 @@ internal sealed class JpegComponentState
 
     public required int BlocksPerColumnForMcu { get; init; }
 
-    public required int[] Coefficients { get; init; }
+    public required short[] Coefficients { get; init; }
 
     public int DcPredictor;
 
@@ -48,7 +48,7 @@ internal sealed class JpegComponentState
                 BlocksPerColumn = blocksPerColumn,
                 BlocksPerLineForMcu = blocksPerLineForMcu,
                 BlocksPerColumnForMcu = blocksPerColumnForMcu,
-                Coefficients = new int[blocksPerLineForMcu * blocksPerColumnForMcu * 64],
+                Coefficients = new short[blocksPerLineForMcu * blocksPerColumnForMcu * 64],
             };
         }
 

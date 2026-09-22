@@ -6,7 +6,7 @@ internal static class JpegBlockEncoder
 {
     public static void EncodeBlock(
         JpegBitWriter writer,
-        ReadOnlySpan<int> coefficients,
+        ReadOnlySpan<short> coefficients,
         ref int dcPredictor,
         JpegHuffmanEncodeTable dcTable,
         JpegHuffmanEncodeTable acTable)
@@ -28,7 +28,7 @@ internal static class JpegBlockEncoder
         }
     }
 
-    public static void EncodeAc(JpegBitWriter writer, ReadOnlySpan<int> coefficients, JpegHuffmanEncodeTable acTable)
+    public static void EncodeAc(JpegBitWriter writer, ReadOnlySpan<short> coefficients, JpegHuffmanEncodeTable acTable)
     {
         var zigzag = JpegZigZag.Order;
         var run = 0;

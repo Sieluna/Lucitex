@@ -10,13 +10,13 @@ internal static class ProgressiveBlockDecoder
         var size = dcTable.Decode(reader);
         var diff = size == 0 ? 0 : reader.ReceiveExtend(size);
         component.DcPredictor += diff;
-        component.Coefficients[blockOffset] = component.DcPredictor << approximationLow;
+        component.Coefficients[blockOffset] = (short)(component.DcPredictor << approximationLow);
     }
 
     public static void DecodeDcRefine(JpegBitReader reader, JpegComponentState component, int blockOffset, int approximationLow)
     {
         if (reader.ReadBit() == 1) {
-            component.Coefficients[blockOffset] |= 1 << approximationLow;
+            component.Coefficients[blockOffset] |= (short)(1 << approximationLow);
         }
     }
 
@@ -62,7 +62,7 @@ internal static class ProgressiveBlockDecoder
                 throw new ImageFormatException("jpeg", "BadEntropyData", "Progressive AC coefficient run exceeded the spectral band bounds.");
             }
 
-            coefficients[blockOffset + JpegZigZag.Order[k]] = reader.ReceiveExtend(size) * (1 << approximationLow);
+            coefficients[blockOffset + JpegZigZag.Order[k]] = (short)(reader.ReceiveExtend(size) * (1 << approximationLow));
             k++;
         }
     }
@@ -121,7 +121,7 @@ internal static class ProgressiveBlockDecoder
                 else {
                     if (run == 0) {
                         if (newValue != 0) {
-                            coefficients[index] = newValue;
+                            coefficients[index] = (short)newValue;
                         }
 
                         k++;
@@ -136,7 +136,7 @@ internal static class ProgressiveBlockDecoder
         }
     }
 
-    private static void RefineExistingCoefficient(JpegBitReader reader, int[] coefficients, int index, int bit)
+    private static void RefineExistingCoefficient(JpegBitReader reader, short[] coefficients, int index, int bit)
     {
         if (reader.ReadBit() != 1) {
             return;
@@ -144,7 +144,7 @@ internal static class ProgressiveBlockDecoder
 
         var value = coefficients[index];
         if ((value & bit) == 0) {
-            coefficients[index] = value > 0 ? value + bit : value - bit;
+            coefficients[index] = (short)(value > 0 ? value + bit : value - bit);
         }
     }
 }

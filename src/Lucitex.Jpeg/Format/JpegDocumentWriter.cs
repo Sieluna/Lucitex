@@ -59,6 +59,14 @@ internal static class JpegDocumentWriter
         WriteSegment(stream, JpegMarkers.Dht, payload);
     }
 
+    public static void WriteDri(Stream stream, int restartInterval)
+    {
+        byte[] payload = [(byte)(restartInterval >> 8), (byte)(restartInterval & 0xFF)];
+        WriteSegment(stream, JpegMarkers.Dri, payload);
+    }
+
+    public static void WriteRestartMarker(Stream stream, byte marker) => WriteMarker(stream, marker);
+
     public static void WriteScanHeader(Stream stream, byte[] componentIds, byte[] dcTableIds, byte[] acTableIds, byte spectralStart, byte spectralEnd, byte successiveApproximation)
     {
         var count = componentIds.Length;

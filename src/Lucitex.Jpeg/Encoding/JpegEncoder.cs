@@ -75,37 +75,146 @@ internal static class JpegEncoder
         JpegHuffmanEncodeTable[] dcTables,
         JpegHuffmanEncodeTable[] acTables)
     {
+        var blocksPerLineForMcu = new int[componentCount];
+        var blocksPerColumnForMcu = new int[componentCount];
+        var coefficients = new short[componentCount][];
+
+        for (var c = 0; c < componentCount; c++) {
+            blocksPerLineForMcu[c] = mcusPerLine * hSampling[c];
+            blocksPerColumnForMcu[c] = mcusPerColumn * vSampling[c];
+            coefficients[c] = new short[blocksPerLineForMcu[c] * blocksPerColumnForMcu[c] * 64];
+        }
+
+        ComputeBlockCoefficients(componentPlanes, componentCount, blocksPerLineForMcu, blocksPerColumnForMcu, quantTables, coefficients);
+
+        var totalMcus = mcusPerLine * mcusPerColumn;
+        var restartInterval = ChooseRestartInterval(totalMcus, coefficients);
+        var segmentCount = restartInterval > 0 ? CeilDiv(totalMcus, restartInterval) : 1;
+
         byte[] dcTableIds = componentCount == 3 ? [0, 1, 1] : [0];
         byte[] acTableIds = componentCount == 3 ? [0, 1, 1] : [0];
+
+        if (segmentCount > 1) {
+            JpegDocumentWriter.WriteDri(stream, restartInterval);
+        }
+
         JpegDocumentWriter.WriteScanHeader(stream, componentIds, dcTableIds, acTableIds, 0, 63, 0);
 
-        var writer = new JpegBitWriter();
-        var dcPredictors = new int[componentCount];
-        Span<float> samples = stackalloc float[64];
-        Span<float> dctCoefficients = stackalloc float[64];
-        Span<int> quantized = stackalloc int[64];
+        var segmentWriters = new JpegBitWriter[segmentCount];
 
-        for (var mcuRow = 0; mcuRow < mcusPerColumn; mcuRow++) {
-            for (var mcuCol = 0; mcuCol < mcusPerLine; mcuCol++) {
+        void EncodeSegment(int segmentIndex)
+        {
+            var mcuStart = segmentIndex * restartInterval;
+            var mcuEnd = segmentCount == 1 ? totalMcus : Math.Min(mcuStart + restartInterval, totalMcus);
+            var writer = new JpegBitWriter();
+            var dcPredictors = new int[componentCount];
+
+            for (var mcuIndex = mcuStart; mcuIndex < mcuEnd; mcuIndex++) {
+                var mcuRow = mcuIndex / mcusPerLine;
+                var mcuCol = mcuIndex % mcusPerLine;
+
                 for (var c = 0; c < componentCount; c++) {
-                    var planeWidth = mcusPerLine * hSampling[c] * 8;
+                    var blocksPerLineC = blocksPerLineForMcu[c];
 
                     for (var v = 0; v < vSampling[c]; v++) {
                         for (var h = 0; h < hSampling[c]; h++) {
                             var blockRow = (mcuRow * vSampling[c]) + v;
                             var blockCol = (mcuCol * hSampling[c]) + h;
-                            ExtractBlock(componentPlanes[c], planeWidth, blockRow, blockCol, samples);
-                            ForwardDct.Transform(samples, dctCoefficients);
-                            Quantize(dctCoefficients, quantTables[c], quantized);
-                            JpegBlockEncoder.EncodeBlock(writer, quantized, ref dcPredictors[c], dcTables[c], acTables[c]);
+                            var blockOffset = ((blockRow * blocksPerLineC) + blockCol) * 64;
+                            JpegBlockEncoder.EncodeBlock(writer, coefficients[c].AsSpan(blockOffset, 64), ref dcPredictors[c], dcTables[c], acTables[c]);
                         }
                     }
                 }
             }
+
+            writer.PadAndFlush();
+            segmentWriters[segmentIndex] = writer;
         }
 
-        writer.PadAndFlush();
-        writer.CopyTo(stream);
+        if (segmentCount == 1) {
+            EncodeSegment(0);
+        }
+        else {
+            Parallel.For(0, segmentCount, EncodeSegment);
+        }
+
+        var restartMarker = JpegMarkers.Rst0;
+        for (var segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+            if (segmentIndex > 0) {
+                JpegDocumentWriter.WriteRestartMarker(stream, restartMarker);
+                restartMarker = restartMarker == JpegMarkers.Rst7 ? JpegMarkers.Rst0 : (byte)(restartMarker + 1);
+            }
+
+            segmentWriters[segmentIndex].CopyTo(stream);
+        }
+    }
+
+    private static int ChooseRestartInterval(int totalMcus, short[][] coefficients)
+    {
+        const int minInterval = 4;
+        const int minNonZeroPerSegment = 50_000;
+
+        if (totalMcus <= minInterval) {
+            return 0;
+        }
+
+        var maxSegmentsByWork = Math.Max(1, CountNonZero(coefficients) / minNonZeroPerSegment);
+        var targetSegments = (int)Math.Min(Math.Min(totalMcus / minInterval, Environment.ProcessorCount * 2), maxSegmentsByWork);
+        if (targetSegments <= 1) {
+            return 0;
+        }
+
+        return CeilDiv(totalMcus, targetSegments);
+    }
+
+    private static long CountNonZero(short[][] coefficients)
+    {
+        long count = 0;
+        foreach (var component in coefficients) {
+            for (var i = 0; i < component.Length; i++) {
+                if (component[i] != 0) {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private static void ComputeBlockCoefficients(
+        float[][] componentPlanes,
+        int componentCount,
+        int[] blocksPerLineForMcu,
+        int[] blocksPerColumnForMcu,
+        ushort[][] quantTables,
+        short[][] coefficients)
+    {
+        for (var c = 0; c < componentCount; c++) {
+            var planeWidth = blocksPerLineForMcu[c] * 8;
+            var plane = componentPlanes[c];
+            var quantTable = quantTables[c];
+            var componentCoefficients = coefficients[c];
+            var blocksPerLineC = blocksPerLineForMcu[c];
+
+            var quantTableFloat = new float[64];
+            for (var i = 0; i < 64; i++) {
+                quantTableFloat[i] = quantTable[i];
+            }
+
+            Parallel.For(0, blocksPerColumnForMcu[c], blockRow => {
+                Span<float> samples = stackalloc float[64];
+                Span<float> dctCoefficients = stackalloc float[64];
+
+                for (var blockCol = 0; blockCol < blocksPerLineC; blockCol++) {
+                    ExtractBlock(plane, planeWidth, blockRow, blockCol, samples);
+                    ForwardDct.Transform(samples, dctCoefficients);
+                    var blockOffset = ((blockRow * blocksPerLineC) + blockCol) * 64;
+                    Quantize(dctCoefficients, quantTableFloat, componentCoefficients.AsSpan(blockOffset, 64));
+                }
+            });
+
+            componentPlanes[c] = null!;
+        }
     }
 
     private static void EncodeProgressive(
@@ -129,30 +238,17 @@ internal static class JpegEncoder
         var blocksPerColumnForMcu = new int[componentCount];
         var blocksPerLine = new int[componentCount];
         var blocksPerColumn = new int[componentCount];
-        var coefficients = new int[componentCount][];
+        var coefficients = new short[componentCount][];
 
         for (var c = 0; c < componentCount; c++) {
             blocksPerLineForMcu[c] = mcusPerLine * hSampling[c];
             blocksPerColumnForMcu[c] = mcusPerColumn * vSampling[c];
             blocksPerLine[c] = CeilDiv(CeilDiv(width, 8) * hSampling[c], hMax);
             blocksPerColumn[c] = CeilDiv(CeilDiv(height, 8) * vSampling[c], vMax);
-            coefficients[c] = new int[blocksPerLineForMcu[c] * blocksPerColumnForMcu[c] * 64];
+            coefficients[c] = new short[blocksPerLineForMcu[c] * blocksPerColumnForMcu[c] * 64];
         }
 
-        Span<float> samples = stackalloc float[64];
-        Span<float> dctCoefficients = stackalloc float[64];
-
-        for (var c = 0; c < componentCount; c++) {
-            var planeWidth = blocksPerLineForMcu[c] * 8;
-            for (var blockRow = 0; blockRow < blocksPerColumnForMcu[c]; blockRow++) {
-                for (var blockCol = 0; blockCol < blocksPerLineForMcu[c]; blockCol++) {
-                    ExtractBlock(componentPlanes[c], planeWidth, blockRow, blockCol, samples);
-                    ForwardDct.Transform(samples, dctCoefficients);
-                    var blockOffset = ((blockRow * blocksPerLineForMcu[c]) + blockCol) * 64;
-                    Quantize(dctCoefficients, quantTables[c], coefficients[c].AsSpan(blockOffset, 64));
-                }
-            }
-        }
+        ComputeBlockCoefficients(componentPlanes, componentCount, blocksPerLineForMcu, blocksPerColumnForMcu, quantTables, coefficients);
 
         byte[] dcTableIds = componentCount == 3 ? [0, 1, 1] : [0];
         JpegDocumentWriter.WriteScanHeader(stream, componentIds, dcTableIds, dcTableIds, 0, 0, 0);
@@ -215,61 +311,10 @@ internal static class JpegEncoder
             return planes;
         }
 
-        var pixelCount = width * height;
-        var yFull = new float[pixelCount];
-        var cbFull = new float[pixelCount];
-        var crFull = new float[pixelCount];
-
-        Parallel.For(0, height, y => RgbRowToYCbCr(pixels, y * width, width, yFull, cbFull, crFull));
-
-        planes[0] = BuildFullPlane(yFull, width, height, mcusPerLine * hSampling[0] * 8, mcusPerColumn * vSampling[0] * 8, hMax / hSampling[0], vMax / vSampling[0]);
-        planes[1] = BuildFullPlane(cbFull, width, height, mcusPerLine * hSampling[1] * 8, mcusPerColumn * vSampling[1] * 8, hMax / hSampling[1], vMax / vSampling[1]);
-        planes[2] = BuildFullPlane(crFull, width, height, mcusPerLine * hSampling[2] * 8, mcusPerColumn * vSampling[2] * 8, hMax / hSampling[2], vMax / vSampling[2]);
+        planes[0] = BuildLumaPlane(pixels, width, height, mcusPerLine * hSampling[0] * 8, mcusPerColumn * vSampling[0] * 8);
+        planes[1] = BuildChromaPlane(pixels, width, height, mcusPerLine * hSampling[1] * 8, mcusPerColumn * vSampling[1] * 8, hMax / hSampling[1], vMax / vSampling[1], isCb: true);
+        planes[2] = BuildChromaPlane(pixels, width, height, mcusPerLine * hSampling[2] * 8, mcusPerColumn * vSampling[2] * 8, hMax / hSampling[2], vMax / vSampling[2], isCb: false);
         return planes;
-    }
-
-    private static void RgbRowToYCbCr(byte[] pixels, int rowBase, int width, float[] yFull, float[] cbFull, float[] crFull)
-    {
-        var pixelBase = rowBase * 3;
-        var x = 0;
-        var lanes = Vector<float>.Count;
-
-        if (Vector.IsHardwareAccelerated) {
-            Span<float> r = stackalloc float[lanes];
-            Span<float> g = stackalloc float[lanes];
-            Span<float> b = stackalloc float[lanes];
-
-            for (; x + lanes <= width; x += lanes) {
-                for (var lane = 0; lane < lanes; lane++) {
-                    var offset = pixelBase + ((x + lane) * 3);
-                    r[lane] = pixels[offset];
-                    g[lane] = pixels[offset + 1];
-                    b[lane] = pixels[offset + 2];
-                }
-
-                var rv = new Vector<float>(r);
-                var gv = new Vector<float>(g);
-                var bv = new Vector<float>(b);
-
-                var yv = (rv * 0.299f) + (gv * 0.587f) + (bv * 0.114f);
-                var cbv = new Vector<float>(128f) - (rv * 0.168736f) - (gv * 0.331264f) + (bv * 0.5f);
-                var crv = new Vector<float>(128f) + (rv * 0.5f) - (gv * 0.418688f) - (bv * 0.081312f);
-
-                yv.CopyTo(yFull.AsSpan(rowBase + x, lanes));
-                cbv.CopyTo(cbFull.AsSpan(rowBase + x, lanes));
-                crv.CopyTo(crFull.AsSpan(rowBase + x, lanes));
-            }
-        }
-
-        for (; x < width; x++) {
-            var offset = pixelBase + (x * 3);
-            var r = pixels[offset];
-            var g = pixels[offset + 1];
-            var b = pixels[offset + 2];
-            yFull[rowBase + x] = (0.299f * r) + (0.587f * g) + (0.114f * b);
-            cbFull[rowBase + x] = 128f - (0.168736f * r) - (0.331264f * g) + (0.5f * b);
-            crFull[rowBase + x] = 128f + (0.5f * r) - (0.418688f * g) - (0.081312f * b);
-        }
     }
 
     private static float[] BuildPaddedPlane(byte[] pixels, int width, int height, int paddedWidth, int paddedHeight)
@@ -286,32 +331,83 @@ internal static class JpegEncoder
         return plane;
     }
 
-    private static float[] BuildFullPlane(float[] full, int width, int height, int paddedWidth, int paddedHeight, int hRatio, int vRatio)
+    private static float[] BuildLumaPlane(byte[] pixels, int width, int height, int paddedWidth, int paddedHeight)
+    {
+        var plane = new float[paddedWidth * paddedHeight];
+        Parallel.For(0, paddedHeight, y => LumaRow(pixels, width, height, paddedWidth, y, plane));
+        return plane;
+    }
+
+    private static void LumaRow(byte[] pixels, int width, int height, int paddedWidth, int y, float[] plane)
+    {
+        var srcY = Math.Min(y, height - 1);
+        var pixelBase = srcY * width * 3;
+        var rowBase = y * paddedWidth;
+        var x = 0;
+        var lanes = Vector<float>.Count;
+
+        if (Vector.IsHardwareAccelerated) {
+            Span<float> r = stackalloc float[lanes];
+            Span<float> g = stackalloc float[lanes];
+            Span<float> b = stackalloc float[lanes];
+
+            for (; x + lanes <= width; x += lanes) {
+                for (var lane = 0; lane < lanes; lane++) {
+                    var offset = pixelBase + ((x + lane) * 3);
+                    r[lane] = pixels[offset];
+                    g[lane] = pixels[offset + 1];
+                    b[lane] = pixels[offset + 2];
+                }
+
+                var yv = (new Vector<float>(r) * 0.299f) + (new Vector<float>(g) * 0.587f) + (new Vector<float>(b) * 0.114f) - new Vector<float>(128f);
+                yv.CopyTo(plane.AsSpan(rowBase + x, lanes));
+            }
+        }
+
+        for (; x < width; x++) {
+            var offset = pixelBase + (x * 3);
+            plane[rowBase + x] = (0.299f * pixels[offset]) + (0.587f * pixels[offset + 1]) + (0.114f * pixels[offset + 2]) - 128f;
+        }
+
+        for (; x < paddedWidth; x++) {
+            plane[rowBase + x] = plane[rowBase + width - 1];
+        }
+    }
+
+    private static float[] BuildChromaPlane(byte[] pixels, int width, int height, int paddedWidth, int paddedHeight, int hRatio, int vRatio, bool isCb)
     {
         var componentWidth = CeilDiv(width, hRatio);
         var componentHeight = CeilDiv(height, vRatio);
         var plane = new float[paddedWidth * paddedHeight];
 
-        for (var y = 0; y < paddedHeight; y++) {
+        Parallel.For(0, paddedHeight, y => {
             var componentY = Math.Min(y, componentHeight - 1);
+            var rowBase = y * paddedWidth;
             for (var x = 0; x < paddedWidth; x++) {
                 var componentX = Math.Min(x, componentWidth - 1);
-                plane[(y * paddedWidth) + x] = SampleBox(full, width, height, componentX, componentY, hRatio, vRatio) - 128f;
+                plane[rowBase + x] = SampleChromaBox(pixels, width, height, componentX, componentY, hRatio, vRatio, isCb) - 128f;
             }
-        }
+        });
 
         return plane;
     }
 
-    private static float SampleBox(float[] full, int width, int height, int componentX, int componentY, int hRatio, int vRatio)
+    private static float SampleChromaBox(byte[] pixels, int width, int height, int componentX, int componentY, int hRatio, int vRatio, bool isCb)
     {
         var sum = 0f;
         var count = 0;
         for (var dy = 0; dy < vRatio; dy++) {
             var srcY = Math.Min((componentY * vRatio) + dy, height - 1);
+            var rowOffset = srcY * width * 3;
             for (var dx = 0; dx < hRatio; dx++) {
                 var srcX = Math.Min((componentX * hRatio) + dx, width - 1);
-                sum += full[(srcY * width) + srcX];
+                var offset = rowOffset + (srcX * 3);
+                var r = pixels[offset];
+                var g = pixels[offset + 1];
+                var b = pixels[offset + 2];
+                sum += isCb
+                    ? 128f - (0.168736f * r) - (0.331264f * g) + (0.5f * b)
+                    : 128f + (0.5f * r) - (0.418688f * g) - (0.081312f * b);
                 count++;
             }
         }
@@ -330,11 +426,31 @@ internal static class JpegEncoder
         }
     }
 
-    private static void Quantize(ReadOnlySpan<float> dctCoefficients, ushort[] quantTable, Span<int> quantized)
+    private static void Quantize(ReadOnlySpan<float> dctCoefficients, float[] quantTable, Span<short> quantized)
     {
-        for (var i = 0; i < 64; i++) {
-            quantized[i] = (int)MathF.Round(dctCoefficients[i] / quantTable[i]);
+        var i = 0;
+        var lanes = Vector<float>.Count;
+
+        if (Vector.IsHardwareAccelerated) {
+            var min = new Vector<float>(short.MinValue);
+            var max = new Vector<float>(short.MaxValue);
+
+            for (; i + (2 * lanes) <= 64; i += 2 * lanes) {
+                var a = QuantizeLane(dctCoefficients.Slice(i, lanes), quantTable.AsSpan(i, lanes), min, max);
+                var b = QuantizeLane(dctCoefficients.Slice(i + lanes, lanes), quantTable.AsSpan(i + lanes, lanes), min, max);
+                Vector.Narrow(a, b).CopyTo(quantized.Slice(i, 2 * lanes));
+            }
         }
+
+        for (; i < 64; i++) {
+            quantized[i] = (short)Math.Clamp(MathF.Round(dctCoefficients[i] / quantTable[i]), short.MinValue, short.MaxValue);
+        }
+    }
+
+    private static Vector<int> QuantizeLane(ReadOnlySpan<float> dctCoefficients, ReadOnlySpan<float> quantTable, Vector<float> min, Vector<float> max)
+    {
+        var divided = Vector.Round(new Vector<float>(dctCoefficients) / new Vector<float>(quantTable));
+        return Vector.ConvertToInt32(Vector.Min(Vector.Max(divided, min), max));
     }
 
     private static int CeilDiv(int numerator, int denominator) => (numerator + denominator - 1) / denominator;

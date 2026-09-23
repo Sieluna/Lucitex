@@ -4,40 +4,41 @@ namespace Lucitex.Jpeg.Encoding;
 
 internal static class JpegHuffmanOptimizer
 {
-    public static void Count(ReadOnlySpan<short> coefficients, ref int predictor, long[] dc, long[] ac)
+    public static JpegHuffmanSpec Build(ReadOnlySpan<long> frequencies, int id, bool isAc)
     {
-        var difference = coefficients[0] - predictor;
-        predictor = coefficients[0];
-        dc[JpegMagnitude.GetSize(difference)]++;
-        foreach (var (symbol, _) in new JpegAcSymbols(coefficients)) {
-            ac[symbol]++;
-        }
-    }
-
-    public static JpegHuffmanSpec Build(long[] frequencies, int id, bool isAc)
-    {
-        var nodes = new List<(int Left, int Right, int Symbol)>();
-        var queue = new PriorityQueue<int, (long Weight, int Order)>();
-        var symbols = new List<int>();
+        Span<long> weights = stackalloc long[513];
+        Span<int> parents = stackalloc int[513];
+        Span<int> heap = stackalloc int[257];
+        Span<int> symbols = stackalloc int[257];
+        Span<int> counts = stackalloc int[257];
+        parents.Fill(-1);
+        counts.Clear();
+        var leaves = 0;
+        var heapCount = 0;
         for (var symbol = 0; symbol <= 256; symbol++) {
             var weight = symbol == 256 ? 1 : frequencies[symbol];
             if (weight == 0) {
                 continue;
             }
-            symbols.Add(symbol);
-            var index = nodes.Count;
-            nodes.Add((-1, -1, symbol));
-            queue.Enqueue(index, (weight, index));
+            symbols[leaves] = symbol;
+            weights[leaves] = weight;
+            Push(heap, ref heapCount, weights, leaves++);
         }
-        while (queue.Count > 1) {
-            queue.TryDequeue(out var left, out var leftWeight);
-            queue.TryDequeue(out var right, out var rightWeight);
-            var index = nodes.Count;
-            nodes.Add((left, right, -1));
-            queue.Enqueue(index, (leftWeight.Weight + rightWeight.Weight, index));
+        var nodeCount = leaves;
+        while (heapCount > 1) {
+            var left = Pop(heap, ref heapCount, weights);
+            var right = Pop(heap, ref heapCount, weights);
+            weights[nodeCount] = weights[left] + weights[right];
+            parents[left] = parents[right] = nodeCount;
+            Push(heap, ref heapCount, weights, nodeCount++);
         }
-        var counts = new int[257];
-        CountDepth(queue.Dequeue(), 0);
+        for (var leaf = 0; leaf < leaves; leaf++) {
+            var depth = 0;
+            for (var node = leaf; parents[node] >= 0; node = parents[node]) {
+                depth++;
+            }
+            counts[depth]++;
+        }
         for (var length = counts.Length - 1; length > 16; length--) {
             while (counts[length] > 0) {
                 var shorter = length - 2;
@@ -51,31 +52,65 @@ internal static class JpegHuffmanOptimizer
             }
         }
         var longest = 16;
-        while (counts[longest] == 0) {
+        while (longest > 0 && counts[longest] == 0) {
             longest--;
         }
         counts[longest]--;
-        symbols.Remove(256);
-        symbols.Sort((a, b) => {
-            var comparison = frequencies[b].CompareTo(frequencies[a]);
-            return comparison == 0 ? a.CompareTo(b) : comparison;
-        });
+        var symbolCount = leaves - 1;
+        for (var i = 1; i < symbolCount; i++) {
+            var symbol = symbols[i];
+            var position = i;
+            while (position > 0 && frequencies[symbols[position - 1]] < frequencies[symbol]) {
+                symbols[position] = symbols[position - 1];
+                position--;
+            }
+            symbols[position] = symbol;
+        }
         var bits = new byte[16];
+        var values = new byte[symbolCount];
         for (var i = 1; i <= 16; i++) {
             bits[i - 1] = checked((byte)counts[i]);
         }
-        return new JpegHuffmanSpec { Id = id, IsAc = isAc, Bits = bits, Values = symbols.Select(s => (byte)s).ToArray() };
-
-        void CountDepth(int index, int depth)
-        {
-            var node = nodes[index];
-            if (node.Symbol >= 0) {
-                counts[depth]++;
-            }
-            else {
-                CountDepth(node.Left, depth + 1);
-                CountDepth(node.Right, depth + 1);
-            }
+        for (var i = 0; i < symbolCount; i++) {
+            values[i] = (byte)symbols[i];
         }
+        return new JpegHuffmanSpec { Id = id, IsAc = isAc, Bits = bits, Values = values };
+    }
+
+    private static bool Precedes(int left, int right, ReadOnlySpan<long> weights) =>
+        weights[left] < weights[right] || (weights[left] == weights[right] && left < right);
+
+    private static void Push(Span<int> heap, ref int count, ReadOnlySpan<long> weights, int node)
+    {
+        var position = count++;
+        while (position > 0) {
+            var parent = (position - 1) / 2;
+            if (!Precedes(node, heap[parent], weights)) {
+                break;
+            }
+            heap[position] = heap[parent];
+            position = parent;
+        }
+        heap[position] = node;
+    }
+
+    private static int Pop(Span<int> heap, ref int count, ReadOnlySpan<long> weights)
+    {
+        var result = heap[0];
+        var node = heap[--count];
+        var position = 0;
+        while (position * 2 + 1 < count) {
+            var child = position * 2 + 1;
+            if (child + 1 < count && Precedes(heap[child + 1], heap[child], weights)) {
+                child++;
+            }
+            if (!Precedes(heap[child], node, weights)) {
+                break;
+            }
+            heap[position] = heap[child];
+            position = child;
+        }
+        heap[position] = node;
+        return result;
     }
 }

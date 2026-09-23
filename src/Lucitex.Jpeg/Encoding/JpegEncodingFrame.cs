@@ -1,9 +1,12 @@
+using System.Buffers;
 using Lucitex.Jpeg.Format;
 
 namespace Lucitex.Jpeg.Encoding;
 
-internal sealed class JpegEncodingFrame
+internal sealed class JpegEncodingFrame : IDisposable
 {
+    private bool _disposed;
+
     public JpegEncodingFrame(int width, int height, int componentCount, JpegEncoderOptions options)
     {
         Width = width;
@@ -25,13 +28,25 @@ internal sealed class JpegEncodingFrame
         AcTables = new JpegHuffmanEncodeTable[componentCount];
         PaddedBlockColumns = new int[componentCount];
         PaddedBlockRows = new int[componentCount];
-        Coefficients = new short[componentCount][];
-        for (var component = 0; component < componentCount; component++) {
-            DcTables[component] = JpegHuffmanEncodeTable.GetStandard(TableIds[component], isAc: false);
-            AcTables[component] = JpegHuffmanEncodeTable.GetStandard(TableIds[component], isAc: true);
-            PaddedBlockColumns[component] = McuColumns * HorizontalSampling[component];
-            PaddedBlockRows[component] = McuRows * VerticalSampling[component];
-            Coefficients[component] = new short[checked(PaddedBlockColumns[component] * PaddedBlockRows[component] * 64)];
+        OptimizeHuffmanTables = options.OptimizeHuffmanTables;
+        Tokens = new JpegEntropyToken[componentCount][];
+        Blocks = new JpegBlockInfo[componentCount][];
+        AcFrequencies = ArrayPool<long>.Shared.Rent(TableCount * 256);
+        AcFrequencies.AsSpan(0, TableCount * 256).Clear();
+        try {
+            for (var component = 0; component < componentCount; component++) {
+                DcTables[component] = JpegHuffmanEncodeTable.GetStandard(TableIds[component], isAc: false);
+                AcTables[component] = JpegHuffmanEncodeTable.GetStandard(TableIds[component], isAc: true);
+                PaddedBlockColumns[component] = McuColumns * HorizontalSampling[component];
+                PaddedBlockRows[component] = McuRows * VerticalSampling[component];
+                var blockCount = checked(PaddedBlockColumns[component] * PaddedBlockRows[component]);
+                Tokens[component] = ArrayPool<JpegEntropyToken>.Shared.Rent(checked(blockCount * 64));
+                Blocks[component] = ArrayPool<JpegBlockInfo>.Shared.Rent(blockCount);
+            }
+        }
+        catch {
+            Dispose();
+            throw;
         }
     }
 
@@ -53,7 +68,58 @@ internal sealed class JpegEncodingFrame
     public ushort[][] QuantizationTables { get; }
     public JpegHuffmanEncodeTable[] DcTables { get; }
     public JpegHuffmanEncodeTable[] AcTables { get; }
-    public short[][] Coefficients { get; }
+    public bool OptimizeHuffmanTables { get; }
+    public long[] AcFrequencies { get; }
+    public long NonZeroCount { get; private set; }
+    public JpegEntropyToken[][] Tokens { get; }
+    public JpegBlockInfo[][] Blocks { get; }
+
+    public int PrepareBlock(int component, int offset, ReadOnlySpan<short> coefficients, Span<long> frequencies)
+    {
+        var tokens = Tokens[component].AsSpan(offset, 64);
+        var count = 0;
+        var nonZero = coefficients[0] == 0 ? 0 : 1;
+        foreach (var (symbol, value) in new JpegAcSymbols(coefficients)) {
+            tokens[count++] = new JpegEntropyToken(symbol, value);
+            if (!frequencies.IsEmpty) {
+                frequencies[symbol]++;
+            }
+            if (value != 0) {
+                nonZero++;
+            }
+        }
+        Blocks[component][offset / 64] = new JpegBlockInfo(coefficients[0], (byte)count);
+        return nonZero;
+    }
+
+    public void AddStatistics(ReadOnlySpan<long> frequencies, int nonZero)
+    {
+        lock (AcFrequencies) {
+            for (var i = 0; i < frequencies.Length; i++) {
+                AcFrequencies[i] += frequencies[i];
+            }
+            NonZeroCount += nonZero;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) {
+            return;
+        }
+        _disposed = true;
+        ArrayPool<long>.Shared.Return(AcFrequencies);
+        for (var component = 0; component < ComponentCount; component++) {
+            if (Tokens[component] is { } tokens) {
+                Tokens[component] = null!;
+                ArrayPool<JpegEntropyToken>.Shared.Return(tokens);
+            }
+            if (Blocks[component] is { } blocks) {
+                Blocks[component] = null!;
+                ArrayPool<JpegBlockInfo>.Shared.Return(blocks);
+            }
+        }
+    }
 
     public int BlockColumns(int component) => CeilDiv(CeilDiv(Width, 8) * HorizontalSampling[component], MaxHorizontalSampling);
 

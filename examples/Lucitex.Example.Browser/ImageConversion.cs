@@ -31,7 +31,7 @@ public static partial class ImageConversion
 
         var plan = planResult.Plan!;
         using var targetStream = new MemoryStream();
-        var writer = targetCodec.CreateWriter(targetStream, plan.TargetDescriptor);
+        using var writer = targetCodec.CreateWriter(targetStream, plan.TargetDescriptor);
         ConversionExecutor.Execute(plan, reader, sourceCodec.Capabilities.SampleByteOrder, writer, targetCodec.Capabilities.SampleByteOrder);
         return targetStream.ToArray();
     }

@@ -6,13 +6,14 @@ internal static class JpegBlockEncoder
 {
     public static void EncodeBlock(
         JpegBitWriter writer,
-        ReadOnlySpan<short> coefficients,
+        JpegBlockInfo block,
+        ReadOnlySpan<JpegEntropyToken> tokens,
         ref int dcPredictor,
         JpegHuffmanEncodeTable dcTable,
         JpegHuffmanEncodeTable acTable)
     {
-        EncodeDc(writer, coefficients[0], ref dcPredictor, dcTable);
-        EncodeAc(writer, coefficients, acTable);
+        EncodeDc(writer, block.Dc, ref dcPredictor, dcTable);
+        EncodeAc(writer, tokens[..block.TokenCount], acTable);
     }
 
     public static void EncodeDc(JpegBitWriter writer, int dcCoefficient, ref int dcPredictor, JpegHuffmanEncodeTable dcTable)
@@ -22,23 +23,14 @@ internal static class JpegBlockEncoder
 
         var dcSize = JpegMagnitude.GetSize(diff);
         var dcCode = dcTable.Get((byte)dcSize);
-        writer.WriteBits(dcCode.Code, dcCode.Length);
-        WriteMagnitude(writer, diff, dcSize);
+        writer.WriteBits((dcCode.Code << dcSize) | JpegMagnitude.Encode(diff, dcSize), dcCode.Length + dcSize);
     }
 
-    public static void EncodeAc(JpegBitWriter writer, ReadOnlySpan<short> coefficients, JpegHuffmanEncodeTable acTable)
+    public static void EncodeAc(JpegBitWriter writer, ReadOnlySpan<JpegEntropyToken> tokens, JpegHuffmanEncodeTable acTable)
     {
-        foreach (var (symbol, value) in new JpegAcSymbols(coefficients)) {
-            var code = acTable.Get(symbol);
-            writer.WriteBits(code.Code, code.Length);
-            WriteMagnitude(writer, value, symbol & 15);
-        }
-    }
-
-    private static void WriteMagnitude(JpegBitWriter writer, int value, int size)
-    {
-        if (size > 0) {
-            writer.WriteBits(JpegMagnitude.Encode(value, size), size);
+        foreach (var token in tokens) {
+            var code = acTable.Get(token.Symbol);
+            writer.WriteBits((code.Code << token.BitCount) | token.Bits, code.Length + token.BitCount);
         }
     }
 }

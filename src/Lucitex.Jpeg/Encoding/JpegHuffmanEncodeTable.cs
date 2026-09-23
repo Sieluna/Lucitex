@@ -4,7 +4,7 @@ namespace Lucitex.Jpeg.Encoding;
 
 internal sealed class JpegHuffmanEncodeTable
 {
-    private readonly (int Code, int Length)[] _table = new (int, int)[256];
+    private readonly uint[] _table = new uint[256];
 
     public static JpegHuffmanEncodeTable GetStandard(int id, bool isAc) => Standard.Tables[id + (isAc ? 2 : 0)];
 
@@ -19,11 +19,15 @@ internal sealed class JpegHuffmanEncodeTable
         Span<JpegHuffmanCode> codes = stackalloc JpegHuffmanCode[256];
         var count = JpegHuffmanCode.Build(spec, codes);
         foreach (var code in codes[..count]) {
-            _table[code.Symbol] = (code.Code, code.Length);
+            _table[code.Symbol] = ((uint)code.Code << 16) | (uint)code.Length;
         }
     }
 
-    public (int Code, int Length) Get(byte symbol) => _table[symbol];
+    public (int Code, int Length) Get(byte symbol)
+    {
+        var entry = _table[symbol];
+        return ((int)(entry >> 16), (int)(entry & 31));
+    }
 
     public JpegHuffmanSpec Spec { get; }
 }

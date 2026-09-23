@@ -1,65 +1,80 @@
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 
 namespace Lucitex.Jpeg.Encoding;
 
-internal sealed class JpegBitWriter
+internal sealed class JpegBitWriter : IDisposable
 {
-    private byte[] _buffer = new byte[4096];
+    private byte[] _buffer = ArrayPool<byte>.Shared.Rent(4096);
     private int _length;
-    private uint _bitBuffer;
+    private ulong _bitBuffer;
     private int _bitCount;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void WriteBits(int value, int length)
     {
-        if (length == 0) {
-            return;
-        }
-
-        _bitBuffer = (_bitBuffer << length) | (uint)(value & ((1 << length) - 1));
+        _bitBuffer = (_bitBuffer << length) | ((uint)value & ((1UL << length) - 1));
         _bitCount += length;
-
-        while (_bitCount >= 8) {
-            _bitCount -= 8;
-            WriteByteStuffed((byte)((_bitBuffer >> _bitCount) & 0xFF));
+        if (_bitCount >= 32) {
+            _bitCount -= 32;
+            EnsureCapacity(4);
+            BinaryPrimitives.WriteUInt32BigEndian(_buffer.AsSpan(_length, 4), (uint)(_bitBuffer >> _bitCount));
+            _length += 4;
         }
     }
 
     public void PadAndFlush()
     {
-        if (_bitCount > 0) {
-            var padding = 8 - _bitCount;
-            _bitBuffer = (_bitBuffer << padding) | (uint)((1 << padding) - 1);
-            WriteByteStuffed((byte)(_bitBuffer & 0xFF));
-            _bitCount = 0;
+        var padding = (8 - _bitCount) & 7;
+        _bitBuffer = (_bitBuffer << padding) | ((1UL << padding) - 1);
+        _bitCount += padding;
+        EnsureCapacity(4);
+        while (_bitCount > 0) {
+            _bitCount -= 8;
+            _buffer[_length++] = (byte)(_bitBuffer >> _bitCount);
         }
     }
 
-    public void CopyTo(Stream stream) => stream.Write(_buffer, 0, _length);
+    public void CopyTo(Stream stream)
+    {
+        Span<byte> stuffed = stackalloc byte[4096];
+        for (var offset = 0; offset < _length;) {
+            var count = Math.Min(2048, _length - offset);
+            var source = _buffer.AsSpan(offset, count);
+            var written = 0;
+            foreach (var value in source) {
+                stuffed[written++] = value;
+                if (value == 0xFF) {
+                    stuffed[written++] = 0;
+                }
+            }
+            stream.Write(stuffed[..written]);
+            offset += count;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_buffer.Length != 0) {
+            ArrayPool<byte>.Shared.Return(_buffer);
+            _buffer = [];
+        }
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void WriteByteStuffed(byte value)
+    private void EnsureCapacity(int additional)
     {
-        if (_length + 2 > _buffer.Length) {
-            EnsureCapacity(_length + 2);
-        }
-        _buffer[_length++] = value;
-        if (value == 0xFF) {
-            _buffer[_length++] = 0x00;
+        if (_length + additional > _buffer.Length) {
+            Grow(additional);
         }
     }
 
-    private void EnsureCapacity(int required)
+    private void Grow(int additional)
     {
-        if (required <= _buffer.Length) {
-            return;
-        }
-
-        var capacity = _buffer.Length * 2;
-        while (capacity < required) {
-            capacity *= 2;
-        }
-
-        Array.Resize(ref _buffer, capacity);
+        var buffer = ArrayPool<byte>.Shared.Rent(Math.Max(checked(_length + additional), checked(_buffer.Length * 2)));
+        _buffer.AsSpan(0, _length).CopyTo(buffer);
+        ArrayPool<byte>.Shared.Return(_buffer);
+        _buffer = buffer;
     }
 }

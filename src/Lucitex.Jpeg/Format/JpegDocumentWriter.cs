@@ -8,13 +8,13 @@ internal static class JpegDocumentWriter
 
     public static void WriteJfifHeader(Stream stream)
     {
-        byte[] payload = [(byte)'J', (byte)'F', (byte)'I', (byte)'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0];
+        ReadOnlySpan<byte> payload = [(byte)'J', (byte)'F', (byte)'I', (byte)'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0];
         WriteSegment(stream, JpegMarkers.App0, payload);
     }
 
     public static void WriteQuantizationTable(Stream stream, int id, ushort[] naturalOrderValues)
     {
-        var payload = new byte[65];
+        Span<byte> payload = stackalloc byte[65];
         payload[0] = (byte)id;
         for (var i = 0; i < 64; i++) {
             payload[1 + i] = (byte)naturalOrderValues[JpegZigZag.Order[i]];
@@ -26,7 +26,7 @@ internal static class JpegDocumentWriter
     public static void WriteFrameHeader(Stream stream, byte marker, int width, int height, byte[] componentIds, byte[] hSampling, byte[] vSampling, byte[] quantTableIds)
     {
         var componentCount = componentIds.Length;
-        var payload = new byte[6 + (componentCount * 3)];
+        Span<byte> payload = stackalloc byte[6 + (componentCount * 3)];
         payload[0] = 8;
         payload[1] = (byte)(height >> 8);
         payload[2] = (byte)(height & 0xFF);
@@ -46,7 +46,7 @@ internal static class JpegDocumentWriter
 
     public static void WriteHuffmanTable(Stream stream, JpegHuffmanSpec spec)
     {
-        var payload = new byte[1 + 16 + spec.Values.Length];
+        Span<byte> payload = stackalloc byte[1 + 16 + spec.Values.Length];
         payload[0] = (byte)(((spec.IsAc ? 1 : 0) << 4) | spec.Id);
         for (var i = 0; i < 16; i++) {
             payload[1 + i] = spec.Bits[i];
@@ -61,7 +61,7 @@ internal static class JpegDocumentWriter
 
     public static void WriteDri(Stream stream, int restartInterval)
     {
-        byte[] payload = [(byte)(restartInterval >> 8), (byte)(restartInterval & 0xFF)];
+        ReadOnlySpan<byte> payload = [(byte)(restartInterval >> 8), (byte)(restartInterval & 0xFF)];
         WriteSegment(stream, JpegMarkers.Dri, payload);
     }
 
@@ -70,7 +70,7 @@ internal static class JpegDocumentWriter
     public static void WriteScanHeader(Stream stream, byte[] componentIds, byte[] dcTableIds, byte[] acTableIds, byte spectralStart, byte spectralEnd, byte successiveApproximation)
     {
         var count = componentIds.Length;
-        var payload = new byte[4 + (count * 2)];
+        Span<byte> payload = stackalloc byte[4 + (count * 2)];
         payload[0] = (byte)count;
 
         for (var c = 0; c < count; c++) {
@@ -91,7 +91,7 @@ internal static class JpegDocumentWriter
         stream.WriteByte(marker);
     }
 
-    private static void WriteSegment(Stream stream, byte marker, byte[] payload)
+    private static void WriteSegment(Stream stream, byte marker, ReadOnlySpan<byte> payload)
     {
         WriteMarker(stream, marker);
         var length = payload.Length + 2;

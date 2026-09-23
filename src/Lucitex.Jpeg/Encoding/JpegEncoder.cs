@@ -1,5 +1,3 @@
-using System.Numerics;
-using System.Runtime.Intrinsics;
 using Lucitex.Jpeg.Format;
 
 namespace Lucitex.Jpeg.Encoding;
@@ -8,11 +6,11 @@ internal static class JpegEncoder
 {
     public static void Encode(Stream stream, byte[] pixels, int width, int height, int componentCount, JpegEncoderOptions options)
     {
-        var frame = new JpegEncodingFrame(width, height, componentCount, options);
+        using var frame = new JpegEncodingFrame(width, height, componentCount, options);
         WriteHeader(stream, frame, options.Progressive);
         JpegCoefficientEncoder.Compute(pixels, frame);
 
-        var restartInterval = options.Progressive ? 0 : ChooseRestartInterval(frame.McuCount, frame.Coefficients);
+        var restartInterval = options.Progressive ? 0 : ChooseRestartInterval(frame.McuCount, frame.NonZeroCount);
         if (options.OptimizeHuffmanTables) {
             OptimizeTables(frame, restartInterval);
         }
@@ -65,6 +63,7 @@ internal static class JpegEncoder
             var mcuStart = segmentIndex * restartInterval;
             var mcuEnd = segmentCount == 1 ? frame.McuCount : Math.Min(mcuStart + restartInterval, frame.McuCount);
             var writer = new JpegBitWriter();
+            segmentWriters[segmentIndex] = writer;
             var dcPredictors = new int[frame.ComponentCount];
 
             for (var mcuIndex = mcuStart; mcuIndex < mcuEnd; mcuIndex++) {
@@ -77,126 +76,93 @@ internal static class JpegEncoder
                             var blockRow = (mcuRow * frame.VerticalSampling[c]) + v;
                             var blockCol = (mcuCol * frame.HorizontalSampling[c]) + h;
                             var blockOffset = frame.BlockOffset(c, blockRow, blockCol);
-                            JpegBlockEncoder.EncodeBlock(writer, frame.Coefficients[c].AsSpan(blockOffset, 64), ref dcPredictors[c], frame.DcTables[c], frame.AcTables[c]);
+                            JpegBlockEncoder.EncodeBlock(writer, frame.Blocks[c][blockOffset / 64], frame.Tokens[c].AsSpan(blockOffset, 64), ref dcPredictors[c], frame.DcTables[c], frame.AcTables[c]);
                         }
                     }
                 }
             }
 
             writer.PadAndFlush();
-            segmentWriters[segmentIndex] = writer;
         }
 
-        if (segmentCount == 1) {
-            EncodeSegment(0);
-        }
-        else {
-            Parallel.For(0, segmentCount, EncodeSegment);
-        }
-
-        var restartMarker = JpegMarkers.Rst0;
-        for (var segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
-            if (segmentIndex > 0) {
-                JpegDocumentWriter.WriteRestartMarker(stream, restartMarker);
-                restartMarker = restartMarker == JpegMarkers.Rst7 ? JpegMarkers.Rst0 : (byte)(restartMarker + 1);
+        try {
+            if (segmentCount == 1) {
+                EncodeSegment(0);
+            }
+            else {
+                Parallel.For(0, segmentCount, EncodeSegment);
             }
 
-            segmentWriters[segmentIndex].CopyTo(stream);
+            var restartMarker = JpegMarkers.Rst0;
+            for (var segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+                if (segmentIndex > 0) {
+                    JpegDocumentWriter.WriteRestartMarker(stream, restartMarker);
+                    restartMarker = restartMarker == JpegMarkers.Rst7 ? JpegMarkers.Rst0 : (byte)(restartMarker + 1);
+                }
+
+                segmentWriters[segmentIndex].CopyTo(stream);
+            }
+        }
+        finally {
+            foreach (var writer in segmentWriters) {
+                writer?.Dispose();
+            }
         }
     }
 
     private static void OptimizeTables(JpegEncodingFrame frame, int restartInterval)
     {
-        var dcCounts = new[] { new long[256], new long[256] };
-        var acCounts = new[] { new long[256], new long[256] };
-        var interval = restartInterval > 0 ? restartInterval : frame.McuCount;
-        var count = CeilDiv(frame.McuCount, interval);
-        var statistics = new (long[][] Dc, long[][] Ac)[count];
-        Parallel.For(0, count, segment => {
-            var localDc = new[] { new long[256], new long[256] };
-            var localAc = new[] { new long[256], new long[256] };
-            var predictors = new int[frame.Coefficients.Length];
-            for (var mcu = segment * interval; mcu < Math.Min((segment + 1) * interval, frame.McuCount); mcu++) {
-                var row = mcu / frame.McuColumns;
-                var col = mcu % frame.McuColumns;
-                for (var c = 0; c < frame.Coefficients.Length; c++) {
-                    var table = Math.Min(c, 1);
-                    for (var v = 0; v < frame.VerticalSampling[c]; v++) {
-                        for (var h = 0; h < frame.HorizontalSampling[c]; h++) {
-                            var blockRow = row * frame.VerticalSampling[c] + v;
-                            var blockCol = col * frame.HorizontalSampling[c] + h;
-                            var blockOffset = frame.BlockOffset(c, blockRow, blockCol);
-                            JpegHuffmanOptimizer.Count(frame.Coefficients[c].AsSpan(blockOffset, 64), ref predictors[c], localDc[table], localAc[table]);
-                        }
-                    }
-                }
+        Span<long> dcCounts = stackalloc long[512];
+        dcCounts.Clear();
+        Span<int> predictors = stackalloc int[3];
+        predictors.Clear();
+        for (var mcu = 0; mcu < frame.McuCount; mcu++) {
+            if (restartInterval > 0 && mcu % restartInterval == 0) {
+                predictors.Clear();
             }
-            statistics[segment] = (localDc, localAc);
-        });
-        foreach (var (dc, ac) in statistics) {
-            for (var table = 0; table < 2; table++) {
-                for (var symbol = 0; symbol < 256; symbol++) {
-                    dcCounts[table][symbol] += dc[table][symbol];
-                    acCounts[table][symbol] += ac[table][symbol];
+            var row = mcu / frame.McuColumns;
+            var col = mcu % frame.McuColumns;
+            for (var c = 0; c < frame.ComponentCount; c++) {
+                var table = frame.TableIds[c];
+                for (var v = 0; v < frame.VerticalSampling[c]; v++) {
+                    for (var h = 0; h < frame.HorizontalSampling[c]; h++) {
+                        var blockRow = row * frame.VerticalSampling[c] + v;
+                        var blockCol = col * frame.HorizontalSampling[c] + h;
+                        var blockOffset = frame.BlockOffset(c, blockRow, blockCol);
+                        var dc = frame.Blocks[c][blockOffset / 64].Dc;
+                        dcCounts[table * 256 + JpegMagnitude.GetSize(dc - predictors[c])]++;
+                        predictors[c] = dc;
+                    }
                 }
             }
         }
         for (var i = 0; i < frame.TableCount; i++) {
-            frame.DcTables[i] = new JpegHuffmanEncodeTable(JpegHuffmanOptimizer.Build(dcCounts[i], i, false));
-            frame.AcTables[i] = new JpegHuffmanEncodeTable(JpegHuffmanOptimizer.Build(acCounts[i], i, true));
+            frame.DcTables[i] = new JpegHuffmanEncodeTable(JpegHuffmanOptimizer.Build(dcCounts.Slice(i * 256, 256), i, false));
+            frame.AcTables[i] = new JpegHuffmanEncodeTable(JpegHuffmanOptimizer.Build(frame.AcFrequencies.AsSpan(i * 256, 256), i, true));
         }
-        if (frame.Coefficients.Length == 3) {
+        if (frame.ComponentCount == 3) {
             frame.DcTables[2] = frame.DcTables[1];
             frame.AcTables[2] = frame.AcTables[1];
         }
     }
 
-    private static int ChooseRestartInterval(int totalMcus, short[][] coefficients)
+    private static int ChooseRestartInterval(int totalMcus, long nonZeroCount)
     {
         const int minInterval = 4;
         const int minNonZeroPerSegment = 8_192;
-
         if (totalMcus <= minInterval) {
             return 0;
         }
-
-        var maxSegmentsByWork = Math.Max(1, CountNonZero(coefficients) / minNonZeroPerSegment);
+        var maxSegmentsByWork = Math.Max(1, nonZeroCount / minNonZeroPerSegment);
         var targetSegments = (int)Math.Min(Math.Min(totalMcus / minInterval, Environment.ProcessorCount * 2), maxSegmentsByWork);
-        if (targetSegments <= 1) {
-            return 0;
-        }
-
-        return CeilDiv(totalMcus, targetSegments);
+        return targetSegments <= 1 ? 0 : CeilDiv(totalMcus, targetSegments);
     }
-
-    private static long CountNonZero(short[][] coefficients)
-    {
-        long count = 0;
-        foreach (var component in coefficients) {
-            var i = 0;
-            if (Vector256.IsHardwareAccelerated) {
-                for (; i <= component.Length - Vector256<short>.Count; i += Vector256<short>.Count) {
-                    var values = Vector256.Create(component.AsSpan(i, Vector256<short>.Count));
-                    var zeroMask = Vector256.Equals(values, Vector256<short>.Zero).ExtractMostSignificantBits();
-                    count += Vector256<short>.Count - BitOperations.PopCount(zeroMask);
-                }
-            }
-            for (; i < component.Length; i++) {
-                if (component[i] != 0) {
-                    count++;
-                }
-            }
-        }
-
-        return count;
-    }
-
     private static void EncodeProgressive(Stream stream, JpegEncodingFrame frame)
     {
         var dcTableIds = frame.TableIds;
         JpegDocumentWriter.WriteScanHeader(stream, frame.ComponentIds, dcTableIds, dcTableIds, 0, 0, 0);
 
-        var dcWriter = new JpegBitWriter();
+        using var dcWriter = new JpegBitWriter();
         var dcPredictors = new int[frame.ComponentCount];
 
         for (var mcuRow = 0; mcuRow < frame.McuRows; mcuRow++) {
@@ -207,7 +173,7 @@ internal static class JpegEncoder
                             var blockRow = (mcuRow * frame.VerticalSampling[c]) + v;
                             var blockCol = (mcuCol * frame.HorizontalSampling[c]) + h;
                             var blockOffset = frame.BlockOffset(c, blockRow, blockCol);
-                            JpegBlockEncoder.EncodeDc(dcWriter, frame.Coefficients[c][blockOffset], ref dcPredictors[c], frame.DcTables[c]);
+                            JpegBlockEncoder.EncodeDc(dcWriter, frame.Blocks[c][blockOffset / 64].Dc, ref dcPredictors[c], frame.DcTables[c]);
                         }
                     }
                 }
@@ -222,13 +188,13 @@ internal static class JpegEncoder
             byte[] acTableId = [frame.TableIds[c]];
             JpegDocumentWriter.WriteScanHeader(stream, scanComponentId, acTableId, acTableId, 1, 63, 0);
 
-            var acWriter = new JpegBitWriter();
+            using var acWriter = new JpegBitWriter();
             var blocksPerLine = frame.BlockColumns(c);
             var blocksPerColumn = frame.BlockRows(c);
             for (var blockRow = 0; blockRow < blocksPerColumn; blockRow++) {
                 for (var blockCol = 0; blockCol < blocksPerLine; blockCol++) {
                     var blockOffset = frame.BlockOffset(c, blockRow, blockCol);
-                    JpegBlockEncoder.EncodeAc(acWriter, frame.Coefficients[c].AsSpan(blockOffset, 64), frame.AcTables[c]);
+                    JpegBlockEncoder.EncodeAc(acWriter, frame.Tokens[c].AsSpan(blockOffset, frame.Blocks[c][blockOffset / 64].TokenCount), frame.AcTables[c]);
                 }
             }
 

@@ -1,3 +1,4 @@
+using System.Buffers;
 using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
 using Lucitex.Core.Semantic;
@@ -13,7 +14,7 @@ internal sealed class JpegWriter : IImageWriter
     private readonly int _height;
     private readonly int _componentCount;
     private readonly JpegEncoderOptions _options;
-    private readonly byte[] _pixelBuffer;
+    private byte[]? _pixelBuffer;
     private readonly int _rowStrideBytes;
     private bool _finished;
 
@@ -26,7 +27,9 @@ internal sealed class JpegWriter : IImageWriter
             throw new ArgumentOutOfRangeException(nameof(options));
         }
         _rowStrideBytes = _width * _componentCount;
-        _pixelBuffer = new byte[checked((long)_rowStrideBytes * _height)];
+        var pixelCount = checked(_rowStrideBytes * _height);
+        _pixelBuffer = ArrayPool<byte>.Shared.Rent(pixelCount);
+        _pixelBuffer.AsSpan(0, pixelCount).Clear();
     }
 
     public WriterExecutionContract Contract { get; } = new() {
@@ -42,6 +45,7 @@ internal sealed class JpegWriter : IImageWriter
 
     public void Write(WorkRegion region, ReadOnlySpan<byte> data)
     {
+        ObjectDisposedException.ThrowIf(_pixelBuffer is null, this);
         if (region.Region.MinX != 0 || region.Region.MaxXExclusive != _width) {
             throw new NotSupportedException("Partial-row JPEG writes are not supported yet.");
         }
@@ -59,7 +63,21 @@ internal sealed class JpegWriter : IImageWriter
             return;
         }
 
-        JpegEncoder.Encode(_stream, _pixelBuffer, _width, _height, _componentCount, _options);
-        _finished = true;
+        ObjectDisposedException.ThrowIf(_pixelBuffer is null, this);
+        try {
+            JpegEncoder.Encode(_stream, _pixelBuffer, _width, _height, _componentCount, _options);
+            _finished = true;
+        }
+        finally {
+            Dispose();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_pixelBuffer is { } pixels) {
+            _pixelBuffer = null;
+            ArrayPool<byte>.Shared.Return(pixels);
+        }
     }
 }

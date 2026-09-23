@@ -36,7 +36,7 @@ public class PngPipelineBenchmarks
     {
         var codec = new PngCodec();
         using var stream = new MemoryStream(_pixels.Length);
-        var writer = codec.CreateWriter(stream, _rgba8);
+        using var writer = codec.CreateWriter(stream, _rgba8);
         writer.Write(BenchmarkDescriptors.Region.Full(k_Width, k_Height), _pixels);
         writer.Finish();
         return stream.ToArray();
@@ -80,7 +80,7 @@ public class ExrPipelineBenchmarks
     {
         var codec = new ExrCodec(Compression);
         using var stream = new MemoryStream(_pixels.Length);
-        var writer = codec.CreateWriter(stream, _rgbaHalf);
+        using var writer = codec.CreateWriter(stream, _rgbaHalf);
         writer.Write(BenchmarkDescriptors.Region.Full(k_Width, k_Height), _pixels);
         writer.Finish();
         return stream.ToArray();
@@ -121,7 +121,7 @@ public class HdrPipelineBenchmarks
     {
         var codec = new HdrCodec();
         using var stream = new MemoryStream(_pixels.Length);
-        var writer = codec.CreateWriter(stream, _rgbe);
+        using var writer = codec.CreateWriter(stream, _rgbe);
         writer.Write(BenchmarkDescriptors.Region.Full(k_Width, k_Height), _pixels);
         writer.Finish();
         return stream.ToArray();
@@ -152,7 +152,7 @@ public class ConversionPipelineBenchmarks
         var pixels = BenchmarkImages.HalfBytes((int)(k_Width * k_Height * 4));
         var codec = new ExrCodec(ExrCompressionId.Zip);
         using var stream = new MemoryStream();
-        var writer = codec.CreateWriter(stream, descriptor);
+        using var writer = codec.CreateWriter(stream, descriptor);
         writer.Write(BenchmarkDescriptors.Region.Full(k_Width, k_Height), pixels);
         writer.Finish();
         _exrSource = stream.ToArray();
@@ -169,7 +169,7 @@ public class ConversionPipelineBenchmarks
         var plan = ConversionPlanner.Plan(reader.Describe(), targetCodec.Capabilities, ConversionPolicy.Preview).Plan!;
 
         using var targetStream = new MemoryStream();
-        var writer = targetCodec.CreateWriter(targetStream, plan.TargetDescriptor);
+        using var writer = targetCodec.CreateWriter(targetStream, plan.TargetDescriptor);
         ConversionExecutor.Execute(plan, reader, sourceCodec.Capabilities.SampleByteOrder, writer, targetCodec.Capabilities.SampleByteOrder);
         return targetStream.Length;
     }

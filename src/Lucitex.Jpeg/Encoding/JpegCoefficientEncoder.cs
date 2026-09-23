@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.Intrinsics.X86;
 
 namespace Lucitex.Jpeg.Encoding;
 
@@ -19,7 +20,6 @@ internal static class JpegCoefficientEncoder
         var width = frame.Width;
         var height = frame.Height;
         var quantTable = frame.QuantizationTables[0];
-        var coefficients = frame.Coefficients[0];
         var blockColumns = frame.PaddedBlockColumns[0];
         var inverseQuantization = new float[64];
         for (var i = 0; i < 64; i++) {
@@ -29,13 +29,19 @@ internal static class JpegCoefficientEncoder
         Parallel.For(0, frame.PaddedBlockRows[0], blockRow => {
             Span<float> samples = stackalloc float[64];
             Span<float> dctCoefficients = stackalloc float[64];
+            Span<short> quantized = stackalloc short[64];
+            Span<long> frequencies = stackalloc long[frame.OptimizeHuffmanTables ? 256 : 0];
+            frequencies.Clear();
+            var nonZero = 0;
 
             for (var blockCol = 0; blockCol < blockColumns; blockCol++) {
                 ExtractGrayscaleBlock(pixels, width, height, blockRow, blockCol, samples);
                 DctTransform.Forward(samples, dctCoefficients);
                 var blockOffset = frame.BlockOffset(0, blockRow, blockCol);
-                Quantize(dctCoefficients, inverseQuantization, coefficients.AsSpan(blockOffset, 64));
+                Quantize(dctCoefficients, inverseQuantization, quantized);
+                nonZero += frame.PrepareBlock(0, blockOffset, quantized, frequencies);
             }
+            frame.AddStatistics(frequencies, nonZero);
         });
     }
 
@@ -48,7 +54,6 @@ internal static class JpegCoefficientEncoder
         var blocksPerLine = frame.PaddedBlockColumns;
         var blocksPerColumn = frame.PaddedBlockRows;
         var quantTables = frame.QuantizationTables;
-        var coefficients = frame.Coefficients;
         var inverseLuma = quantTables[0].Select(v => 1f / v).ToArray();
         var inverseChroma = quantTables[1].Select(v => 1f / v).ToArray();
         var mcusPerLine = blocksPerLine[1];
@@ -58,6 +63,12 @@ internal static class JpegCoefficientEncoder
             Span<float> cb = stackalloc float[64];
             Span<float> cr = stackalloc float[64];
             Span<float> transformed = stackalloc float[64];
+            Span<short> quantized = stackalloc short[64];
+            Span<long> frequencies = stackalloc long[frame.OptimizeHuffmanTables ? 512 : 0];
+            frequencies.Clear();
+            var lumaFrequencies = frequencies.IsEmpty ? Span<long>.Empty : frequencies[..256];
+            var chromaFrequencies = frequencies.IsEmpty ? Span<long>.Empty : frequencies[256..];
+            var nonZero = 0;
             for (var col = 0; col < mcusPerLine; col++) {
                 cb.Clear();
                 cr.Clear();
@@ -66,8 +77,16 @@ internal static class JpegCoefficientEncoder
                         for (var y = 0; y < 8; y++) {
                             var sourceY = Math.Min((row * vMax + v) * 8 + y, height - 1);
                             var chromaRow = ((v * 8 + y) >> (vMax - 1)) * 8;
+                            var firstX = (col * hMax + h) * 8;
+                            if (Avx2.IsSupported && firstX + 8 <= width) {
+                                var chromaWidth = 8 / hMax;
+                                var chromaOffset = chromaRow + h * chromaWidth;
+                                JpegColorConverter.ConvertRow(pixels.AsSpan((sourceY * width + firstX) * 3, 24),
+                                    luma.Slice(y * 8, 8), cb.Slice(chromaOffset, chromaWidth), cr.Slice(chromaOffset, chromaWidth));
+                                continue;
+                            }
                             for (var x = 0; x < 8; x++) {
-                                var sourceX = Math.Min((col * hMax + h) * 8 + x, width - 1);
+                                var sourceX = Math.Min(firstX + x, width - 1);
                                 var offset = (sourceY * width + sourceX) * 3;
                                 var r = pixels[offset];
                                 var g = pixels[offset + 1];
@@ -80,7 +99,8 @@ internal static class JpegCoefficientEncoder
                         }
                         DctTransform.Forward(luma, transformed);
                         var block = ((row * vMax + v) * blocksPerLine[0] + col * hMax + h) * 64;
-                        Quantize(transformed, inverseLuma, coefficients[0].AsSpan(block, 64));
+                        Quantize(transformed, inverseLuma, quantized);
+                        nonZero += frame.PrepareBlock(0, block, quantized, lumaFrequencies);
                     }
                 }
                 for (var i = 0; i < 64; i++) {
@@ -89,10 +109,13 @@ internal static class JpegCoefficientEncoder
                 }
                 var chromaBlock = (row * mcusPerLine + col) * 64;
                 DctTransform.Forward(cb, transformed);
-                Quantize(transformed, inverseChroma, coefficients[1].AsSpan(chromaBlock, 64));
+                Quantize(transformed, inverseChroma, quantized);
+                nonZero += frame.PrepareBlock(1, chromaBlock, quantized, chromaFrequencies);
                 DctTransform.Forward(cr, transformed);
-                Quantize(transformed, inverseChroma, coefficients[2].AsSpan(chromaBlock, 64));
+                Quantize(transformed, inverseChroma, quantized);
+                nonZero += frame.PrepareBlock(2, chromaBlock, quantized, chromaFrequencies);
             }
+            frame.AddStatistics(frequencies, nonZero);
         });
     }
 

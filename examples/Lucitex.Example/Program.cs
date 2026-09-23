@@ -37,7 +37,7 @@ try {
     var plan = planResult.Plan!;
 
     using (var targetStream = File.Create(targetPath)) {
-        var writer = targetCodec.CreateWriter(targetStream, plan.TargetDescriptor);
+        using var writer = targetCodec.CreateWriter(targetStream, plan.TargetDescriptor);
         ConversionExecutor.Execute(plan, reader, sourceCodec.Capabilities.SampleByteOrder, writer, targetCodec.Capabilities.SampleByteOrder);
     }
 

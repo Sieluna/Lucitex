@@ -1,4 +1,5 @@
 using Lucitex.Jpeg.Format;
+using System.Buffers;
 
 namespace Lucitex.Jpeg.Decoding;
 
@@ -32,27 +33,39 @@ internal sealed class JpegComponentState
         var mcusPerColumn = CeilDiv(frame.Height, 8 * vMax);
 
         var states = new JpegComponentState[frame.Components.Count];
-        for (var i = 0; i < frame.Components.Count; i++) {
-            var component = frame.Components[i];
+        try {
+            for (var i = 0; i < frame.Components.Count; i++) {
+                var component = frame.Components[i];
 
-            var blocksPerLine = CeilDiv(CeilDiv(frame.Width, 8) * component.HSampling, hMax);
-            var blocksPerColumn = CeilDiv(CeilDiv(frame.Height, 8) * component.VSampling, vMax);
-            var blocksPerLineForMcu = mcusPerLine * component.HSampling;
-            var blocksPerColumnForMcu = mcusPerColumn * component.VSampling;
+                var blocksPerLine = CeilDiv(CeilDiv(frame.Width, 8) * component.HSampling, hMax);
+                var blocksPerColumn = CeilDiv(CeilDiv(frame.Height, 8) * component.VSampling, vMax);
+                var blocksPerLineForMcu = mcusPerLine * component.HSampling;
+                var blocksPerColumnForMcu = mcusPerColumn * component.VSampling;
 
-            states[i] = new JpegComponentState {
-                Component = component,
-                SamplesPerLine = CeilDiv(frame.Width * component.HSampling, hMax),
-                SamplesPerColumn = CeilDiv(frame.Height * component.VSampling, vMax),
-                BlocksPerLine = blocksPerLine,
-                BlocksPerColumn = blocksPerColumn,
-                BlocksPerLineForMcu = blocksPerLineForMcu,
-                BlocksPerColumnForMcu = blocksPerColumnForMcu,
-                Coefficients = new short[blocksPerLineForMcu * blocksPerColumnForMcu * 64],
-            };
+                var coefficientCount = checked(blocksPerLineForMcu * blocksPerColumnForMcu * 64);
+                var coefficients = ArrayPool<short>.Shared.Rent(coefficientCount);
+                coefficients.AsSpan(0, coefficientCount).Clear();
+                states[i] = new JpegComponentState {
+                    Component = component,
+                    SamplesPerLine = CeilDiv(frame.Width * component.HSampling, hMax),
+                    SamplesPerColumn = CeilDiv(frame.Height * component.VSampling, vMax),
+                    BlocksPerLine = blocksPerLine,
+                    BlocksPerColumn = blocksPerColumn,
+                    BlocksPerLineForMcu = blocksPerLineForMcu,
+                    BlocksPerColumnForMcu = blocksPerColumnForMcu,
+                    Coefficients = coefficients,
+                };
+            }
+            return states;
         }
-
-        return states;
+        catch {
+            foreach (var state in states) {
+                if (state is not null) {
+                    ArrayPool<short>.Shared.Return(state.Coefficients);
+                }
+            }
+            throw;
+        }
     }
 
     internal static int CeilDiv(int numerator, int denominator) => (numerator + denominator - 1) / denominator;

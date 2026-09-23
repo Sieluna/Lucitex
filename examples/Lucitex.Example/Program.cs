@@ -21,7 +21,7 @@ try {
     var targetCodec = ResolveCodec(targetPath);
 
     using var sourceStream = File.OpenRead(sourcePath);
-    var reader = sourceCodec.OpenReader(sourceStream);
+    using var reader = sourceCodec.OpenReader(sourceStream);
     var sourceDescriptor = reader.Describe();
 
     var planResult = ConversionPlanner.Plan(sourceDescriptor, targetCodec.Capabilities, ConversionPolicy.Preview);

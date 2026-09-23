@@ -1,3 +1,4 @@
+using Lucitex.Tests.Fixtures;
 using System.IO.Compression;
 using Lucitex.Core.Execution;
 using Lucitex.Core.Spatial;
@@ -65,7 +66,7 @@ public class Adam7DecodeTests
         var document = new PngDocument { Ihdr = ihdr };
 
         using var stream = new MemoryStream();
-        PngDocumentWriter.Write(stream, document, compressedIdat);
+        PngFixtures.WriteDocument(stream, document, compressedIdat);
         stream.Position = 0;
 
         var codec = new PngCodec();
@@ -97,7 +98,7 @@ public class Adam7DecodeTests
         var document = new PngDocument { Ihdr = ihdr };
 
         using var stream = new MemoryStream();
-        PngDocumentWriter.Write(stream, document, compressedIdat);
+        PngFixtures.WriteDocument(stream, document, compressedIdat);
         stream.Position = 0;
 
         var codec = new PngCodec();

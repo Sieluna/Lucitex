@@ -1,43 +1,48 @@
 using Lucitex.Core.Execution;
 using Lucitex.Jpeg.Format;
+using System.Runtime.CompilerServices;
 
 namespace Lucitex.Jpeg.Decoding;
 
 internal sealed class JpegBitReader(JpegByteCursor cursor)
 {
-    private const int k_RefillTarget = 24;
+    private const int k_RefillTarget = 56;
 
-    private uint _bitBuffer;
+    private ulong _bitBuffer;
     private int _bitCount;
 
     public byte? PendingMarker { get; private set; }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int PeekBits(int count)
     {
-        Refill();
-
-        if (_bitCount >= count) {
-            return (int)((_bitBuffer >> (_bitCount - count)) & ((1u << count) - 1));
+        if (_bitCount < count) {
+            Refill();
         }
 
-        var have = _bitCount > 0 ? (int)(_bitBuffer & ((1u << _bitCount) - 1)) : 0;
+        if (_bitCount >= count) {
+            return (int)((_bitBuffer >> (_bitCount - count)) & ((1ul << count) - 1));
+        }
+
+        var have = _bitCount > 0 ? (int)(_bitBuffer & ((1ul << _bitCount) - 1)) : 0;
         return have << (count - _bitCount);
     }
 
-    public void Advance(int count) => _bitCount -= count;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Advance(int count)
+    {
+        if (count > _bitCount) {
+            throw new ImageFormatException("jpeg", "BadEntropyData", "JPEG entropy data ended before the coefficient was complete.");
+        }
+        _bitCount -= count;
+    }
 
     public int ReadBit()
     {
-        Refill();
-
-        if (_bitCount == 0) {
-            return 0;
-        }
-
-        _bitCount--;
-        return (int)((_bitBuffer >> _bitCount) & 1);
+        return ReadBits(1);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int ReadBits(int count)
     {
         if (count == 0) {
@@ -49,15 +54,14 @@ internal sealed class JpegBitReader(JpegByteCursor cursor)
         return value;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int ReceiveExtend(int size)
     {
         if (size == 0) {
             return 0;
         }
 
-        var value = ReadBits(size);
-        var threshold = 1 << (size - 1);
-        return value < threshold ? value - (1 << size) + 1 : value;
+        return JpegMagnitude.Decode(ReadBits(size), size);
     }
 
     public void DiscardBitBuffer()
@@ -90,6 +94,12 @@ internal sealed class JpegBitReader(JpegByteCursor cursor)
 
     private void Refill()
     {
+        var count = (63 - _bitCount) >> 3;
+        if (PendingMarker is null && cursor.TryReadEntropyBytes(count, out var bytes)) {
+            _bitBuffer = (_bitBuffer << (count * 8)) | bytes;
+            _bitCount += count * 8;
+            return;
+        }
         while (_bitCount < k_RefillTarget && FillByte()) {
         }
     }

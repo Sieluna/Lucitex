@@ -65,7 +65,7 @@ internal static class JpegDescriptorMapper
         return new MetadataCollection { Entries = entries };
     }
 
-    public static (int ComponentCount, int Width, int Height, int Quality, bool Progressive) ToJpegEncodeParams(ImagePartDescriptor part)
+    public static (int ComponentCount, int Width, int Height) ToJpegEncodeParams(ImagePartDescriptor part)
     {
         var width = (int)part.Topology.BaseExtent.Width;
         var height = (int)part.Topology.BaseExtent.Height;
@@ -75,24 +75,7 @@ internal static class JpegDescriptorMapper
             throw new NotSupportedException($"JPEG only supports 1 or 3 channel images, got {componentCount}.");
         }
 
-        var quality = 90;
-        var progressive = false;
-        foreach (var entry in part.Metadata.Entries) {
-            if (entry.Namespace != k_MetadataNamespace) {
-                continue;
-            }
-
-            switch (entry.Name) {
-                case "Quality" when entry.TypedValue is Int64MetadataValue qualityValue:
-                    quality = (int)qualityValue.Value;
-                    break;
-                case "Progressive" when entry.TypedValue is Int64MetadataValue progressiveValue:
-                    progressive = progressiveValue.Value != 0;
-                    break;
-            }
-        }
-
-        return (componentCount, width, height, quality, progressive);
+        return (componentCount, width, height);
     }
 
     private static ChannelDescriptor Channel(string name, SampleType sampleType) => new() {

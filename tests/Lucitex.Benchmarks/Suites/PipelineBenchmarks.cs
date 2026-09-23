@@ -47,7 +47,7 @@ public class PngPipelineBenchmarks
     {
         var codec = new PngCodec();
         using var stream = new MemoryStream(_encoded, writable: false);
-        var reader = codec.OpenReader(stream);
+        using var reader = codec.OpenReader(stream);
         return reader.Read(BenchmarkDescriptors.Region.Full(k_Width, k_Height), _decodeBuffer);
     }
 }
@@ -91,7 +91,7 @@ public class ExrPipelineBenchmarks
     {
         var codec = new ExrCodec(Compression);
         using var stream = new MemoryStream(_encoded, writable: false);
-        var reader = codec.OpenReader(stream);
+        using var reader = codec.OpenReader(stream);
         return reader.Read(BenchmarkDescriptors.Region.Full(k_Width, k_Height), _decodeBuffer);
     }
 }
@@ -132,7 +132,7 @@ public class HdrPipelineBenchmarks
     {
         var codec = new HdrCodec();
         using var stream = new MemoryStream(_encoded, writable: false);
-        var reader = codec.OpenReader(stream);
+        using var reader = codec.OpenReader(stream);
         return reader.Read(BenchmarkDescriptors.Region.Full(k_Width, k_Height), _decodeBuffer);
     }
 }
@@ -163,7 +163,7 @@ public class ConversionPipelineBenchmarks
     {
         var sourceCodec = new ExrCodec();
         using var sourceStream = new MemoryStream(_exrSource, writable: false);
-        var reader = sourceCodec.OpenReader(sourceStream);
+        using var reader = sourceCodec.OpenReader(sourceStream);
 
         var targetCodec = new PngCodec();
         var plan = ConversionPlanner.Plan(reader.Describe(), targetCodec.Capabilities, ConversionPolicy.Preview).Plan!;

@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace Lucitex.Jpeg.Encoding;
 
 internal sealed class JpegBitWriter
@@ -7,6 +9,7 @@ internal sealed class JpegBitWriter
     private uint _bitBuffer;
     private int _bitCount;
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void WriteBits(int value, int length)
     {
         if (length == 0) {
@@ -34,9 +37,12 @@ internal sealed class JpegBitWriter
 
     public void CopyTo(Stream stream) => stream.Write(_buffer, 0, _length);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteByteStuffed(byte value)
     {
-        EnsureCapacity(_length + 2);
+        if (_length + 2 > _buffer.Length) {
+            EnsureCapacity(_length + 2);
+        }
         _buffer[_length++] = value;
         if (value == 0xFF) {
             _buffer[_length++] = 0x00;

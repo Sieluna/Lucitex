@@ -20,7 +20,7 @@ public static partial class ImageConversion
         var targetCodec = ResolveCodec(targetExtension);
 
         using var sourceStream = new MemoryStream(source, writable: false);
-        var reader = sourceCodec.OpenReader(sourceStream);
+        using var reader = sourceCodec.OpenReader(sourceStream);
         var sourceDescriptor = reader.Describe();
 
         var planResult = ConversionPlanner.Plan(sourceDescriptor, targetCodec.Capabilities, ConversionPolicy.Preview);

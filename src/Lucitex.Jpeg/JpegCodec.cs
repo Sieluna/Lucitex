@@ -36,15 +36,19 @@ public sealed class JpegCodec : IImageCodec
             : FormatProbeResult.NoMatch(Signature.Length);
     }
 
-    public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null)
+    public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null) => OpenReader(stream, new JpegDecoderOptions(), limits);
+
+    public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) => new JpegWriter(stream, descriptor);
+
+    public IImageReader OpenReader(Stream stream, JpegDecoderOptions options, DecodeLimits? limits = null)
     {
         try {
-            return new JpegReader(stream, limits ?? DecodeLimits.Default);
+            return new JpegReader(stream, limits ?? DecodeLimits.Default, options);
         }
         catch (Exception exception) when (JpegFormatErrors.IsMalformed(exception)) {
             throw JpegFormatErrors.Wrap(exception, stream);
         }
     }
 
-    public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) => new JpegWriter(stream, descriptor);
+    public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor, JpegEncoderOptions options) => new JpegWriter(stream, descriptor, options);
 }

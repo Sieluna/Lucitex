@@ -1,3 +1,4 @@
+using Lucitex.Tests.Fixtures;
 using Lucitex.Png.Format;
 
 namespace Lucitex.Tests.Png.Format;
@@ -35,7 +36,7 @@ public class PngDocumentRoundTripTests
         var document = BuildDocument();
         using var stream = new MemoryStream();
 
-        PngDocumentWriter.Write(stream, document, "compressed-idat-placeholder"u8);
+        PngFixtures.WriteDocument(stream, document, "compressed-idat-placeholder"u8);
         stream.Position = 0;
 
         var (readDocument, idat) = PngDocumentReader.Read(stream);
@@ -43,7 +44,7 @@ public class PngDocumentRoundTripTests
         Assert.Equal(document.Ihdr, readDocument.Ihdr);
         Assert.Equal(document.Palette, readDocument.Palette);
         Assert.Equal(document.TransparencyData, readDocument.TransparencyData);
-        Assert.Equal("compressed-idat-placeholder"u8.ToArray(), idat);
+        Assert.Equal("compressed-idat-placeholder"u8.ToArray(), Assert.Single(idat).ToArray());
     }
 
     [Fact]
@@ -52,7 +53,7 @@ public class PngDocumentRoundTripTests
         var document = BuildDocument();
         using var stream = new MemoryStream();
 
-        PngDocumentWriter.Write(stream, document, []);
+        PngFixtures.WriteDocument(stream, document, []);
         stream.Position = 0;
 
         var (readDocument, _) = PngDocumentReader.Read(stream);
@@ -70,7 +71,7 @@ public class PngDocumentRoundTripTests
         var document = BuildDocument();
         using var stream = new MemoryStream();
 
-        PngDocumentWriter.Write(stream, document, []);
+        PngFixtures.WriteDocument(stream, document, []);
         stream.Position = 0;
 
         var (readDocument, _) = PngDocumentReader.Read(stream);
@@ -84,7 +85,7 @@ public class PngDocumentRoundTripTests
         var document = BuildDocument();
         using var stream = new MemoryStream();
 
-        PngDocumentWriter.Write(stream, document, []);
+        PngFixtures.WriteDocument(stream, document, []);
         stream.Position = 0;
 
         var (readDocument, _) = PngDocumentReader.Read(stream);
@@ -100,7 +101,7 @@ public class PngDocumentRoundTripTests
         var document = BuildDocument() with { Palette = [] };
         using var stream = new MemoryStream();
 
-        PngDocumentWriter.Write(stream, document, []);
+        PngFixtures.WriteDocument(stream, document, []);
         stream.Position = 0;
 
         Assert.Throws<Lucitex.Core.Execution.ImageFormatException>(() => PngDocumentReader.Read(stream));

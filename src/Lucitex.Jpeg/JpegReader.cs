@@ -2,6 +2,7 @@ using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
 using Lucitex.Core.Semantic;
 using Lucitex.Jpeg.Decoding;
+using System.Buffers;
 
 namespace Lucitex.Jpeg;
 
@@ -11,34 +12,42 @@ internal sealed class JpegReader : IImageReader
     private readonly JpegDecoder _decoder;
     private readonly DecodeLimits _limits;
     private readonly int _rowStrideBytes;
+    private readonly JpegDecoderOptions _options;
     private byte[]? _decodedPixels;
+    private bool _disposed;
 
-    public JpegReader(Stream stream, DecodeLimits limits)
+    public JpegReader(Stream stream, DecodeLimits limits, JpegDecoderOptions? options = null)
     {
         _limits = limits;
+        _options = options ?? new JpegDecoderOptions();
         _decoder = new JpegDecoder(stream);
 
         try {
             _decoder.ParseHeader();
+            _descriptor = JpegDescriptorMapper.ToImageAssetDescriptor(_decoder);
+            var violations = DecodeLimitsValidator.Validate(_descriptor, limits);
+            if (violations.Count > 0) {
+                throw new ImageFormatException("jpeg", "LimitExceeded", string.Join("; ", violations.Select(v => v.Message)));
+            }
+            _rowStrideBytes = _decoder.Frame.Width * _decoder.Frame.Components.Count;
         }
-        catch (Exception exception) when (JpegFormatErrors.IsMalformed(exception)) {
-            throw JpegFormatErrors.Wrap(exception, stream);
+        catch {
+            _decoder.ReleaseBuffers();
+            throw;
         }
-
-        _descriptor = JpegDescriptorMapper.ToImageAssetDescriptor(_decoder);
-
-        var violations = DecodeLimitsValidator.Validate(_descriptor, limits);
-        if (violations.Count > 0) {
-            throw new ImageFormatException("jpeg", "LimitExceeded", string.Join("; ", violations.Select(v => v.Message)));
-        }
-
-        _rowStrideBytes = _decoder.Frame.Width * _decoder.Frame.Components.Count;
     }
 
     public ImageAssetDescriptor Describe() => _descriptor;
 
     public int Read(WorkRegion region, Span<byte> destination)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (region.Region.MinY < 0 || region.Region.MaxYExclusive > _decoder.Frame.Height || region.Region.Height < 0) {
+            throw new ArgumentOutOfRangeException(nameof(region));
+        }
+        if (destination.Length < region.Region.Height * _rowStrideBytes) {
+            throw new ArgumentException("Destination is too short for the requested region.", nameof(destination));
+        }
         try {
             EnsureDecoded();
         }
@@ -70,7 +79,31 @@ internal sealed class JpegReader : IImageReader
             throw new ImageFormatException("jpeg", "LimitExceeded", $"Decoded size {totalBytes} exceeds MaxDecodedBytes limit of {_limits.MaxDecodedBytes}.");
         }
 
-        _decoder.DecodeScans();
-        _decodedPixels = JpegPixelAssembler.Reconstruct(_decoder);
+        var buffer = ArrayPool<byte>.Shared.Rent(checked((int)totalBytes));
+        try {
+            _decoder.DecodeScans();
+            JpegPixelAssembler.Reconstruct(_decoder, buffer, _options.InterpolateChroma);
+            _decodedPixels = buffer;
+        }
+        catch {
+            ArrayPool<byte>.Shared.Return(buffer);
+            throw;
+        }
+        finally {
+            _decoder.ReleaseBuffers();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) {
+            return;
+        }
+        _disposed = true;
+        _decoder.ReleaseBuffers();
+        if (_decodedPixels is { } buffer) {
+            _decodedPixels = null;
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 }

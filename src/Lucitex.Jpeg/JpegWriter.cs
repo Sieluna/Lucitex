@@ -12,16 +12,19 @@ internal sealed class JpegWriter : IImageWriter
     private readonly int _width;
     private readonly int _height;
     private readonly int _componentCount;
-    private readonly int _quality;
-    private readonly bool _progressive;
+    private readonly JpegEncoderOptions _options;
     private readonly byte[] _pixelBuffer;
     private readonly int _rowStrideBytes;
     private bool _finished;
 
-    public JpegWriter(Stream stream, ImageAssetDescriptor descriptor)
+    public JpegWriter(Stream stream, ImageAssetDescriptor descriptor, JpegEncoderOptions? options = null)
     {
         _stream = stream;
-        (_componentCount, _width, _height, _quality, _progressive) = JpegDescriptorMapper.ToJpegEncodeParams(descriptor.Parts[0]);
+        (_componentCount, _width, _height) = JpegDescriptorMapper.ToJpegEncodeParams(descriptor.Parts[0]);
+        _options = options ?? new JpegEncoderOptions();
+        if (_options.Quality is < 1 or > 100 || !Enum.IsDefined(_options.ChromaSubsampling)) {
+            throw new ArgumentOutOfRangeException(nameof(options));
+        }
         _rowStrideBytes = _width * _componentCount;
         _pixelBuffer = new byte[checked((long)_rowStrideBytes * _height)];
     }
@@ -56,7 +59,7 @@ internal sealed class JpegWriter : IImageWriter
             return;
         }
 
-        JpegEncoder.Encode(_stream, _pixelBuffer, _width, _height, _componentCount, _quality, _progressive);
+        JpegEncoder.Encode(_stream, _pixelBuffer, _width, _height, _componentCount, _options);
         _finished = true;
     }
 }

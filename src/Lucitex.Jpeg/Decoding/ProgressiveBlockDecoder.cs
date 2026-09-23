@@ -8,7 +8,7 @@ internal static class ProgressiveBlockDecoder
     public static void DecodeDcFirst(JpegBitReader reader, JpegComponentState component, int blockOffset, JpegHuffmanDecodeTable dcTable, int approximationLow)
     {
         var size = dcTable.Decode(reader);
-        var diff = size == 0 ? 0 : reader.ReceiveExtend(size);
+        var diff = reader.ReceiveExtend(size);
         component.DcPredictor += diff;
         component.Coefficients[blockOffset] = (short)(component.DcPredictor << approximationLow);
     }
@@ -39,11 +39,8 @@ internal static class ProgressiveBlockDecoder
         var k = spectralStart;
 
         while (k <= spectralEnd) {
-            var runSize = acTable.Decode(reader);
-            var run = runSize >> 4;
-            var size = runSize & 0xF;
-
-            if (size == 0) {
+            var value = acTable.DecodeAc(reader, out var run);
+            if (value == 0) {
                 if (run < 15) {
                     eobRun = (1 << run) - 1;
                     if (run > 0) {
@@ -62,7 +59,7 @@ internal static class ProgressiveBlockDecoder
                 throw new ImageFormatException("jpeg", "BadEntropyData", "Progressive AC coefficient run exceeded the spectral band bounds.");
             }
 
-            coefficients[blockOffset + JpegZigZag.Order[k]] = (short)(reader.ReceiveExtend(size) * (1 << approximationLow));
+            coefficients[blockOffset + JpegZigZag.Order[k]] = (short)(value * (1 << approximationLow));
             k++;
         }
     }

@@ -6,7 +6,9 @@ namespace Lucitex.Png.Format;
 
 internal static class PngDocumentWriter
 {
-    public static void Write(Stream stream, PngDocument document, ReadOnlySpan<byte> compressedIdat)
+    public static void WriteEnd(Stream stream) => PngChunkIo.WriteChunk(stream, "IEND", []);
+
+    public static void WriteHeader(Stream stream, PngDocument document)
     {
         PngChunkIo.WriteSignature(stream);
         WriteIhdr(stream, document.Ihdr);
@@ -39,8 +41,6 @@ internal static class PngDocumentWriter
             WriteText(stream, text);
         }
 
-        PngChunkIo.WriteChunk(stream, "IDAT", compressedIdat);
-        PngChunkIo.WriteChunk(stream, "IEND", []);
     }
 
     private static void WriteIhdr(Stream stream, PngIhdr ihdr)

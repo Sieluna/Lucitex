@@ -20,54 +20,25 @@ internal static class JpegBlockEncoder
         var diff = dcCoefficient - dcPredictor;
         dcPredictor = dcCoefficient;
 
-        var (dcSize, dcBits) = EncodeMagnitude(diff);
+        var dcSize = JpegMagnitude.GetSize(diff);
         var dcCode = dcTable.Get((byte)dcSize);
         writer.WriteBits(dcCode.Code, dcCode.Length);
-        if (dcSize > 0) {
-            writer.WriteBits(dcBits, dcSize);
-        }
+        WriteMagnitude(writer, diff, dcSize);
     }
 
     public static void EncodeAc(JpegBitWriter writer, ReadOnlySpan<short> coefficients, JpegHuffmanEncodeTable acTable)
     {
-        var zigzag = JpegZigZag.Order;
-        var run = 0;
-
-        for (var k = 1; k < 64; k++) {
-            var value = coefficients[zigzag[k]];
-            if (value == 0) {
-                run++;
-                continue;
-            }
-
-            while (run > 15) {
-                var zeroRunCode = acTable.Get(0xF0);
-                writer.WriteBits(zeroRunCode.Code, zeroRunCode.Length);
-                run -= 16;
-            }
-
-            var (size, bits) = EncodeMagnitude(value);
-            var runSizeCode = acTable.Get((byte)((run << 4) | size));
-            writer.WriteBits(runSizeCode.Code, runSizeCode.Length);
-            writer.WriteBits(bits, size);
-            run = 0;
-        }
-
-        if (run > 0) {
-            var endOfBlockCode = acTable.Get(0x00);
-            writer.WriteBits(endOfBlockCode.Code, endOfBlockCode.Length);
+        foreach (var (symbol, value) in new JpegAcSymbols(coefficients)) {
+            var code = acTable.Get(symbol);
+            writer.WriteBits(code.Code, code.Length);
+            WriteMagnitude(writer, value, symbol & 15);
         }
     }
 
-    private static (int Size, int Bits) EncodeMagnitude(int value)
+    private static void WriteMagnitude(JpegBitWriter writer, int value, int size)
     {
-        if (value == 0) {
-            return (0, 0);
+        if (size > 0) {
+            writer.WriteBits(JpegMagnitude.Encode(value, size), size);
         }
-
-        var magnitude = Math.Abs(value);
-        var size = 32 - System.Numerics.BitOperations.LeadingZeroCount((uint)magnitude);
-        var bits = value > 0 ? value : value - 1 + (1 << size);
-        return (size, bits);
     }
 }

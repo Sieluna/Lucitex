@@ -1,8 +1,8 @@
-using System.IO.Compression;
+using System.Buffers;
 using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
 using Lucitex.Core.Semantic;
-using Lucitex.Png.Filtering;
+using Lucitex.Png.Decoding;
 using Lucitex.Png.Format;
 
 namespace Lucitex.Png;
@@ -11,29 +11,43 @@ internal sealed class PngReader : IImageReader
 {
     private readonly ImageAssetDescriptor _descriptor;
     private readonly PngDocument _document;
-    private readonly byte[] _compressedIdat;
+    private IReadOnlyList<ReadOnlyMemory<byte>> _compressedChunks;
+    private readonly PngIdatBuffers _compressedBuffers = new();
     private readonly DecodeLimits _limits;
     private readonly int _rowStrideBytes;
     private byte[]? _decodedPixels;
+    private bool _disposed;
 
     public PngReader(Stream stream, DecodeLimits limits)
     {
         _limits = limits;
-        (_document, _compressedIdat) = PngDocumentReader.Read(stream, limits);
-        _descriptor = PngDescriptorMapper.ToImageAssetDescriptor(_document);
+        try {
+            (_document, _compressedChunks) = PngDocumentReader.Read(stream, limits, _compressedBuffers);
+            _descriptor = PngDescriptorMapper.ToImageAssetDescriptor(_document);
 
-        var violations = DecodeLimitsValidator.Validate(_descriptor, limits);
-        if (violations.Count > 0) {
-            throw new ImageFormatException("png", "LimitExceeded", string.Join("; ", violations.Select(v => v.Message)));
+            var violations = DecodeLimitsValidator.Validate(_descriptor, limits);
+            if (violations.Count > 0) {
+                throw new ImageFormatException("png", "LimitExceeded", string.Join("; ", violations.Select(v => v.Message)));
+            }
+            _rowStrideBytes = _document.Ihdr.RowByteLength(_document.Ihdr.Width);
         }
-
-        _rowStrideBytes = _document.Ihdr.RowByteLength(_document.Ihdr.Width);
+        catch {
+            _compressedBuffers.Dispose();
+            throw;
+        }
     }
 
     public ImageAssetDescriptor Describe() => _descriptor;
 
     public int Read(WorkRegion region, Span<byte> destination)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (region.Region.MinY < 0 || region.Region.MaxYExclusive > _document.Ihdr.Height || region.Region.Height < 0) {
+            throw new ArgumentOutOfRangeException(nameof(region));
+        }
+        if (destination.Length < region.Region.Height * _rowStrideBytes) {
+            throw new ArgumentException("Destination is too short for the requested region.", nameof(destination));
+        }
         try {
             EnsureDecoded();
         }
@@ -67,78 +81,34 @@ internal sealed class PngReader : IImageReader
             throw new ImageFormatException("png", "LimitExceeded", $"Decoded size {totalBytes} exceeds MaxDecodedBytes limit of {_limits.MaxDecodedBytes}.");
         }
 
-        var buffer = new byte[totalBytes];
-
-        using var input = new MemoryStream(_compressedIdat, writable: false);
-        using var zlib = new ZLibStream(input, CompressionMode.Decompress);
-        if (ihdr.Interlace == PngInterlaceMethod.None) {
-            DecodeNonInterlaced(ihdr, zlib, buffer);
+        var length = checked((int)totalBytes);
+        var buffer = ArrayPool<byte>.Shared.Rent(length);
+        try {
+            if (ihdr.Interlace != PngInterlaceMethod.None) {
+                buffer.AsSpan(0, length).Clear();
+            }
+            PngScanlineDecoder.Decode(ihdr, _compressedChunks, buffer);
+            _decodedPixels = buffer;
+            _compressedChunks = [];
+            _compressedBuffers.Dispose();
         }
-        else {
-            DecodeAdam7(ihdr, zlib, buffer);
-        }
-
-        if (zlib.ReadByte() != -1) {
-            throw new ImageFormatException("png", "BadImageData", "Inflated PNG image data is longer than expected.");
-        }
-
-        _decodedPixels = buffer;
-    }
-
-    private static void DecodeNonInterlaced(PngIhdr ihdr, Stream inflated, byte[] buffer)
-    {
-        var rowBytes = ihdr.RowByteLength(ihdr.Width);
-        var bpp = ihdr.BytesPerPixel;
-
-        for (var y = 0; y < ihdr.Height; y++) {
-            var filterType = (PngFilterType)inflated.ReadByte();
-            var row = buffer.AsSpan(y * rowBytes, rowBytes);
-            inflated.ReadExactly(row);
-
-            var previous = y > 0 ? buffer.AsSpan((y - 1) * rowBytes, rowBytes) : ReadOnlySpan<byte>.Empty;
-            PngFilter.Reconstruct(filterType, row, previous, bpp);
+        catch {
+            ArrayPool<byte>.Shared.Return(buffer);
+            throw;
         }
     }
 
-    private static void DecodeAdam7(PngIhdr ihdr, Stream inflated, byte[] buffer)
+    public void Dispose()
     {
-        var samplesPerPixel = ihdr.SamplesPerPixel;
-        var bitDepth = ihdr.BitDepth;
-        var bpp = ihdr.BytesPerPixel;
-        var finalRowBytes = ihdr.RowByteLength(ihdr.Width);
-
-        for (var passIndex = 0; passIndex < 7; passIndex++) {
-            var (passWidth, passHeight) = Adam7.PassDimensions(ihdr.Width, ihdr.Height, passIndex);
-            if (passWidth == 0 || passHeight == 0) {
-                continue;
-            }
-
-            var (xStart, yStart, xStep, yStep) = Adam7.Passes[passIndex];
-            var passRowBytes = ihdr.RowByteLength(passWidth);
-            var previousPassRow = new byte[passRowBytes];
-            var currentRow = new byte[passRowBytes];
-            var hasPreviousRow = false;
-
-            for (var py = 0; py < passHeight; py++) {
-                var filterType = (PngFilterType)inflated.ReadByte();
-                inflated.ReadExactly(currentRow);
-
-                PngFilter.Reconstruct(filterType, currentRow, hasPreviousRow ? previousPassRow : ReadOnlySpan<byte>.Empty, bpp);
-
-                var y = yStart + (py * yStep);
-                var finalRow = buffer.AsSpan(y * finalRowBytes, finalRowBytes);
-
-                for (var px = 0; px < passWidth; px++) {
-                    var x = xStart + (px * xStep);
-                    for (var s = 0; s < samplesPerPixel; s++) {
-                        var value = PngBitPacking.ReadSample(currentRow, (px * samplesPerPixel) + s, bitDepth);
-                        PngBitPacking.WriteSample(finalRow, (x * samplesPerPixel) + s, bitDepth, value);
-                    }
-                }
-
-                (previousPassRow, currentRow) = (currentRow, previousPassRow);
-                hasPreviousRow = true;
-            }
+        if (_disposed) {
+            return;
+        }
+        _disposed = true;
+        _compressedChunks = [];
+        _compressedBuffers.Dispose();
+        if (_decodedPixels is { } buffer) {
+            _decodedPixels = null;
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 }

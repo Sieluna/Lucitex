@@ -1,5 +1,6 @@
 using Lucitex.Core.Execution;
 using Lucitex.Jpeg.Format;
+using System.Buffers;
 
 namespace Lucitex.Jpeg.Decoding;
 
@@ -7,8 +8,7 @@ internal sealed class JpegDecoder
 {
     private readonly JpegByteCursor _cursor;
     private readonly Dictionary<int, JpegQuantizationTable> _quantTables = new();
-    private readonly Dictionary<int, JpegHuffmanDecodeTable> _dcHuffmanTables = new();
-    private readonly Dictionary<int, JpegHuffmanDecodeTable> _acHuffmanTables = new();
+    private readonly JpegHuffmanDecodeTable?[] _huffmanTables = new JpegHuffmanDecodeTable[32];
     private readonly List<JpegAppSegment> _appSegments = new();
     private readonly List<string> _comments = new();
     private int _restartInterval;
@@ -30,6 +30,18 @@ internal sealed class JpegDecoder
 
     public bool AdobeTransformIsRaw { get; private set; }
 
+    public void ReleaseBuffers()
+    {
+        foreach (var component in _components) {
+            ArrayPool<short>.Shared.Return(component.Coefficients);
+        }
+        _components = [];
+        foreach (var table in _huffmanTables) {
+            table?.Dispose();
+        }
+        Array.Clear(_huffmanTables);
+    }
+
     public void ParseHeader()
     {
         var soi = _cursor.ReadMarker();
@@ -46,25 +58,10 @@ internal sealed class JpegDecoder
                 case JpegMarkers.Sof2:
                     ReadFrameHeader(progressive: true);
                     return;
-                case JpegMarkers.Dqt:
-                    ReadDqt();
-                    break;
-                case JpegMarkers.Dht:
-                    ReadDht();
-                    break;
-                case JpegMarkers.Dri:
-                    ReadDri();
-                    break;
-                case JpegMarkers.Com:
-                    _comments.Add(System.Text.Encoding.Latin1.GetString(_cursor.ReadSegment()));
-                    break;
                 case JpegMarkers.Eoi:
                     throw new ImageFormatException("jpeg", "MissingFrameHeader", "JPEG stream reached EOI before a frame header was found.");
-                case >= JpegMarkers.App0 and <= 0xEF:
-                    ReadAppSegment(marker);
-                    break;
                 default:
-                    _cursor.ReadSegment();
+                    ReadMetadataSegment(marker);
                     break;
             }
         }
@@ -77,30 +74,39 @@ internal sealed class JpegDecoder
         while (true) {
             var marker = _cursor.ReadMarker();
             switch (marker) {
-                case JpegMarkers.Dqt:
-                    ReadDqt();
-                    break;
-                case JpegMarkers.Dht:
-                    ReadDht();
-                    break;
-                case JpegMarkers.Dri:
-                    ReadDri();
-                    break;
-                case JpegMarkers.Com:
-                    _comments.Add(System.Text.Encoding.Latin1.GetString(_cursor.ReadSegment()));
-                    break;
-                case >= JpegMarkers.App0 and <= 0xEF:
-                    ReadAppSegment(marker);
-                    break;
                 case JpegMarkers.Sos:
                     DecodeScan();
                     break;
                 case JpegMarkers.Eoi:
                     return;
                 default:
-                    _cursor.ReadSegment();
+                    ReadMetadataSegment(marker);
                     break;
             }
+        }
+    }
+
+    private void ReadMetadataSegment(byte marker)
+    {
+        switch (marker) {
+            case JpegMarkers.Dqt:
+                ReadDqt();
+                break;
+            case JpegMarkers.Dht:
+                ReadDht();
+                break;
+            case JpegMarkers.Dri:
+                ReadDri();
+                break;
+            case JpegMarkers.Com:
+                _comments.Add(System.Text.Encoding.Latin1.GetString(_cursor.ReadSegment()));
+                break;
+            case >= JpegMarkers.App0 and <= 0xEF:
+                ReadAppSegment(marker);
+                break;
+            default:
+                _cursor.ReadSegment();
+                break;
         }
     }
 
@@ -198,12 +204,10 @@ internal sealed class JpegDecoder
             }
 
             var spec = new JpegHuffmanSpec { Id = id, IsAc = isAc, Bits = bits, Values = values };
-            if (isAc) {
-                _acHuffmanTables[id] = new JpegHuffmanDecodeTable(spec);
-            }
-            else {
-                _dcHuffmanTables[id] = new JpegHuffmanDecodeTable(spec);
-            }
+            var table = JpegHuffmanDecodeTable.Create(spec);
+            var index = HuffmanTableIndex(id, isAc);
+            _huffmanTables[index]?.Dispose();
+            _huffmanTables[index] = table;
         }
     }
 
@@ -256,88 +260,93 @@ internal sealed class JpegDecoder
             active[i].Component.DcPredictor = 0;
         }
 
-        if (!Frame.Progressive && _restartInterval > 0) {
-            DecodeBaselineScanParallel(active);
+        if (!Frame.Progressive) {
+            DecodeBaselineScan(active);
             return;
         }
-
         var reader = new JpegBitReader(_cursor);
         var eobRun = 0;
 
         if (active.Length > 1) {
-            DecodeInterleavedScan(reader, active, scan, ref eobRun);
+            DecodeProgressiveInterleavedScan(reader, active, scan, ref eobRun);
         }
         else {
-            DecodeNonInterleavedScan(reader, active[0], scan, ref eobRun);
+            DecodeProgressiveNonInterleavedScan(reader, active[0], scan, ref eobRun);
         }
 
         reader.FinishSegment();
     }
 
-    private void DecodeBaselineScanParallel((JpegComponentState Component, JpegScanComponent Scan)[] active)
+    private void DecodeBaselineScan((JpegComponentState Component, JpegScanComponent Scan)[] active)
     {
+        var tables = new (JpegHuffmanDecodeTable Dc, JpegHuffmanDecodeTable Ac)[active.Length];
+        for (var i = 0; i < active.Length; i++) {
+            tables[i] = (GetHuffmanTable(active[i].Scan.DcTableSelector, isAc: false),
+                GetHuffmanTable(active[i].Scan.AcTableSelector, isAc: true));
+        }
+        var unitsPerLine = active.Length == 1 ? active[0].Component.BlocksPerLine : JpegComponentState.CeilDiv(Frame.Width, 8 * Frame.HMax);
+        var unitsPerColumn = active.Length == 1 ? active[0].Component.BlocksPerColumn : JpegComponentState.CeilDiv(Frame.Height, 8 * Frame.VMax);
+        var totalUnits = unitsPerLine * unitsPerColumn;
+        if (_restartInterval == 0) {
+            var reader = new JpegBitReader(_cursor);
+            DecodeBaselineRange(reader, active, tables, unitsPerLine, 0, totalUnits);
+            reader.FinishSegment();
+            return;
+        }
+
         var (buffer, length, segmentStarts) = ReadRestartSegments();
         var restartInterval = _restartInterval;
-        var segmentCount = segmentStarts.Count;
+        ExecutionScheduler.For(0, segmentStarts.Count, segmentIndex => {
+            var start = segmentIndex * restartInterval;
+            var end = Math.Min(start + restartInterval, totalUnits);
+            var offset = segmentStarts[segmentIndex];
+            using var stream = new MemoryStream(buffer, offset, length - offset, writable: false);
+            var reader = new JpegBitReader(new JpegByteCursor(stream));
+            DecodeBaselineRange(reader, active, tables, unitsPerLine, start, end);
+        });
+    }
 
-        var dcTables = new JpegHuffmanDecodeTable[active.Length];
-        var acTables = new JpegHuffmanDecodeTable[active.Length];
-        for (var i = 0; i < active.Length; i++) {
-            dcTables[i] = GetDcTable(active[i].Scan.DcTableSelector);
-            acTables[i] = GetAcTable(active[i].Scan.AcTableSelector);
+    private static void DecodeBaselineRange(
+        JpegBitReader reader,
+        (JpegComponentState Component, JpegScanComponent Scan)[] active,
+        (JpegHuffmanDecodeTable Dc, JpegHuffmanDecodeTable Ac)[] tables,
+        int unitsPerLine,
+        int start,
+        int end)
+    {
+        var row = start / unitsPerLine;
+        var col = start % unitsPerLine;
+        if (active.Length == 1) {
+            var component = active[0].Component;
+            var predictor = 0;
+            for (var unit = start; unit < end; unit++) {
+                BaselineBlockDecoder.DecodeBlock(reader, component.Coefficients, component.BlockOffset(row, col), ref predictor, tables[0].Dc, tables[0].Ac);
+                if (++col == unitsPerLine) {
+                    col = 0;
+                    row++;
+                }
+            }
+            return;
         }
 
-        if (active.Length > 1) {
-            var mcusPerLine = JpegComponentState.CeilDiv(Frame.Width, 8 * Frame.HMax);
-            var mcusPerColumn = JpegComponentState.CeilDiv(Frame.Height, 8 * Frame.VMax);
-            var totalMcus = mcusPerLine * mcusPerColumn;
-
-            ExecutionScheduler.For(0, segmentCount, segmentIndex => {
-                var mcuStart = segmentIndex * restartInterval;
-                var mcuEnd = Math.Min(mcuStart + restartInterval, totalMcus);
-                var segmentOffset = segmentStarts[segmentIndex];
-                var segmentReader = new JpegBitReader(new JpegByteCursor(new MemoryStream(buffer, segmentOffset, length - segmentOffset, writable: false)));
-                var dcPredictors = new int[active.Length];
-
-                for (var mcuIndex = mcuStart; mcuIndex < mcuEnd; mcuIndex++) {
-                    var mcuRow = mcuIndex / mcusPerLine;
-                    var mcuCol = mcuIndex % mcusPerLine;
-
-                    for (var i = 0; i < active.Length; i++) {
-                        var component = active[i].Component;
-
-                        for (var v = 0; v < component.Component.VSampling; v++) {
-                            for (var h = 0; h < component.Component.HSampling; h++) {
-                                var blockRow = (mcuRow * component.Component.VSampling) + v;
-                                var blockCol = (mcuCol * component.Component.HSampling) + h;
-                                var blockOffset = component.BlockOffset(blockRow, blockCol);
-                                BaselineBlockDecoder.DecodeBlock(segmentReader, component.Coefficients, blockOffset, ref dcPredictors[i], dcTables[i], acTables[i]);
-                            }
-                        }
+        Span<int> predictors = stackalloc int[active.Length];
+        predictors.Clear();
+        for (var unit = start; unit < end; unit++) {
+            for (var i = 0; i < active.Length; i++) {
+                var component = active[i].Component;
+                var hSampling = component.Component.HSampling;
+                var vSampling = component.Component.VSampling;
+                for (var v = 0; v < vSampling; v++) {
+                    for (var h = 0; h < hSampling; h++) {
+                        var offset = component.BlockOffset(row * vSampling + v, col * hSampling + h);
+                        BaselineBlockDecoder.DecodeBlock(reader, component.Coefficients, offset, ref predictors[i], tables[i].Dc, tables[i].Ac);
                     }
                 }
-            });
-        }
-        else {
-            var component = active[0].Component;
-            var dcTable = dcTables[0];
-            var acTable = acTables[0];
-            var total = component.BlocksPerLine * component.BlocksPerColumn;
-
-            ExecutionScheduler.For(0, segmentCount, segmentIndex => {
-                var blockStart = segmentIndex * restartInterval;
-                var blockEnd = Math.Min(blockStart + restartInterval, total);
-                var segmentOffset = segmentStarts[segmentIndex];
-                var segmentReader = new JpegBitReader(new JpegByteCursor(new MemoryStream(buffer, segmentOffset, length - segmentOffset, writable: false)));
-                var dcPredictor = 0;
-
-                for (var blockIndex = blockStart; blockIndex < blockEnd; blockIndex++) {
-                    var blockRow = blockIndex / component.BlocksPerLine;
-                    var blockCol = blockIndex % component.BlocksPerLine;
-                    var blockOffset = component.BlockOffset(blockRow, blockCol);
-                    BaselineBlockDecoder.DecodeBlock(segmentReader, component.Coefficients, blockOffset, ref dcPredictor, dcTable, acTable);
-                }
-            });
+            }
+            if (++col == unitsPerLine) {
+                col = 0;
+                row++;
+            }
         }
     }
 
@@ -399,7 +408,7 @@ internal sealed class JpegDecoder
         }
     }
 
-    private void DecodeInterleavedScan(JpegBitReader reader, (JpegComponentState Component, JpegScanComponent Scan)[] active, JpegScanHeader scan, ref int eobRun)
+    private void DecodeProgressiveInterleavedScan(JpegBitReader reader, (JpegComponentState Component, JpegScanComponent Scan)[] active, JpegScanHeader scan, ref int eobRun)
     {
         var mcusPerLine = JpegComponentState.CeilDiv(Frame.Width, 8 * Frame.HMax);
         var mcusPerColumn = JpegComponentState.CeilDiv(Frame.Height, 8 * Frame.VMax);
@@ -415,7 +424,7 @@ internal sealed class JpegDecoder
                         for (var h = 0; h < component.Component.HSampling; h++) {
                             var blockRow = (mcuRow * component.Component.VSampling) + v;
                             var blockCol = (mcuCol * component.Component.HSampling) + h;
-                            DecodeOneBlock(reader, component, blockRow, blockCol, scanComponent, scan, ref eobRun);
+                            DecodeProgressiveBlock(reader, component, blockRow, blockCol, scanComponent, scan, ref eobRun);
                         }
                     }
                 }
@@ -434,7 +443,7 @@ internal sealed class JpegDecoder
         }
     }
 
-    private void DecodeNonInterleavedScan(JpegBitReader reader, (JpegComponentState Component, JpegScanComponent Scan) active, JpegScanHeader scan, ref int eobRun)
+    private void DecodeProgressiveNonInterleavedScan(JpegBitReader reader, (JpegComponentState Component, JpegScanComponent Scan) active, JpegScanHeader scan, ref int eobRun)
     {
         var (component, scanComponent) = active;
         var total = component.BlocksPerLine * component.BlocksPerColumn;
@@ -443,7 +452,7 @@ internal sealed class JpegDecoder
 
         for (var blockRow = 0; blockRow < component.BlocksPerColumn; blockRow++) {
             for (var blockCol = 0; blockCol < component.BlocksPerLine; blockCol++) {
-                DecodeOneBlock(reader, component, blockRow, blockCol, scanComponent, scan, ref eobRun);
+                DecodeProgressiveBlock(reader, component, blockRow, blockCol, scanComponent, scan, ref eobRun);
 
                 blockIndex++;
                 if (_restartInterval > 0 && blockIndex % _restartInterval == 0 && blockIndex < total) {
@@ -456,7 +465,7 @@ internal sealed class JpegDecoder
         }
     }
 
-    private void DecodeOneBlock(
+    private void DecodeProgressiveBlock(
         JpegBitReader reader,
         JpegComponentState component,
         int blockRow,
@@ -467,14 +476,9 @@ internal sealed class JpegDecoder
     {
         var blockOffset = component.BlockOffset(blockRow, blockCol);
 
-        if (!Frame.Progressive) {
-            BaselineBlockDecoder.DecodeBlock(reader, component, blockOffset, GetDcTable(scanComponent.DcTableSelector), GetAcTable(scanComponent.AcTableSelector));
-            return;
-        }
-
         if (scan.SpectralStart == 0) {
             if (scan.SuccessiveApproxHigh == 0) {
-                ProgressiveBlockDecoder.DecodeDcFirst(reader, component, blockOffset, GetDcTable(scanComponent.DcTableSelector), scan.SuccessiveApproxLow);
+                ProgressiveBlockDecoder.DecodeDcFirst(reader, component, blockOffset, GetHuffmanTable(scanComponent.DcTableSelector, isAc: false), scan.SuccessiveApproxLow);
             }
             else {
                 ProgressiveBlockDecoder.DecodeDcRefine(reader, component, blockOffset, scan.SuccessiveApproxLow);
@@ -483,7 +487,7 @@ internal sealed class JpegDecoder
             return;
         }
 
-        var acTable = GetAcTable(scanComponent.AcTableSelector);
+        var acTable = GetHuffmanTable(scanComponent.AcTableSelector, isAc: true);
         if (scan.SuccessiveApproxHigh == 0) {
             ProgressiveBlockDecoder.DecodeAcFirst(reader, component, blockOffset, acTable, scan.SpectralStart, scan.SpectralEnd, scan.SuccessiveApproxLow, ref eobRun);
         }
@@ -492,13 +496,10 @@ internal sealed class JpegDecoder
         }
     }
 
-    private JpegHuffmanDecodeTable GetDcTable(int id) => _dcHuffmanTables.TryGetValue(id, out var table)
-        ? table
-        : throw new ImageFormatException("jpeg", "BadTableReference", $"JPEG scan references undefined DC Huffman table {id}.");
+    private static int HuffmanTableIndex(int id, bool isAc) => id + (isAc ? 16 : 0);
 
-    private JpegHuffmanDecodeTable GetAcTable(int id) => _acHuffmanTables.TryGetValue(id, out var table)
-        ? table
-        : throw new ImageFormatException("jpeg", "BadTableReference", $"JPEG scan references undefined AC Huffman table {id}.");
+    private JpegHuffmanDecodeTable GetHuffmanTable(int id, bool isAc) => _huffmanTables[HuffmanTableIndex(id, isAc)]
+        ?? throw new ImageFormatException("jpeg", "BadTableReference", $"JPEG scan references undefined {(isAc ? "AC" : "DC")} Huffman table {id}.");
 
     private JpegComponentState FindComponent(byte id)
     {

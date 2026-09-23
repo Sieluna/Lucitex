@@ -7,7 +7,7 @@ namespace Lucitex.Png.Format;
 
 internal static class PngDocumentReader
 {
-    public static (PngDocument Document, byte[] CompressedIdat) Read(Stream stream, DecodeLimits? decodeLimits = null)
+    public static (PngDocument Document, List<ReadOnlyMemory<byte>> CompressedChunks) Read(Stream stream, DecodeLimits? decodeLimits = null, PngIdatBuffers? buffers = null)
     {
         var limits = decodeLimits ?? DecodeLimits.Default;
         var maxChunkLength = checked((int)Math.Min(limits.MaxWorkingSet, int.MaxValue));
@@ -23,7 +23,7 @@ internal static class PngDocumentReader
         string? iccProfileName = null;
         var textEntries = new List<PngTextEntry>();
         var unknown = new List<PngRawChunk>();
-        var idatChunks = new List<byte[]>();
+        var idatChunks = new List<ReadOnlyMemory<byte>>();
         long idatBytes = 0;
         long metadataBytes = 0;
         var sawIhdr = false;
@@ -31,7 +31,7 @@ internal static class PngDocumentReader
         var sawIend = false;
 
         while (true) {
-            var chunk = PngChunkIo.ReadChunk(stream, maxChunkLength);
+            var chunk = PngChunkIo.ReadChunk(stream, maxChunkLength, buffers);
 
             if (!sawIhdr && chunk.Type != "IHDR") {
                 throw new ImageFormatException("png", "BadChunkOrder", "IHDR must be the first PNG chunk.");
@@ -74,12 +74,12 @@ internal static class PngDocumentReader
                     textEntries.Add(ParseITxt(chunk.Data));
                     break;
                 case "IDAT":
-                    idatBytes = checked(idatBytes + chunk.Data.Length);
+                    idatBytes = checked(idatBytes + chunk.Length);
                     if (idatBytes > limits.MaxWorkingSet) {
                         throw new ImageFormatException("png", "LimitExceeded", "Compressed PNG image data exceeds MaxWorkingSet.");
                     }
 
-                    idatChunks.Add(chunk.Data);
+                    idatChunks.Add(chunk.Data.AsMemory(0, chunk.Length));
                     sawIdat = true;
                     break;
                 case "IEND":
@@ -128,23 +128,7 @@ internal static class PngDocumentReader
             UnknownChunks = unknown,
         };
 
-        return (document, CombineIdatChunks(idatChunks, idatBytes));
-    }
-
-    private static byte[] CombineIdatChunks(List<byte[]> chunks, long totalLength)
-    {
-        if (chunks.Count == 1) {
-            return chunks[0];
-        }
-
-        var combined = new byte[checked((int)totalLength)];
-        var offset = 0;
-        foreach (var chunk in chunks) {
-            chunk.CopyTo(combined, offset);
-            offset += chunk.Length;
-        }
-
-        return combined;
+        return (document, idatChunks);
     }
 
     private static PngIhdr ParseIhdr(byte[] data)

@@ -46,4 +46,6 @@ public sealed class PngCodec : IImageCodec
     }
 
     public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) => new PngWriter(stream, descriptor);
+
+    public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor, PngEncoderOptions options) => new PngWriter(stream, descriptor, options);
 }

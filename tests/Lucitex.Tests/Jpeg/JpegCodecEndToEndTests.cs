@@ -1,9 +1,9 @@
 using Lucitex.Core.Execution;
-using Lucitex.Core.Metadata;
 using Lucitex.Core.Semantic;
 using Lucitex.Core.Spatial;
 using Lucitex.Core.Topology;
 using Lucitex.Jpeg;
+using Lucitex.Jpeg.Format;
 using Lucitex.Tests.Fixtures;
 
 namespace Lucitex.Tests.Jpeg;
@@ -42,20 +42,23 @@ public class JpegCodecEndToEndTests
         return buffer;
     }
 
-    private static ImageAssetDescriptor AsProgressive(ImageAssetDescriptor asset)
+    private static byte[] NoiseRgb(long width, long height, int seed = 7)
     {
-        var part = asset.Parts[0] with {
-            Metadata = new MetadataCollection {
-                Entries = [new MetadataEntry { Namespace = "jpeg", Name = "Progressive", TypedValue = new Int64MetadataValue(1) }],
-            },
-        };
+        var buffer = new byte[width * height * 3];
+        new Random(seed).NextBytes(buffer);
+        return buffer;
+    }
 
-        return asset with { Parts = [part] };
+    private static byte[] NoiseGray(long width, long height, int seed = 7)
+    {
+        var buffer = new byte[width * height];
+        new Random(seed).NextBytes(buffer);
+        return buffer;
     }
 
     private static byte[] RoundTrip(ImageAssetDescriptor asset, byte[] source) => RoundTrip(asset, source, out _);
 
-    private static byte[] RoundTrip(ImageAssetDescriptor asset, byte[] source, out byte[] encoded)
+    private static byte[] RoundTrip(ImageAssetDescriptor asset, byte[] source, out byte[] encoded, bool progressive = false)
     {
         var part = asset.Parts[0];
         var width = part.Topology.BaseExtent.Width;
@@ -64,14 +67,14 @@ public class JpegCodecEndToEndTests
         var codec = new JpegCodec();
         using var stream = new MemoryStream();
 
-        var writer = codec.CreateWriter(stream, asset);
+        var writer = codec.CreateWriter(stream, asset, new JpegEncoderOptions { Progressive = progressive });
         writer.Write(FullRegion(width, height), source);
         writer.Finish();
 
         encoded = stream.ToArray();
 
         stream.Position = 0;
-        var reader = codec.OpenReader(stream);
+        using var reader = codec.OpenReader(stream);
 
         Assert.Equal(width, reader.Describe().Parts[0].Topology.BaseExtent.Width);
         Assert.Equal(height, reader.Describe().Parts[0].Topology.BaseExtent.Height);
@@ -130,6 +133,31 @@ public class JpegCodecEndToEndTests
     }
 
     [Fact]
+    public void RoundTrip_Rgb8_LargeEnoughForRestartIntervals_StaysCloseToOriginal()
+    {
+        var asset = JpegFixtures.Rgb8(512, 512);
+        var source = NoiseRgb(512, 512);
+
+        var destination = RoundTrip(asset, source, out var encoded);
+
+        AssertCloseEnough(source, destination, 50.0);
+        Assert.True(ContainsMarker(encoded, JpegMarkers.Dri), "Expected a DRI marker for an image with enough AC coefficient energy to split into parallel restart intervals.");
+        Assert.True(ContainsMarker(encoded, JpegMarkers.Rst0), "Expected at least one RST0 marker between restart-interval segments.");
+    }
+
+    [Fact]
+    public void RoundTrip_Grayscale8_LargeEnoughForRestartIntervals_StaysCloseToOriginal()
+    {
+        var asset = JpegFixtures.Grayscale8(512, 512);
+        var source = NoiseGray(512, 512);
+
+        var destination = RoundTrip(asset, source, out var encoded);
+
+        AssertCloseEnough(source, destination, 50.0);
+        Assert.True(ContainsMarker(encoded, JpegMarkers.Dri), "Expected a DRI marker for an image with enough AC coefficient energy to split into parallel restart intervals.");
+    }
+
+    [Fact]
     public void RoundTrip_NonMcuAlignedDimensions_PreservesExactSize()
     {
         var asset = JpegFixtures.Rgb8(37, 23);
@@ -143,10 +171,10 @@ public class JpegCodecEndToEndTests
     [Fact]
     public void RoundTrip_Rgb8_Progressive_StaysCloseToOriginal()
     {
-        var asset = AsProgressive(JpegFixtures.Rgb8());
+        var asset = JpegFixtures.Rgb8();
         var source = GradientRgb(asset.Parts[0].Topology.BaseExtent.Width, asset.Parts[0].Topology.BaseExtent.Height);
 
-        var destination = RoundTrip(asset, source, out var encoded);
+        var destination = RoundTrip(asset, source, out var encoded, progressive: true);
 
         AssertCloseEnough(source, destination, 8.0);
         Assert.True(ContainsMarker(encoded, 0xC2));
@@ -155,10 +183,10 @@ public class JpegCodecEndToEndTests
     [Fact]
     public void RoundTrip_Grayscale8_Progressive_StaysCloseToOriginal()
     {
-        var asset = AsProgressive(JpegFixtures.Grayscale8());
+        var asset = JpegFixtures.Grayscale8();
         var source = GradientGray(asset.Parts[0].Topology.BaseExtent.Width, asset.Parts[0].Topology.BaseExtent.Height);
 
-        var destination = RoundTrip(asset, source, out var encoded);
+        var destination = RoundTrip(asset, source, out var encoded, progressive: true);
 
         AssertCloseEnough(source, destination, 6.0);
         Assert.True(ContainsMarker(encoded, 0xC2));
@@ -167,10 +195,10 @@ public class JpegCodecEndToEndTests
     [Fact]
     public void RoundTrip_Progressive_NonMcuAlignedDimensions_PreservesExactSize()
     {
-        var asset = AsProgressive(JpegFixtures.Rgb8(37, 23));
+        var asset = JpegFixtures.Rgb8(37, 23);
         var source = GradientRgb(37, 23);
 
-        var destination = RoundTrip(asset, source);
+        var destination = RoundTrip(asset, source, out _, progressive: true);
 
         AssertCloseEnough(source, destination, 10.0);
     }

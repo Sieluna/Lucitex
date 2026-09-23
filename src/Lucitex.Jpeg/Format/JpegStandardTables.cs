@@ -84,6 +84,13 @@ internal static class JpegStandardTables
         0xF9, 0xFA,
     ];
 
+    public static readonly JpegHuffmanSpec[] Huffman = [
+        new() { Id = 0, IsAc = false, Bits = DcLuminanceBits, Values = DcLuminanceValues },
+        new() { Id = 1, IsAc = false, Bits = DcChrominanceBits, Values = DcChrominanceValues },
+        new() { Id = 0, IsAc = true, Bits = AcLuminanceBits, Values = AcLuminanceValues },
+        new() { Id = 1, IsAc = true, Bits = AcChrominanceBits, Values = AcChrominanceValues },
+    ];
+
     public static ushort[] ScaleQuantizationTable(ushort[] baseTable, int quality)
     {
         var clampedQuality = Math.Clamp(quality, 1, 100);

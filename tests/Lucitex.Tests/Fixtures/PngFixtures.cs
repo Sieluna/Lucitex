@@ -4,11 +4,25 @@ using Lucitex.Core.Sampling;
 using Lucitex.Core.Semantic;
 using Lucitex.Core.Spatial;
 using Lucitex.Core.Topology;
+using Lucitex.Png.Format;
 
 namespace Lucitex.Tests.Fixtures;
 
 public static class PngFixtures
 {
+    internal static void WriteDocument(Stream stream, PngDocument document, ReadOnlySpan<byte> compressed)
+    {
+        PngDocumentWriter.WriteHeader(stream, document);
+        if (compressed.IsEmpty) {
+            PngChunkIo.WriteChunk(stream, "IDAT", []);
+        }
+        else {
+            using var chunks = new PngIdatStream(stream);
+            chunks.Write(compressed);
+        }
+        PngDocumentWriter.WriteEnd(stream);
+    }
+
     private static SpatialDomain Window(long width, long height) => new() {
         DataWindow = ImageBox.FromOrigin(width, height),
         DisplayWindow = ImageBox.FromOrigin(width, height),
@@ -26,10 +40,10 @@ public static class PngFixtures
         Sampling = SampleGrid.Unit,
     };
 
-    public static ImageAssetDescriptor Rgba8()
-    {
-        const long width = 32, height = 32;
+    public static ImageAssetDescriptor Rgba8() => Rgba8(32, 32);
 
+    public static ImageAssetDescriptor Rgba8(long width, long height)
+    {
         var part = new ImagePartDescriptor {
             Name = "image",
             Spatial = Window(width, height),

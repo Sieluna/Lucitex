@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using Lucitex.Core.Execution;
 using Lucitex.Png.Format;
 
@@ -89,21 +90,62 @@ internal static class PngFilter
 
     private static void ReconstructSub(Span<byte> current, int bpp)
     {
+        if (Ssse3.IsSupported && bpp is 1 or 2 or 3 or 4 or 6 or 8) {
+            ReconstructSubVectorized(current, bpp);
+            return;
+        }
         var i = bpp;
 
-        if (Vector128.IsHardwareAccelerated && bpp <= k_MaxBytesPerPixel && current.Length > k_MaxBytesPerPixel) {
-            ref var row = ref MemoryMarshal.GetReference(current);
-            var limit = current.Length - k_MaxBytesPerPixel;
-            var left = LoadBytes(ref row, 0);
-
-            for (; i <= limit; i += bpp) {
-                var value = LoadBytes(ref row, i) + left;
-                StoreBytes(ref row, i, value, bpp);
-                left = value;
-            }
-        }
-
         for (; i < current.Length; i++) {
+            current[i] = unchecked((byte)(current[i] + current[i - bpp]));
+        }
+    }
+
+    private static void ReconstructSubVectorized(Span<byte> current, int bpp)
+    {
+        Span<byte> indices = stackalloc byte[16];
+        for (var lane = 0; lane < 16; lane++) {
+            indices[lane] = (byte)(16 - bpp + lane % bpp);
+        }
+        var mask = Vector128.Create(indices);
+        var carry = Vector128<byte>.Zero;
+        var i = 0;
+        for (; i <= current.Length - 16; i += 16) {
+            var values = Vector128.Create(current.Slice(i, 16));
+            switch (bpp) {
+                case 1:
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 1);
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 2);
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 4);
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 8);
+                    break;
+                case 2:
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 2);
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 4);
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 8);
+                    break;
+                case 3:
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 3);
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 6);
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 12);
+                    break;
+                case 4:
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 4);
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 8);
+                    break;
+                case 6:
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 6);
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 12);
+                    break;
+                case 8:
+                    values += Sse2.ShiftLeftLogical128BitLane(values, 8);
+                    break;
+            }
+            values += carry;
+            values.CopyTo(current.Slice(i, 16));
+            carry = Ssse3.Shuffle(values, mask);
+        }
+        for (i = Math.Max(i, bpp); i < current.Length; i++) {
             current[i] = unchecked((byte)(current[i] + current[i - bpp]));
         }
     }
@@ -310,13 +352,13 @@ internal static class PngFilter
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector128<short> PaethPredictor(Vector128<short> a, Vector128<short> b, Vector128<short> c)
     {
-        var pa = Vector128.Abs(b - c);
-        var pb = Vector128.Abs(a - c);
-        var pc = Vector128.Abs(a + b - c - c);
-
+        var ac = a - c;
+        var bc = b - c;
+        var pa = Vector128.Abs(bc);
+        var pb = Vector128.Abs(ac);
+        var pc = Vector128.Abs(ac + bc);
         var notA = Vector128.GreaterThan(pa, pb) | Vector128.GreaterThan(pa, pc);
         var notB = Vector128.GreaterThan(pb, pc);
-
         return Vector128.ConditionalSelect(notA, Vector128.ConditionalSelect(notB, c, b), a);
     }
 

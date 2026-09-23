@@ -1,4 +1,4 @@
-name: Benchmark comparisons
+name: Benchmark
 
 on:
   workflow_dispatch:
@@ -31,74 +31,92 @@ permissions:
   contents: read
 
 jobs:
-  compare:
-    name: Compare (${{ matrix.os }})
+  benchmark:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 180
+
     defaults:
       run:
-        shell: pwsh
+        shell: bash
+
     env:
-      BENCH_SUITE: ${{ inputs.suite }}
-      BENCH_CASES: ${{ inputs.cases }}
-      BENCH_PROFILES: ${{ inputs.profiles }}
-      BENCH_MODE: ${{ inputs.mode }}
-      BENCH_MEMORY: ${{ inputs.memory }}
+      BENCH_PROJECT: tests/Lucitex.Benchmarks
+      BENCH_OUTPUT: artifacts/benchmark
+      BUILD_CONFIGURATION: Release
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
-      - name: Build comparator
-        run: dotnet build tests/Lucitex.Benchmarks -c Release
-      - name: Run BenchmarkDotNet comparisons
+
+      - name: Build
+        run: dotnet build "$BENCH_PROJECT" --configuration "$BUILD_CONFIGURATION"
+
+      - name: Run benchmarks
+        env:
+          BENCH_SUITE: ${{ inputs.suite }}
+          BENCH_CASES: ${{ inputs.cases }}
+          BENCH_PROFILES: ${{ inputs.profiles }}
+          BENCH_MODE: ${{ inputs.mode }}
+          BENCH_MEMORY: ${{ inputs.memory }}
         run: |
-          $benchmarkArgs = @(
-            'tests/Lucitex.Benchmarks/bin/Release/net10.0/Lucitex.Benchmarks.dll',
-            '--suite', $env:BENCH_SUITE,
-            '--cases', $env:BENCH_CASES,
-            '--profiles', $env:BENCH_PROFILES,
-            '--memory', $env:BENCH_MEMORY,
-            '--output', 'artifacts/benchmark',
-            '--filter', '*'
+          args=(
+            --suite "$BENCH_SUITE"
+            --cases "$BENCH_CASES"
+            --profiles "$BENCH_PROFILES"
+            --memory "$BENCH_MEMORY"
+            --output "$BENCH_OUTPUT"
+            --filter '*'
           )
-          if ($env:BENCH_MODE -eq 'smoke') { $benchmarkArgs += '--quick' }
-          & dotnet @benchmarkArgs
-          exit $LASTEXITCODE
+          if [[ "$BENCH_MODE" == smoke ]]; then
+            args+=(--quick)
+          fi
+          dotnet run --project "$BENCH_PROJECT" --configuration "$BUILD_CONFIGURATION" --no-build -- "${args[@]}"
+
       - name: Write job summary
         if: always()
-        shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
+          validation="$BENCH_OUTPUT/validation.json"
+          reports=("$BENCH_OUTPUT"/results/*-comparison.md)
           {
-            printf '# Lucitex benchmark comparisons\n\n'
+            printf '# Benchmark\n\n'
             printf 'Platform: %s\n\n' "$(uname -s)"
             printf 'Hosted CI results should be compared within the same runner environment. Windows and Linux runners are different machines.\n\n'
-            if [[ -f artifacts/benchmark/validation.json ]]; then
-              jq -r '"Runtime: \(.Runtime). Successful codec checks: \(.Results | length).\n"' artifacts/benchmark/validation.json
-              jq -r 'if (.Errors | length) > 0 then
-                "## Validation failures\n", (.Errors | to_entries | .[:50][] | "- \(.key): \(.value | split("\n")[0])"),
-                "\nFull failure details are in validation.json.\n" else empty end' artifacts/benchmark/validation.json
-              jq -r 'if (.Skipped | length) > 0 then
-                "<details><summary>Unsupported combinations</summary>\n",
-                (.Skipped | to_entries | .[:50][] | "- \(.key): \(.value)"),
-                "\nFull exclusions are in validation.json.\n\n</details>\n" else empty end' artifacts/benchmark/validation.json
+            if [[ -f "$validation" ]]; then
+              jq -r '
+                "Runtime: \(.Runtime). Successful codec checks: \(.Results | length).\n",
+                (if (.Errors | length) > 0 then
+                  "## Validation failures\n",
+                  (.Errors | to_entries | .[:50][] | "- \(.key): \(.value | split("\n")[0])"),
+                  "\nShowing up to 50 of \(.Errors | length) failures. See workflow logs for diagnostics.\n"
+                else empty end),
+                (if (.Skipped | length) > 0 then
+                  "<details><summary>Unsupported combinations</summary>\n",
+                  (.Skipped | to_entries | .[:50][] | "- \(.key): \(.value)"),
+                  "\nShowing up to 50 of \(.Skipped | length) unsupported combinations.\n\n</details>\n"
+                else empty end)
+              ' "$validation"
             else
               printf 'No validation report was produced. Inspect build/run logs; missing data is not a successful benchmark.\n\n'
             fi
-            reports=(artifacts/benchmark/results/*-comparison.md)
+
             budget=800000
             for report in "${reports[@]}"; do
               size=$(wc -c < "$report")
               if (( size > budget )); then
-                printf 'Remaining tables are in the uploaded artifacts (summary size limit).\n\n'
+                printf 'Remaining tables are omitted because of the summary size limit. See workflow logs for benchmark output.\n\n'
                 break
               fi
               cat "$report"
@@ -108,13 +126,4 @@ jobs:
             if (( ${#reports[@]} == 0 )); then
               printf 'No completed timing report is available. Check validation failures and workflow logs.\n\n'
             fi
-            printf 'Download the workflow artifact for HTML highlighting, CSV, full BenchmarkDotNet JSON, hashes, native library provenance and memory details.\n'
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload benchmark artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-${{ matrix.os }}-${{ github.run_id }}
-          path: artifacts/benchmark
-          if-no-files-found: warn
-          retention-days: 30

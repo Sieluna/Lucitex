@@ -80,10 +80,7 @@ internal static class ProgressiveBlockDecoder
 
         if (eobRun > 0) {
             eobRun--;
-            for (; k <= spectralEnd; k++) {
-                RefineExistingCoefficient(reader, coefficients, blockOffset + JpegZigZag.Order[k], bit);
-            }
-
+            RefineRemainingCoefficients(reader, coefficients, blockOffset, k, spectralEnd, bit);
             return;
         }
 
@@ -91,24 +88,16 @@ internal static class ProgressiveBlockDecoder
             var runSize = acTable.Decode(reader);
             var run = runSize >> 4;
             var size = runSize & 0xF;
-            var newValue = 0;
-
-            if (size == 0) {
-                if (run < 15) {
-                    eobRun = (1 << run) - 1;
-                    if (run > 0) {
-                        eobRun += reader.ReadBits(run);
-                    }
-
-                    run = 64;
-                }
-                else {
-                    run = 16;
-                }
+            if (size == 0 && run < 15) {
+                eobRun = (1 << run) - 1 + reader.ReadBits(run);
+                RefineRemainingCoefficients(reader, coefficients, blockOffset, k, spectralEnd, bit);
+                return;
             }
-            else {
-                newValue = reader.ReadBit() == 1 ? bit : -bit;
+            if (size > 1) {
+                throw new ImageFormatException("jpeg", "BadEntropyData", "Progressive AC refinement requires a one-bit coefficient magnitude.");
             }
+
+            var newValue = size == 1 ? reader.ReadBit() == 1 ? bit : -bit : 0;
 
             while (k <= spectralEnd) {
                 var index = blockOffset + JpegZigZag.Order[k];
@@ -117,11 +106,6 @@ internal static class ProgressiveBlockDecoder
                 }
                 else {
                     if (run == 0) {
-                        if (newValue != 0) {
-                            coefficients[index] = (short)newValue;
-                        }
-
-                        k++;
                         break;
                     }
 
@@ -130,16 +114,28 @@ internal static class ProgressiveBlockDecoder
 
                 k++;
             }
+            if (k > spectralEnd) {
+                throw new ImageFormatException("jpeg", "BadEntropyData", "Progressive AC refinement run exceeded the spectral band bounds.");
+            }
+            coefficients[blockOffset + JpegZigZag.Order[k]] = (short)newValue;
+            k++;
+        }
+    }
+
+    private static void RefineRemainingCoefficients(JpegBitReader reader, short[] coefficients, int blockOffset, int start, int end, int bit)
+    {
+        for (var k = start; k <= end; k++) {
+            RefineExistingCoefficient(reader, coefficients, blockOffset + JpegZigZag.Order[k], bit);
         }
     }
 
     private static void RefineExistingCoefficient(JpegBitReader reader, short[] coefficients, int index, int bit)
     {
-        if (reader.ReadBit() != 1) {
+        var value = coefficients[index];
+        if (value == 0 || reader.ReadBit() != 1) {
             return;
         }
 
-        var value = coefficients[index];
         if ((value & bit) == 0) {
             coefficients[index] = (short)(value > 0 ? value + bit : value - bit);
         }

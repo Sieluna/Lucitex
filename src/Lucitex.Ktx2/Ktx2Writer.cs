@@ -98,14 +98,17 @@ internal sealed class Ktx2Writer : IImageWriter
         var levelIndexSize = levelCount * 24;
         var dfdOffset = headerSize + levelIndexSize;
         var kvdOffset = dfdOffset + dfd.Length;
-        var dataStart = Align8(kvdOffset + kvd.Length);
+        var elementBytes = Ktx2FormatTable.Get(_shape.Format).BytesPerElement;
+        var alignment = _scheme == Ktx2SupercompressionScheme.None ? LeastCommonMultiple(elementBytes, 4) : 1;
+        var dataStart = Align(checked((long)kvdOffset + kvd.Length), alignment);
 
         var levelEntries = new Ktx2LevelIndexEntry[levelCount];
         var running = dataStart;
-        for (var mip = 0; mip < levelCount; mip++) {
+        for (var mip = levelCount - 1; mip >= 0; mip--) {
             var (packed, uncompressedLength) = packedLevels[mip];
+            running = Align(running, alignment);
             levelEntries[mip] = new Ktx2LevelIndexEntry((ulong)running, (ulong)packed.Length, (ulong)uncompressedLength);
-            running += packed.Length;
+            running = checked(running + packed.Length);
         }
 
         var writer = new Ktx2BinaryWriter(_stream);
@@ -137,13 +140,15 @@ internal sealed class Ktx2Writer : IImageWriter
         writer.WriteBytes(dfd);
         writer.WriteBytes(kvd);
 
-        var padding = dataStart - (kvdOffset + kvd.Length);
-        if (padding > 0) {
-            writer.WriteBytes(new byte[padding]);
-        }
-
-        foreach (var (packed, _) in packedLevels) {
+        var written = (long)kvdOffset + kvd.Length;
+        for (var mip = levelCount - 1; mip >= 0; mip--) {
+            var padding = checked((int)((long)levelEntries[mip].ByteOffset - written));
+            if (padding > 0) {
+                writer.WriteBytes(new byte[padding]);
+            }
+            var (packed, _) = packedLevels[mip];
             writer.WriteBytes(packed);
+            written = checked(written + padding + packed.Length);
         }
 
         _finished = true;
@@ -193,7 +198,17 @@ internal sealed class Ktx2Writer : IImageWriter
         return Ktx2DfdWriter.Write(_shape.Format, channels);
     }
 
-    private static int Align8(int value) => (value + 7) & ~7;
+    private static long Align(long value, int alignment) => checked((value + alignment - 1) / alignment * alignment);
+
+    private static int LeastCommonMultiple(int left, int right)
+    {
+        var a = left;
+        var b = right;
+        while (b != 0) {
+            (a, b) = (b, a % b);
+        }
+        return checked(left / a * right);
+    }
 
     private int ItemIndex(int arrayElement, int face) => checked((arrayElement * (int)_shape.FaceCount) + face);
 }

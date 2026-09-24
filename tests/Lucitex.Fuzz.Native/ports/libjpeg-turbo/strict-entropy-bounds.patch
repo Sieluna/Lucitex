@@ -1,0 +1,63 @@
+--- a/src/jdhuff.c
++++ b/src/jdhuff.c
+@@ -608,6 +608,7 @@
+ 
+         if (s) {
+           k += r;
++          if (k >= DCTSIZE2) ERREXIT(cinfo, JERR_BAD_DCT_COEF);
+           CHECK_BIT_BUFFER(br_state, s, return FALSE);
+           r = GET_BITS(s);
+           s = HUFF_EXTEND(r, s);
+@@ -620,6 +621,7 @@
+           if (r != 15)
+             break;
+           k += 15;
++          if (k >= DCTSIZE2) ERREXIT(cinfo, JERR_BAD_DCT_COEF);
+         }
+       }
+ 
+@@ -635,12 +637,14 @@
+ 
+         if (s) {
+           k += r;
++          if (k >= DCTSIZE2) ERREXIT(cinfo, JERR_BAD_DCT_COEF);
+           CHECK_BIT_BUFFER(br_state, s, return FALSE);
+           DROP_BITS(s);
+         } else {
+           if (r != 15)
+             break;
+           k += 15;
++          if (k >= DCTSIZE2) ERREXIT(cinfo, JERR_BAD_DCT_COEF);
+         }
+       }
+     }
+@@ -707,6 +711,7 @@
+ 
+         if (s) {
+           k += r;
++          if (k >= DCTSIZE2) { cinfo->unread_marker = 0; return FALSE; }
+           FILL_BIT_BUFFER_FAST
+           r = GET_BITS(s);
+           s = HUFF_EXTEND(r, s);
+@@ -714,6 +719,7 @@
+         } else {
+           if (r != 15) break;
+           k += 15;
++          if (k >= DCTSIZE2) { cinfo->unread_marker = 0; return FALSE; }
+         }
+       }
+ 
+@@ -726,11 +732,13 @@
+ 
+         if (s) {
+           k += r;
++          if (k >= DCTSIZE2) { cinfo->unread_marker = 0; return FALSE; }
+           FILL_BIT_BUFFER_FAST
+           DROP_BITS(s);
+         } else {
+           if (r != 15) break;
+           k += 15;
++          if (k >= DCTSIZE2) { cinfo->unread_marker = 0; return FALSE; }
+         }
+       }
+     }

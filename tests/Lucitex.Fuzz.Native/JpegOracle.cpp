@@ -15,6 +15,7 @@ struct jpeg_error
     jpeg_error_mgr manager{};
     std::jmp_buf jump;
     bool warned = false;
+    char message[JMSG_LENGTH_MAX]{};
 };
 
 struct jpeg_state
@@ -31,12 +32,19 @@ struct jpeg_state
 
 void jpeg_fail(j_common_ptr decoder)
 {
-    std::longjmp(reinterpret_cast<jpeg_error*>(decoder->err)->jump, 1);
+    auto* error = reinterpret_cast<jpeg_error*>(decoder->err);
+    (*decoder->err->format_message)(decoder, error->message);
+    std::longjmp(error->jump, 1);
 }
 
 void jpeg_warning(j_common_ptr decoder, int level)
 {
-    if (level < 0) { reinterpret_cast<jpeg_error*>(decoder->err)->warned = true; }
+    if (level < 0)
+    {
+        auto* error = reinterpret_cast<jpeg_error*>(decoder->err);
+        error->warned = true;
+        (*decoder->err->format_message)(decoder, error->message);
+    }
 }
 
 void jpeg_quiet(j_common_ptr) {}
@@ -54,12 +62,29 @@ void validate_jpeg(const lucitex_oracle_request& request, const lucitex_oracle_l
     if (setjmp(error.jump))
     {
         if (error.manager.msg_code == JERR_OUT_OF_MEMORY) { throw failure{LUCITEX_RESOURCE_LIMIT, "JPEG allocation failed."}; }
-        throw failure{LUCITEX_REJECTED, "JPEG input rejected."};
+        throw failure{LUCITEX_REJECTED, error.message};
     }
     state->created = true;
     jpeg_create_decompress(&decoder);
     jpeg_mem_src(&decoder, request.input, static_cast<unsigned long>(request.input_length));
     jpeg_read_header(&decoder, TRUE);
+    if (!decoder.arith_code)
+    {
+        for (int i = 0; i < decoder.comps_in_scan; ++i)
+        {
+            const auto* component = decoder.cur_comp_info[i];
+            if (decoder.Ss == 0 && decoder.Ah == 0)
+            {
+                require(component->dc_tbl_no >= 0 && component->dc_tbl_no < NUM_HUFF_TBLS &&
+                    decoder.dc_huff_tbl_ptrs[component->dc_tbl_no], LUCITEX_REJECTED, "JPEG scan references an undefined DC Huffman table.");
+            }
+            if (decoder.Se > 0)
+            {
+                require(component->ac_tbl_no >= 0 && component->ac_tbl_no < NUM_HUFF_TBLS &&
+                    decoder.ac_huff_tbl_ptrs[component->ac_tbl_no], LUCITEX_REJECTED, "JPEG scan references an undefined AC Huffman table.");
+            }
+        }
+    }
     extent(decoder.image_width, decoder.image_height, 1, limits);
     const auto pixels = static_cast<uint64_t>(decoder.image_width) * decoder.image_height;
     require(pixels <= limits.max_decoded_bytes / 4, LUCITEX_RESOURCE_LIMIT, "JPEG output exceeds the byte budget.");
@@ -84,8 +109,7 @@ void validate_jpeg(const lucitex_oracle_request& request, const lucitex_oracle_l
     if (error.warned)
     {
         result.warnings = 1;
-        const char message[] = "JPEG decoded with recovery warnings.";
-        std::memcpy(result.message, message, sizeof(message));
+        throw failure{LUCITEX_REJECTED, error.message};
     }
 }
 }

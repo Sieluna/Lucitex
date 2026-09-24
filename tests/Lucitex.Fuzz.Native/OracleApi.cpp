@@ -92,7 +92,7 @@ uint32_t LUCITEX_ORACLE_CALL lucitex_oracle_execute(
         }
         return LUCITEX_ACCEPTED;
     }
-    catch (const oracle::failure& error) { status = error.status; oracle::message(*result, error.message); }
+    catch (const oracle::failure& error) { status = error.status; oracle::message(*result, error.message.c_str()); }
     catch (const std::bad_alloc&) { status = LUCITEX_RESOURCE_LIMIT; oracle::message(*result, "Native allocation failed."); }
     catch (const std::exception& error) { status = LUCITEX_INTERNAL_ERROR; oracle::message(*result, error.what()); }
     catch (...) { status = LUCITEX_INTERNAL_ERROR; oracle::message(*result, "Unknown native exception."); }

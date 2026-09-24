@@ -9,6 +9,53 @@
 
 namespace oracle
 {
+uint32_t webp_u32(const uint8_t* data)
+{
+    return static_cast<uint32_t>(data[0]) | (static_cast<uint32_t>(data[1]) << 8) |
+        (static_cast<uint32_t>(data[2]) << 16) | (static_cast<uint32_t>(data[3]) << 24);
+}
+
+void webp_container(const lucitex_oracle_request& request, const uint8_t*& payload, size_t& payload_size)
+{
+    require(request.input_length >= 12 && std::memcmp(request.input, "RIFF", 4) == 0 &&
+        std::memcmp(request.input + 8, "WEBP", 4) == 0, LUCITEX_REJECTED, "Invalid WebP RIFF header.");
+    const uint64_t end = static_cast<uint64_t>(webp_u32(request.input + 4)) + 8;
+    require(end >= 20 && end <= request.input_length && (end & 1) == 0, LUCITEX_REJECTED, "Invalid WebP RIFF size.");
+    uint8_t flags = 0;
+    uint8_t metadata = 0;
+    bool image = false;
+    for (uint64_t offset = 12; offset < end;)
+    {
+        require(end - offset >= 8, LUCITEX_REJECTED, "Truncated WebP chunk header.");
+        const auto* chunk = request.input + offset;
+        const uint64_t size = webp_u32(chunk + 4);
+        const uint64_t padded = size + (size & 1);
+        require(padded <= end - offset - 8, LUCITEX_REJECTED, "WebP chunk exceeds its container.");
+        require((size & 1) == 0 || chunk[8 + size] == 0, LUCITEX_REJECTED, "Invalid WebP chunk padding.");
+        if (std::memcmp(chunk, "VP8X", 4) == 0)
+        {
+            require(offset == 12 && size == 10, LUCITEX_REJECTED, "Invalid WebP extended header.");
+            flags = chunk[8];
+            require((flags & 2) == 0, LUCITEX_UNSUPPORTED, "Animated WebP is not supported by this oracle.");
+        }
+        else if (std::memcmp(chunk, "ICCP", 4) == 0) { metadata |= 32; }
+        else if (std::memcmp(chunk, "EXIF", 4) == 0) { metadata |= 8; }
+        else if (std::memcmp(chunk, "XMP ", 4) == 0) { metadata |= 4; }
+        else if (std::memcmp(chunk, "VP8L", 4) == 0 || std::memcmp(chunk, "VP8 ", 4) == 0)
+        {
+            require(!image, LUCITEX_REJECTED, "Duplicate WebP image chunk.");
+            image = true;
+            if (std::memcmp(chunk, "VP8L", 4) == 0)
+            {
+                payload = chunk + 8;
+                payload_size = static_cast<size_t>(size);
+            }
+        }
+        offset += 8 + padded;
+    }
+    require(image && (flags & 44) == metadata, LUCITEX_REJECTED, "WebP metadata flags do not match its chunks.");
+}
+
 void encode_webp(const lucitex_oracle_request& request, const lucitex_oracle_limits& limits, lucitex_oracle_result& result)
 {
     require(std::isfinite(request.quality) && request.quality >= 0 && request.quality <= 100,
@@ -34,6 +81,9 @@ void encode_webp(const lucitex_oracle_request& request, const lucitex_oracle_lim
 void webp(const lucitex_oracle_request& request, const lucitex_oracle_limits& limits, lucitex_oracle_result& result)
 {
     if (request.operation == LUCITEX_WEBP_ENCODE) { encode_webp(request, limits, result); return; }
+    const auto* payload = request.input;
+    auto payload_size = static_cast<size_t>(request.input_length);
+    webp_container(request, payload, payload_size);
     WebPBitstreamFeatures features{};
     const auto status = WebPGetFeatures(request.input, static_cast<size_t>(request.input_length), &features);
     require(status != VP8_STATUS_OUT_OF_MEMORY, LUCITEX_RESOURCE_LIMIT, "WebP header allocation failed.");
@@ -56,14 +106,14 @@ void webp(const lucitex_oracle_request& request, const lucitex_oracle_limits& li
     uint8_t* decoded;
     if (request.operation == LUCITEX_WEBP_YUV)
     {
-        decoded = WebPDecodeYUVInto(request.input, static_cast<size_t>(request.input_length),
+        decoded = WebPDecodeYUVInto(payload, payload_size,
             output, static_cast<size_t>(pixels), static_cast<int>(width),
             output + pixels, static_cast<size_t>(chroma_size), static_cast<int>(chroma_width),
             output + pixels + chroma_size, static_cast<size_t>(chroma_size), static_cast<int>(chroma_width));
     }
     else
     {
-        decoded = WebPDecodeRGBAInto(request.input, static_cast<size_t>(request.input_length), output,
+        decoded = WebPDecodeRGBAInto(payload, payload_size, output,
             static_cast<size_t>(size), static_cast<int>(width * 4));
     }
     require(decoded != nullptr, LUCITEX_REJECTED, "WebP payload rejected.");

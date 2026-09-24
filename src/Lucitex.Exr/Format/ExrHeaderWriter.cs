@@ -21,6 +21,18 @@ internal static class ExrHeaderWriter
         WriteByteAttribute(writer, "lineOrder", "lineOrder", (byte)header.LineOrder);
         WriteFloatAttribute(writer, "pixelAspectRatio", header.PixelAspectRatio);
 
+        if (!header.UnknownAttributes.Any(attribute => attribute.Name == "screenWindowCenter")) {
+            writer.WriteCString("screenWindowCenter");
+            writer.WriteCString("v2f");
+            writer.WriteInt32(8);
+            writer.WriteFloat(0);
+            writer.WriteFloat(0);
+        }
+
+        if (!header.UnknownAttributes.Any(attribute => attribute.Name == "screenWindowWidth")) {
+            WriteFloatAttribute(writer, "screenWindowWidth", 1);
+        }
+
         if (header.Tiles is { } tiles) {
             WriteTileDescAttribute(writer, tiles);
         }

@@ -57,10 +57,35 @@ public class HeaderRoundTripTests
         Assert.Equal(header.PixelAspectRatio, roundTripped.PixelAspectRatio);
         Assert.Equal(header.PartName, roundTripped.PartName);
 
-        var owner = Assert.Single(roundTripped.UnknownAttributes);
+        Assert.Equal(3, roundTripped.UnknownAttributes.Count);
+        var center = Assert.Single(roundTripped.UnknownAttributes, attribute => attribute.Name == "screenWindowCenter");
+        Assert.Equal("v2f", center.Type);
+        Assert.Equal(new byte[8], center.Value);
+        var screenWidth = Assert.Single(roundTripped.UnknownAttributes, attribute => attribute.Name == "screenWindowWidth");
+        Assert.Equal("float", screenWidth.Type);
+        Assert.Equal(new byte[] { 0, 0, 128, 63 }, screenWidth.Value);
+        var owner = Assert.Single(roundTripped.UnknownAttributes, attribute => attribute.Name == "owner");
         Assert.Equal("owner", owner.Name);
         Assert.Equal("string", owner.Type);
         Assert.Equal("lucitex"u8.ToArray(), owner.Value);
+    }
+
+    [Theory]
+    [InlineData("lineOrder")]
+    [InlineData("pixelAspectRatio")]
+    [InlineData("screenWindowCenter")]
+    [InlineData("screenWindowWidth")]
+    public void ReadHeader_RejectsMissingRequiredAttribute(string name)
+    {
+        using var stream = new MemoryStream();
+        ExrHeaderWriter.WriteHeader(new ExrBinaryWriter(stream), BuildHeader());
+        var bytes = stream.ToArray();
+        var offset = bytes.AsSpan().IndexOf(System.Text.Encoding.UTF8.GetBytes(name + "\0"));
+        Assert.True(offset >= 0);
+        bytes[offset] = (byte)'_';
+        using var malformed = new MemoryStream(bytes);
+
+        Assert.Throws<Lucitex.Core.Execution.ImageFormatException>(() => ExrHeaderReader.ReadHeader(new ExrBinaryReader(malformed)));
     }
 
     [Fact]

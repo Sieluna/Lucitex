@@ -51,13 +51,14 @@ internal static class ExrHeaderReader
         ExrCompressionId? compression = null;
         ExrBox2i? dataWindow = null;
         ExrBox2i? displayWindow = null;
-        var lineOrder = ExrLineOrder.IncreasingY;
-        var pixelAspectRatio = 1.0f;
+        ExrLineOrder? lineOrder = null;
+        float? pixelAspectRatio = null;
         ExrTileDesc? tiles = null;
         string? partName = null;
         string? partType = null;
         int? chunkCount = null;
         var unknown = new List<ExrRawAttribute>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
         var isFirstAttribute = true;
 
         while (true) {
@@ -71,6 +72,10 @@ internal static class ExrHeaderReader
             }
 
             isFirstAttribute = false;
+
+            if (!names.Add(name)) {
+                throw new InvalidDataException($"Duplicate EXR attribute '{name}'.");
+            }
 
             var type = reader.ReadCString();
             var size = reader.ReadInt32();
@@ -137,13 +142,19 @@ internal static class ExrHeaderReader
             throw new ImageFormatException("exr", "MissingAttribute", "Header is missing the required 'displayWindow' attribute.");
         }
 
+        if (lineOrder is null || pixelAspectRatio is null ||
+            !unknown.Any(attribute => attribute.Name == "screenWindowCenter" && attribute.Type == "v2f" && attribute.Value.Length == 8) ||
+            !unknown.Any(attribute => attribute.Name == "screenWindowWidth" && attribute.Type == "float" && attribute.Value.Length == 4)) {
+            throw new ImageFormatException("exr", "MissingAttribute", "Header is missing a required line order, pixel aspect ratio or screen window attribute.");
+        }
+
         return new ExrHeader {
             Channels = channels,
             Compression = compression.Value,
             DataWindow = dataWindow.Value,
             DisplayWindow = displayWindow.Value,
-            LineOrder = lineOrder,
-            PixelAspectRatio = pixelAspectRatio,
+            LineOrder = lineOrder.Value,
+            PixelAspectRatio = pixelAspectRatio.Value,
             Tiles = tiles,
             PartName = partName,
             PartType = partType,

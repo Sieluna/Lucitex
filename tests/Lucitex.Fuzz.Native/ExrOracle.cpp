@@ -49,7 +49,10 @@ void validate_exr(const lucitex_oracle_request& request, const lucitex_oracle_li
     {
         memory_input stream(request.input, request.input_length);
         Imf::ContextInitializer context;
-        context.setInputStream(&stream).setErrorHandler([](exr_const_context_t, exr_result_t, const char*) {});
+        context.setInputStream(&stream)
+            .strictHeaderValidation(true)
+            .disableChunkReconstruction(true)
+            .setErrorHandler([](exr_const_context_t, exr_result_t, const char*) {});
         Imf::InputFile file("memory", context, 0);
         const auto window = file.header().dataWindow();
         const auto width = static_cast<int64_t>(window.max.x) - window.min.x + 1;
@@ -82,6 +85,6 @@ void validate_exr(const lucitex_oracle_request& request, const lucitex_oracle_li
         result.decoded_bytes = bytes;
         result.subresources = 1;
     }
-    catch (const Iex::BaseExc&) { throw failure{LUCITEX_REJECTED, "EXR input rejected."}; }
+    catch (const Iex::BaseExc& error) { throw failure{LUCITEX_REJECTED, error.what()}; }
 }
 }

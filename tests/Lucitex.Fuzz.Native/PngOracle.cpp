@@ -20,6 +20,7 @@ void validate_png(const lucitex_oracle_request& request, const lucitex_oracle_li
     decoded_size(size, limits);
     std::vector<png_byte> pixels(static_cast<size_t>(size));
     require(png_image_finish_read(&image, nullptr, pixels.data(), 0, nullptr) != 0, LUCITEX_REJECTED, "PNG payload rejected.");
+    require((image.warning_or_error & PNG_IMAGE_WARNING) == 0, LUCITEX_REJECTED, "PNG decoded with validation warnings.");
     result.width = image.width;
     result.height = image.height;
     result.decoded_bytes = size;

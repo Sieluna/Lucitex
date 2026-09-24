@@ -72,6 +72,7 @@ internal sealed class JpegBitReader(JpegByteCursor cursor)
 
     public void ConsumeRestartMarker(byte expectedMarker)
     {
+        ValidateRemainingBits();
         DiscardBitBuffer();
 
         var marker = PendingMarker ?? cursor.ReadMarker();
@@ -84,12 +85,20 @@ internal sealed class JpegBitReader(JpegByteCursor cursor)
 
     public void FinishSegment()
     {
+        ValidateRemainingBits();
         if (PendingMarker is { } marker) {
             cursor.PushBackMarker(marker);
             PendingMarker = null;
         }
 
         DiscardBitBuffer();
+    }
+
+    private void ValidateRemainingBits()
+    {
+        if (_bitCount >= 8) {
+            throw new ImageFormatException("jpeg", "BadEntropyData", "JPEG entropy segment contains extraneous bytes after its coefficients.");
+        }
     }
 
     private void Refill()

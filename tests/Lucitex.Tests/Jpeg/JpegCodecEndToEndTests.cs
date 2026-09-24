@@ -121,6 +121,24 @@ public class JpegCodecEndToEndTests
         AssertCloseEnough(source, destination, 8.0);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(8)]
+    public void Read_RejectsExtraneousEntropyBytes(int extraBytes)
+    {
+        var asset = JpegFixtures.Grayscale8(8, 8);
+        RoundTrip(asset, GradientGray(8, 8), out var encoded);
+        Assert.Equal(new byte[] { 0xff, JpegMarkers.Eoi }, encoded[^2..]);
+        var malformed = new byte[encoded.Length + extraBytes];
+        encoded.AsSpan(0, encoded.Length - 2).CopyTo(malformed);
+        encoded.AsSpan(encoded.Length - 2).CopyTo(malformed.AsSpan(malformed.Length - 2));
+        using var stream = new MemoryStream(malformed);
+        using var reader = new JpegCodec().OpenReader(stream);
+
+        Assert.Throws<ImageFormatException>(() => reader.Read(FullRegion(8, 8), new byte[64]));
+    }
+
     [Fact]
     public void RoundTrip_Grayscale8_StaysCloseToOriginal()
     {

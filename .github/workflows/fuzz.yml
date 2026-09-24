@@ -82,7 +82,8 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/vcpkg-cache
-          key: fuzz-vcpkg-v1-${{ matrix.os }}-${{ matrix.triplet }}-${{ hashFiles('tests/Lucitex.Fuzz.Native/vcpkg.json') }}
+          key: fuzz-vcpkg-v1-${{ matrix.os }}-${{ matrix.triplet }}-${{ hashFiles('tests/Lucitex.Fuzz.Native/vcpkg*.json', 'tests/Lucitex.Fuzz.Native/ports/**') }}
+          restore-keys: fuzz-vcpkg-v1-${{ matrix.os }}-${{ matrix.triplet }}-
 
       - name: Install Linux build prerequisites
         if: runner.os == 'Linux'

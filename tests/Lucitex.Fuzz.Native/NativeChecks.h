@@ -4,13 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <string>
 
 namespace oracle
 {
 struct failure
 {
     uint32_t status;
-    const char* message;
+    std::string message;
 };
 
 void require(bool condition, uint32_t status, const char* message);

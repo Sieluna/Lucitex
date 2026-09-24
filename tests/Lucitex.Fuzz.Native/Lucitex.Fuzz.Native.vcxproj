@@ -103,5 +103,8 @@
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ItemGroup>
+    <_ZVcpkgInstallManifestDependenciesInputs Include="$(MSBuildThisFileDirectory)ports\**\*" />
+  </ItemGroup>
   <Import Project="$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets" Condition="Exists('$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets')" />
 </Project>

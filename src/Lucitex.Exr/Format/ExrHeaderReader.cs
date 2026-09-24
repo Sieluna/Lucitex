@@ -78,6 +78,21 @@ internal static class ExrHeaderReader
             }
 
             var type = reader.ReadCString();
+            var expectedType = name switch {
+                "channels" => "chlist",
+                "compression" => "compression",
+                "dataWindow" or "displayWindow" => "box2i",
+                "lineOrder" => "lineOrder",
+                "pixelAspectRatio" or "screenWindowWidth" => "float",
+                "screenWindowCenter" => "v2f",
+                "tiles" => "tiledesc",
+                "name" or "type" => "string",
+                "chunkCount" => "int",
+                _ => null,
+            };
+            if (expectedType is not null && type != expectedType) {
+                throw new InvalidDataException($"Invalid EXR type for attribute '{name}'.");
+            }
             var size = reader.ReadInt32();
             if (size < 0) {
                 throw new InvalidDataException($"EXR attribute '{name}' has a negative size.");
@@ -148,6 +163,10 @@ internal static class ExrHeaderReader
             throw new ImageFormatException("exr", "MissingAttribute", "Header is missing a required line order, pixel aspect ratio or screen window attribute.");
         }
 
+        if (!float.IsFinite(pixelAspectRatio.Value) || pixelAspectRatio.Value < 1e-6f || pixelAspectRatio.Value > 1e6f) {
+            throw new InvalidDataException("Invalid EXR pixel aspect ratio.");
+        }
+
         return new ExrHeader {
             Channels = channels,
             Compression = compression.Value,
@@ -174,7 +193,10 @@ internal static class ExrHeaderReader
             }
 
             var pixelType = (ExrPixelType)reader.ReadInt32();
-            var pLinear = reader.ReadByte() != 0;
+            var pLinear = reader.ReadByte();
+            if (pLinear > 1) {
+                throw new InvalidDataException("Invalid EXR perceptual linear flag.");
+            }
             reader.ReadBytes(3);
             var xSampling = reader.ReadInt32();
             var ySampling = reader.ReadInt32();
@@ -182,7 +204,7 @@ internal static class ExrHeaderReader
             channels.Add(new ExrChannelInfo {
                 Name = name,
                 PixelType = pixelType,
-                PLinear = pLinear,
+                PLinear = pLinear != 0,
                 XSampling = xSampling,
                 YSampling = ySampling,
             });

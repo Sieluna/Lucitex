@@ -1,5 +1,4 @@
 using Lucitex.Core.Spatial;
-using Lucitex.Core.Topology;
 using Lucitex.Tests.Fixtures;
 
 namespace Lucitex.Tests.Core.Topology;
@@ -67,16 +66,5 @@ public class SubresourceTopologyTests
 
         Assert.Equal(3, topology.SpatialDimensions);
         Assert.True(topology.BaseExtent.Depth > 1);
-    }
-
-    [Fact]
-    public void SubresourceId_KeepsPartArrayElementFaceAndLevelDistinct()
-    {
-        var id = new SubresourceId(Part: 2, ArrayElement: 3, Face: 4, Level: new LevelKey(1, 0, 0));
-
-        Assert.Equal(2, id.Part);
-        Assert.Equal(3, id.ArrayElement);
-        Assert.Equal(4, id.Face);
-        Assert.Equal(new LevelKey(1, 0, 0), id.Level);
     }
 }

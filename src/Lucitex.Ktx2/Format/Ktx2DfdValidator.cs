@@ -59,6 +59,12 @@ internal static class Ktx2DfdValidator
         }
 
         var info = Ktx2FormatTable.Get(format);
+        if (block[10] > 18) {
+            throw new InvalidDataException("KTX2 data format descriptor has an invalid transfer function.");
+        }
+        if (block[10] is not 1 and not 2) {
+            throw new NotSupportedException($"KTX2 transfer function {block[10]} is not supported.");
+        }
         if (block[12] != info.BlockWidth - 1 || block[13] != info.BlockHeight - 1 || block[14] != 0 || block[15] != 0 ||
             block[16] != info.BytesPerElement || !block[17..24].SequenceEqual(new byte[7])) {
             throw new InvalidDataException("KTX2 basic data format descriptor does not match vkFormat.");

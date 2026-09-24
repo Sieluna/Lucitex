@@ -11,6 +11,7 @@
 
 namespace oracle
 {
+thread_local std::string exr_error;
 class memory_input final : public Imf::IStream
 {
 public:
@@ -47,12 +48,13 @@ void validate_exr(const lucitex_oracle_request& request, const lucitex_oracle_li
     require(request.input_length <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()), LUCITEX_RESOURCE_LIMIT, "EXR input size is not addressable.");
     try
     {
+        exr_error.clear();
         memory_input stream(request.input, request.input_length);
         Imf::ContextInitializer context;
         context.setInputStream(&stream)
             .strictHeaderValidation(true)
             .disableChunkReconstruction(true)
-            .setErrorHandler([](exr_const_context_t, exr_result_t, const char*) {});
+            .setErrorHandler([](exr_const_context_t, exr_result_t, const char* message) { exr_error = message; });
         Imf::InputFile file("memory", context, 0);
         const auto window = file.header().dataWindow();
         const auto width = static_cast<int64_t>(window.max.x) - window.min.x + 1;
@@ -78,6 +80,16 @@ void validate_exr(const lucitex_oracle_request& request, const lucitex_oracle_li
                 static_cast<size_t>(sample_bytes), static_cast<size_t>(width * sample_bytes)));
         }
         require(!planes.empty(), LUCITEX_REJECTED, "EXR has no channels.");
+        if (file.header().compression() == Imf::NO_COMPRESSION)
+        {
+            for (int64_t y = window.min.y; y <= window.max.y; ++y)
+            {
+                const char* chunk = nullptr;
+                int size = 0;
+                file.rawPixelData(static_cast<int>(y), chunk, size);
+                require(size >= 0 && static_cast<uint64_t>(size) == bytes / height, LUCITEX_REJECTED, "Uncompressed EXR chunk size does not match its scanline.");
+            }
+        }
         file.setFrameBuffer(frame);
         file.readPixels(window.min.y, window.max.y);
         result.width = static_cast<uint32_t>(width);
@@ -85,6 +97,6 @@ void validate_exr(const lucitex_oracle_request& request, const lucitex_oracle_li
         result.decoded_bytes = bytes;
         result.subresources = 1;
     }
-    catch (const Iex::BaseExc& error) { throw failure{LUCITEX_REJECTED, error.what()}; }
+    catch (const Iex::BaseExc& error) { throw failure{LUCITEX_REJECTED, std::string(error.what()) + ": " + exr_error}; }
 }
 }

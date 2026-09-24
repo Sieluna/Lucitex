@@ -1,0 +1,10 @@
+--- a/src/utils/bit_reader_utils.c
++++ b/src/utils/bit_reader_utils.c
+@@ -48,6 +48,7 @@
+   br->eof     = 0;
+   VP8BitReaderSetBuffer(br, start, size);
+   VP8LoadNewBytes(br);
++  if (size != 0 && start[0] == 255) br->eof = 1;
+ }
+ 
+ void VP8RemapBitReader(VP8BitReader* const br, ptrdiff_t offset) {

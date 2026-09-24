@@ -10,6 +10,24 @@ namespace Lucitex.Tests.Jpeg;
 
 public class JpegCodecEndToEndTests
 {
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 0)]
+    [InlineData(1, 191)]
+    [InlineData(2, 1)]
+    [InlineData(2, 16)]
+    public void SequentialScan_RejectsInvalidSpectralAndApproximationParameters(int field, byte value)
+    {
+        RoundTrip(JpegFixtures.Rgb8(16, 16), GradientRgb(16, 16), out var encoded);
+        var start = encoded.AsSpan().IndexOf(new byte[] { 255, 218 });
+        Assert.True(start >= 0);
+        var components = encoded[start + 4];
+        encoded[start + 5 + 2 * components + field] = value;
+        using var stream = new MemoryStream(encoded);
+        using var reader = new JpegCodec().OpenReader(stream);
+        Assert.Throws<ImageFormatException>(() => reader.Read(FullRegion(16, 16), new byte[16 * 16 * 3]));
+    }
+
     private static WorkRegion FullRegion(long width, long height) => new() {
         Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
         Region = ImageBox.FromOrigin(width, height),

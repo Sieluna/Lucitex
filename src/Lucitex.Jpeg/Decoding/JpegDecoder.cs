@@ -231,6 +231,9 @@ internal sealed class JpegDecoder
     {
         var data = _cursor.ReadSegment();
         var componentCount = data[0];
+        if (componentCount == 0 || componentCount > Frame.Components.Count || data.Length != 4 + 2 * componentCount) {
+            throw new InvalidDataException("Invalid JPEG scan component count or header length.");
+        }
         var scanComponents = new JpegScanComponent[componentCount];
         var offset = 1;
         for (var i = 0; i < componentCount; i++) {
@@ -246,6 +249,15 @@ internal sealed class JpegDecoder
         var spectralStart = data[offset++];
         var spectralEnd = data[offset++];
         var approximation = data[offset];
+        if (!Frame.Progressive && (spectralStart != 0 || spectralEnd != 63 || approximation != 0)) {
+            throw new InvalidDataException("Invalid sequential JPEG scan parameters.");
+        }
+        if (Frame.Progressive && (spectralStart > spectralEnd || spectralEnd > 63 ||
+            (spectralStart == 0 ? spectralEnd != 0 : componentCount != 1) ||
+            (approximation & 15) > 13 || (approximation >> 4) > 13 ||
+            ((approximation >> 4) != 0 && (approximation >> 4) != (approximation & 15) + 1))) {
+            throw new InvalidDataException("Invalid progressive JPEG scan parameters.");
+        }
         var scan = new JpegScanHeader {
             Components = scanComponents,
             SpectralStart = spectralStart,

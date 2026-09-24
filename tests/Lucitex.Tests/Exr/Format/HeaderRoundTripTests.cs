@@ -4,6 +4,53 @@ namespace Lucitex.Tests.Exr.Format;
 
 public class HeaderRoundTripTests
 {
+    [Theory]
+    [InlineData("name", "string")]
+    [InlineData("pixelAspectRatio", "float")]
+    [InlineData("screenWindowCenter", "v2f")]
+    public void ReadHeader_RejectsWrongKnownAttributeType(string name, string type)
+    {
+        using var stream = new MemoryStream();
+        ExrHeaderWriter.WriteHeader(new ExrBinaryWriter(stream), BuildHeader());
+        var bytes = stream.ToArray();
+        var nameBytes = System.Text.Encoding.UTF8.GetBytes(name + "\0");
+        var offset = bytes.AsSpan().IndexOf(nameBytes) + nameBytes.Length;
+        Assert.Equal(type, System.Text.Encoding.UTF8.GetString(bytes, offset, type.Length));
+        bytes[offset] = (byte)'_';
+        using var malformed = new MemoryStream(bytes);
+        Assert.Throws<InvalidDataException>(() => ExrHeaderReader.ReadHeader(new ExrBinaryReader(malformed)));
+    }
+
+    [Theory]
+    [InlineData(-1f)]
+    [InlineData(0f)]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(1e-7f)]
+    [InlineData(1e7f)]
+    public void ReadHeader_RejectsInvalidPixelAspectRatio(float ratio)
+    {
+        using var stream = new MemoryStream();
+        ExrHeaderWriter.WriteHeader(new ExrBinaryWriter(stream), BuildHeader() with { PixelAspectRatio = ratio });
+        stream.Position = 0;
+        Assert.Throws<InvalidDataException>(() => ExrHeaderReader.ReadHeader(new ExrBinaryReader(stream)));
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(176)]
+    [InlineData(255)]
+    public void ReadHeader_RejectsInvalidPerceptualLinearFlag(byte flag)
+    {
+        using var stream = new MemoryStream();
+        ExrHeaderWriter.WriteHeader(new ExrBinaryWriter(stream), BuildHeader());
+        var bytes = stream.ToArray();
+        var offset = bytes.AsSpan().IndexOf("channels\0chlist\0"u8) + "channels\0chlist\0"u8.Length + 4;
+        bytes[offset + 6] = flag;
+        using var malformed = new MemoryStream(bytes);
+        Assert.Throws<InvalidDataException>(() => ExrHeaderReader.ReadHeader(new ExrBinaryReader(malformed)));
+    }
+
     private static ExrHeader BuildHeader() => new() {
         Channels =
         [

@@ -229,7 +229,6 @@ internal static class Vp8Decoder
         var firstCoeff = type == 0 ? 1 : 0;
         var c = firstCoeff;
         var skipEobCheck = false;
-        var lastNonZero = -1;
 
         Span<byte> probs = stackalloc byte[11];
         while (c < 16) {
@@ -266,7 +265,6 @@ internal static class Vp8Decoder
                 var sign = d.GetFlag();
                 var value = sign != 0 ? -absValue : absValue;
                 output[Vp8Tables.Zigzag[c]] = (short)(value * dqf[c == 0 ? 0 : 1]);
-                lastNonZero = c;
             }
 
             ctx = absValue == 0 ? 0 : absValue == 1 ? 1 : 2;
@@ -274,7 +272,7 @@ internal static class Vp8Decoder
             c++;
         }
 
-        var hasCoefficients = lastNonZero >= 0;
+        var hasCoefficients = c > firstCoeff;
         left[leftSlot] = above[aboveSlot] = (byte)(hasCoefficients ? 1 : 0);
         return hasCoefficients;
     }

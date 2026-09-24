@@ -24,6 +24,8 @@ void webp_container(const lucitex_oracle_request& request, const uint8_t*& paylo
     uint8_t flags = 0;
     uint8_t metadata = 0;
     bool image = false;
+    bool alpha = false;
+    bool lossless = false;
     for (uint64_t offset = 12; offset < end;)
     {
         require(end - offset >= 8, LUCITEX_REJECTED, "Truncated WebP chunk header.");
@@ -41,19 +43,26 @@ void webp_container(const lucitex_oracle_request& request, const uint8_t*& paylo
         else if (std::memcmp(chunk, "ICCP", 4) == 0) { metadata |= 32; }
         else if (std::memcmp(chunk, "EXIF", 4) == 0) { metadata |= 8; }
         else if (std::memcmp(chunk, "XMP ", 4) == 0) { metadata |= 4; }
+        else if (std::memcmp(chunk, "ALPH", 4) == 0)
+        {
+            require(!alpha && !image && (flags & 16) != 0 && size > 0, LUCITEX_REJECTED, "Invalid WebP alpha chunk or flag.");
+            alpha = true;
+        }
         else if (std::memcmp(chunk, "VP8L", 4) == 0 || std::memcmp(chunk, "VP8 ", 4) == 0)
         {
             require(!image, LUCITEX_REJECTED, "Duplicate WebP image chunk.");
             image = true;
+            payload = chunk + 8;
+            payload_size = static_cast<size_t>(size);
             if (std::memcmp(chunk, "VP8L", 4) == 0)
             {
-                payload = chunk + 8;
-                payload_size = static_cast<size_t>(size);
+                lossless = true;
             }
         }
         offset += 8 + padded;
     }
     require(image && (flags & 44) == metadata, LUCITEX_REJECTED, "WebP metadata flags do not match its chunks.");
+    require(lossless ? !alpha : alpha == ((flags & 16) != 0), LUCITEX_REJECTED, "WebP alpha chunks do not match its header.");
 }
 
 void encode_webp(const lucitex_oracle_request& request, const lucitex_oracle_limits& limits, lucitex_oracle_result& result)
@@ -117,6 +126,11 @@ void webp(const lucitex_oracle_request& request, const lucitex_oracle_limits& li
             static_cast<size_t>(size), static_cast<int>(width * 4));
     }
     require(decoded != nullptr, LUCITEX_REJECTED, "WebP payload rejected.");
+    if (features.format == 1 && features.has_alpha && request.operation != LUCITEX_WEBP_YUV)
+    {
+        require(WebPDecodeRGBAInto(request.input, static_cast<size_t>(request.input_length), output,
+            static_cast<size_t>(size), static_cast<int>(width * 4)) != nullptr, LUCITEX_REJECTED, "WebP alpha payload rejected.");
+    }
     result.width = static_cast<uint32_t>(width);
     result.height = static_cast<uint32_t>(height);
     result.decoded_bytes = size;

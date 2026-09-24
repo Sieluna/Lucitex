@@ -9,12 +9,14 @@ internal sealed class Vp8BoolDecoder
     private uint _range;
     private uint _value;
     private int _bitCount;
+    private long _availableBits;
 
     public Vp8BoolDecoder(byte[] data)
     {
         _data = data;
         _range = 255;
         _bitCount = 0;
+        _availableBits = ((long)data.Length - 1) * 8;
         _value = ((uint)ReadByte() << 8) | ReadByte();
     }
 
@@ -24,6 +26,12 @@ internal sealed class Vp8BoolDecoder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int GetBool(int probability)
     {
+        if (_availableBits < 0) {
+            throw new InvalidDataException("Truncated VP8 arithmetic-coded partition.");
+        }
+        if ((_value >> 8) >= _range) {
+            throw new InvalidDataException("Invalid VP8 arithmetic code value.");
+        }
         var split = 1u + (((_range - 1) * (uint)probability) >> 8);
         var bigSplit = split << 8;
         int result;
@@ -37,6 +45,7 @@ internal sealed class Vp8BoolDecoder
             _range = split;
         }
         while (_range < 128) {
+            _availableBits--;
             _value <<= 1;
             _range <<= 1;
             if (++_bitCount == 8) {

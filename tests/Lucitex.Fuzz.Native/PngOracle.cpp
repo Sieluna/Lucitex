@@ -1,12 +1,41 @@
 #include "NativeChecks.h"
 #include <png.h>
+#include <zlib.h>
+#include <cstring>
 #include <memory>
 #include <vector>
 
 namespace oracle
 {
+void png_chunks(const lucitex_oracle_request& request)
+{
+    const auto read32 = [](const uint8_t* p) {
+        return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+            (static_cast<uint32_t>(p[2]) << 8) | p[3];
+    };
+    uint64_t offset = 8;
+    while (offset < request.input_length)
+    {
+        require(request.input_length - offset >= 12, LUCITEX_REJECTED, "Truncated PNG chunk.");
+        const auto* chunk = request.input + offset;
+        const auto size = read32(chunk);
+        require(size <= request.input_length - offset - 12, LUCITEX_REJECTED, "PNG chunk exceeds the input.");
+        auto crc = crc32(0, chunk + 4, 4);
+        crc = crc32(crc, chunk + 8, size);
+        require(crc == read32(chunk + 8 + size), LUCITEX_REJECTED, "Invalid PNG chunk CRC.");
+        if (std::memcmp(chunk + 4, "IEND", 4) == 0)
+        {
+            require(size == 0, LUCITEX_REJECTED, "Invalid PNG IEND size.");
+            return;
+        }
+        offset += 12ULL + size;
+    }
+    throw failure{LUCITEX_REJECTED, "PNG is missing IEND."};
+}
+
 void validate_png(const lucitex_oracle_request& request, const lucitex_oracle_limits& limits, lucitex_oracle_result& result)
 {
+    png_chunks(request);
     png_image image{};
     image.version = PNG_IMAGE_VERSION;
     const std::unique_ptr<png_image, decltype(&png_image_free)> owner(&image, png_image_free);

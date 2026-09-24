@@ -31,6 +31,15 @@ internal static class FuzzRunner
         }
 
         var store = new ArtifactStore(options.Artifacts);
+        foreach (var sample in ConformanceCases.Create(generated)) {
+            var managed = ManagedDecoder.Decode(sample.Format, sample.Bytes);
+            var native = oracle?.Supports(sample.Format) == true ? oracle.Decode(sample.Format, sample.Bytes) : null;
+            if (managed.Status != DecodeStatus.Rejected || (native is not null && native.Status != DecodeStatus.Rejected)) {
+                var path = store.Save(sample, options.RandomSeed, -1, new(sample.Bytes, "conformance"), managed, native, ComparisonKind.Failure, options);
+                Console.Error.WriteLine($"Conformance {sample.Name}: expected rejection, managed={managed.Status}, native={native?.Status} ({path})");
+                return 1;
+            }
+        }
         var random = new Random(options.RandomSeed);
         var counters = new Dictionary<string, int>(StringComparer.Ordinal);
         var failed = false;

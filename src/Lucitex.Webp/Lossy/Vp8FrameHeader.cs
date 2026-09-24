@@ -60,6 +60,9 @@ internal sealed class Vp8FrameHeader
             throw new InvalidDataException("Truncated VP8 frame tag.");
         }
         var tag = data[0] | ((uint)data[1] << 8) | ((uint)data[2] << 16);
+        if (((tag >> 1) & 7) > 3 || (tag & 16) == 0) {
+            throw new InvalidDataException("Invalid VP8 key frame profile or visibility.");
+        }
         var keyFrame = (tag & 1) == 0;
         if (!keyFrame) {
             throw new NotSupportedException("Only VP8 key frames are supported in WebP.");

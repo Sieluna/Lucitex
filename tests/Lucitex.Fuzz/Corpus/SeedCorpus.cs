@@ -44,6 +44,13 @@ internal static partial class SeedCorpus
             new("rgb9e5.ktx2", ImageFormat.Ktx2, WriteKtx2Packed(EncodedFormatId.Rgb9E5, 13, 7, 13)),
         };
         seeds.AddRange(CreateTopologySeeds());
+        foreach (var effort in Enum.GetValues<WebpCompressionEffort>()) {
+            foreach (var quality in new[] { 0, 75, 100 }) {
+                var options = new WebpEncoderOptions { Lossless = false, Quality = quality, Effort = effort };
+                seeds.Add(new($"managed-lossy-{quality}-{effort}.webp", ImageFormat.Webp,
+                    WriteWebpRgba8(quality == 0 ? 1 : 17, quality == 100 ? 1 : 19, 17, options)));
+            }
+        }
         return seeds;
     }
 
@@ -163,7 +170,7 @@ internal static partial class SeedCorpus
     private static readonly byte[] s_WebpLossyAlphaSeed = Convert.FromBase64String(
         "UklGRtoBAABXRUJQVlA4WAoAAAAQAAAAHwAAHwAAQUxQSBgAAAABuYzof4BI22Zs9+96+CRiAiaAqJXNfQFWUDggnAEAABAJAJ0BKiAAIAA+bS6URyQioiEoCqiADYlsPF+jAsMUIovV1FEAfwCkNESxv6Bbh2gnFvp/5v+5AP//pJf9L/s33//ix///T/9AD9/wvfY/AAD+5k/YNPF3vY/+pP/tXaEgD3OEGlNFaI9iaqzs6do49GWH+Fo3y6v9+ienQdBMm2OwY6KBSn5jJujlF/IzFbw4px/9e+L+lIXjwaP6+wcT7Mkhp/lkS34UhZ/tav7jm9XsMqeL4WsaPWf2uiqJkU/DTJCiPxeWeK7InOyvVOwhfK3H8bf9U62Ol0PuKoTdGcTJBKbdkq5nIoBL3pNQCQi7fkLfSS+wq0pbsv4QWDsEemlZspIwUs/iJT+7ln/MDJDnGnUxJg76eIN9QNYDwWc/ivr1nHmJcAJBGjAUhZ//hFRn+i5zyENYCVVfljZhul55JX8ZMxnYhWYLsMqgzHsLJTTfHGVF5sxtWoV3hSkGhyphPCYqSkgmGSYaP4rgP19bQK8Nd/qSpPsQSz9e9XuDEFI8D6Tpnl5CMBNZKN7zF6/1wp8uPtKwAAA=");
 
-    private static byte[] WriteWebpRgba8(int width, int height, int randomSeed)
+    private static byte[] WriteWebpRgba8(int width, int height, int randomSeed, WebpEncoderOptions? options = null)
     {
         string[] names = ["R", "G", "B", "A"];
         var channels = names.Select(name => new ChannelDescriptor {
@@ -193,7 +200,9 @@ internal static partial class SeedCorpus
             Color = new ColorEncoding { Transfer = TransferFunction.Srgb },
         };
         var descriptor = new ImageAssetDescriptor { Parts = [part] };
-        return Write(new WebpCodec(), descriptor, width * height * 4, randomSeed);
+        var codec = new WebpCodec();
+        return Write(codec, descriptor, width * height * 4, randomSeed,
+            options is null ? null : stream => codec.CreateWriter(stream, descriptor, options));
     }
 
     private static byte[] WriteKtx2Rgba8(int width, int height, int randomSeed)
@@ -306,12 +315,13 @@ internal static partial class SeedCorpus
         return new ImageAssetDescriptor { Parts = [part] };
     }
 
-    private static byte[] Write(IImageCodec codec, ImageAssetDescriptor descriptor, int byteCount, int randomSeed)
+    private static byte[] Write(IImageCodec codec, ImageAssetDescriptor descriptor, int byteCount, int randomSeed,
+        Func<Stream, IImageWriter>? createWriter = null)
     {
         var pixels = new byte[byteCount];
         new Random(randomSeed).NextBytes(pixels);
         using var stream = new MemoryStream();
-        using var writer = codec.CreateWriter(stream, descriptor);
+        using var writer = createWriter?.Invoke(stream) ?? codec.CreateWriter(stream, descriptor);
         writer.Write(new WorkRegion {
             Subresource = new SubresourceId(0, 0, 0, LevelKey.Base),
             Region = descriptor.Parts[0].Spatial.DataWindow,

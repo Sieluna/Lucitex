@@ -12,8 +12,8 @@ internal static class WebpAlpha
         var header = chunk[0];
         var filtering = (header >> 2) & 3;
         var compression = header & 3;
-        if (compression > 1) {
-            throw new InvalidDataException("Invalid WebP ALPH compression method.");
+        if (compression > 1 || (header >> 4) > 1) {
+            throw new InvalidDataException("Invalid WebP ALPH compression, preprocessing or reserved bits.");
         }
 
         var pixelCount = checked(width * height);

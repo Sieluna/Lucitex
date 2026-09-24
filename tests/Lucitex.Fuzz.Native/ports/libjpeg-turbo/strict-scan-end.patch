@@ -1,0 +1,33 @@
+--- a/src/jdhuff.c
++++ b/src/jdhuff.c
+@@ -765,6 +765,14 @@
+ }
+ 
+ 
++GLOBAL(void)
++jpeg_huff_validate_end(j_decompress_ptr cinfo)
++{
++  huff_entropy_ptr entropy = (huff_entropy_ptr)cinfo->entropy;
++  if (entropy->bitstate.bits_left >= 8)
++    ERREXIT(cinfo, JERR_BAD_DCT_COEF);
++}
++
+ /*
+  * Module initialization routine for Huffman entropy decoding.
+  */
+--- a/src/jdinput.c
++++ b/src/jdinput.c
+@@ -310,8 +310,13 @@
+  * all the expected data of the scan.
+  */
+ 
++EXTERN(void) jpeg_huff_validate_end(j_decompress_ptr cinfo);
++
+ METHODDEF(void)
+ finish_input_pass(j_decompress_ptr cinfo)
+ {
++  if (!cinfo->progressive_mode && !cinfo->arith_code &&
++      !cinfo->master->lossless)
++    jpeg_huff_validate_end(cinfo);
+   cinfo->inputctl->consume_input = consume_markers;
+ }

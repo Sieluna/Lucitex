@@ -91,29 +91,26 @@ internal static class WebpContainer
                     if (size > int.MaxValue) {
                         throw new ImageFormatException("webp", "LimitExceeded", "WebP payload is too large.");
                     }
-                    var chunk = memory.Rent<byte>((int)size);
-                    stream.ReadExactly(chunk.Span);
-                    var frameHeader = Vp8FrameHeader.ParseUncompressed(chunk.Span, out _, out _);
+                    payload = memory.Rent<byte>((int)size);
+                    stream.ReadExactly(payload.Span);
+                    var frameHeader = Vp8FrameHeader.ParseUncompressed(payload.Span, out _, out _);
                     width = frameHeader.Width;
                     height = frameHeader.Height;
                     var decodedBytes = (long)width * height * 4;
                     if (width > limits.MaxDimensions || height > limits.MaxDimensions || (long)width * height > limits.MaxPixels || decodedBytes > limits.MaxDecodedBytes || decodedBytes / (double)size > limits.MaxCompressionRatio) {
-                        chunk.Dispose();
                         throw new ImageFormatException("webp", "LimitExceeded", "WebP dimensions, decoded size or compression ratio exceeds the configured limit.");
                     }
-                    payload = chunk;
                     isLossy = true;
                 }
                 else if (type == FourCc("ALPH"u8)) {
-                    if (alphaPayload is not null || size < 1) {
+                    if (alphaPayload is not null || payload is not null || canvasWidth == 0 || size < 1) {
                         throw new InvalidDataException("Invalid or duplicate WebP ALPH chunk.");
                     }
                     if (size > int.MaxValue) {
                         throw new ImageFormatException("webp", "LimitExceeded", "WebP alpha payload is too large.");
                     }
-                    var chunk = memory.Rent<byte>((int)size);
-                    stream.ReadExactly(chunk.Span);
-                    alphaPayload = chunk;
+                    alphaPayload = memory.Rent<byte>((int)size);
+                    stream.ReadExactly(alphaPayload.Span);
                 }
                 else if (type == FourCc("ANIM"u8) || type == FourCc("ANMF"u8)) {
                     throw new NotSupportedException("Animated WebP is not supported.");
@@ -159,7 +156,7 @@ internal static class WebpContainer
             }
             if (payload is null || (canvasWidth != 0 && (canvasWidth != width || canvasHeight != height)) ||
                 ((flags & 32) != 0) != (icc is not null) || ((flags & 8) != 0) != (exif is not null) || ((flags & 4) != 0) != (xmp is not null) ||
-                ((flags & 16) != 0) != (alphaPayload is not null) || (alphaPayload is not null && !isLossy)) {
+                (isLossy && ((flags & 16) != 0) != (alphaPayload is not null)) || (alphaPayload is not null && !isLossy)) {
                 throw new InvalidDataException("WebP chunks do not match the container header.");
             }
             return new WebpDocument(width, height, isLossy, payload, alphaPayload, new WebpMetadata(icc, exif, xmp));

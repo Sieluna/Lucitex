@@ -10,8 +10,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Lucitex.Core\Lucitex.Core.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Conversion\Lucitex.Conversion.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Core\Lucitex.Core.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Dds\Lucitex.Dds.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Exr\Lucitex.Exr.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Hdr\Lucitex.Hdr.csproj" />

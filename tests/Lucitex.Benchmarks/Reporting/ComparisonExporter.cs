@@ -15,18 +15,12 @@ internal sealed class ComparisonExporter : IExporter
 
     public IEnumerable<string> ExportToFiles(Summary summary, ILogger logger)
     {
-        var html = Header(summary.Title);
-        html.Append("<p>Each case/profile/job is a separate comparison. Green timing cells use BenchmarkDotNet Rank = 1 (ties allowed). Ratio and statistical tests compare against Lucitex; the equivalence threshold is 5%. Green allocation and size cells show observed minima, not statistical significance. Size alone does not imply equal image quality.</p>");
-        html.Append("<p>Groups with only one supported implementation are standalone measurements and have no highlighted winner. EXR profiles measure normalized byte-to-HALF sample conversion, not full HDR quality. KTX2 profiles measure RGBA8 container conversion, not GPU block compression.</p>");
-        if (RunOptions.Current.Quick) {
-            html.Append("<p class='warning'>SMOKE RUN: timing and rankings are for pipeline verification only.</p>");
-        }
-        html.Append("<p>Allocated: managed B/op from BenchmarkDotNet. All threads B: separate process workload. Process peak MiB: sampled total private bytes including managed/native heaps, pools and runtime; a lower bound, not native allocation bytes. Unavailable values remain N/A. Quality and exact encoded sizes are measured before timing.</p><table><thead><tr>");
+        var title = summary.BenchmarksCases.Length > 0 ? summary.BenchmarksCases[0].Descriptor.Type.Name : summary.Title;
+        var html = Header(title);
+        html.Append("<table><thead><tr>");
         var columns = summary.Table.Columns.Where(c => c.NeedToShow).ToArray();
-        var markdown = new StringBuilder("## ").AppendLine(summary.Title).AppendLine();
-        markdown.AppendLine(RunOptions.Current.Quick ? "**Smoke run: timings and ranks are not performance evidence.**" : "**Bold cells**: observed winners within each case/profile/job; timing uses BDN Rank = 1. Ratio/statistical tests use Lucitex as baseline.");
-        markdown.AppendLine("Single-implementation groups have no comparison winner. EXR: normalized byte/HALF samples, not full HDR fidelity. KTX2: RGBA8 container conversion, not GPU block encoding.");
-        markdown.AppendLine().Append("| ").Append(string.Join(" | ", columns.Select(c => Markdown(c.Header)))).AppendLine(" |");
+        var markdown = new StringBuilder("## ").AppendLine(title).AppendLine();
+        markdown.Append("| ").Append(string.Join(" | ", columns.Select(c => Markdown(c.Header)))).AppendLine(" |");
         markdown.Append("| ").Append(string.Join(" | ", columns.Select(_ => "---"))).AppendLine(" |");
         foreach (var column in columns) {
             html.Append("<th>").Append(Escape(column.Header)).Append("</th>");
@@ -44,35 +38,42 @@ internal sealed class ComparisonExporter : IExporter
             var smallestSize = valid && size.HasValue && validGroup.All(b =>
                 ComparisonColumn.Find(b)?.EncodedBytes is { } bytes && bytes >= size.Value);
             html.Append("<tr>");
-            markdown.Append("| ");
-            foreach (var column in columns) {
+            var cells = new string[columns.Length];
+            for (var c = 0; c < columns.Length; c++) {
+                var column = columns[c];
                 var winner = column.Header == "Mean" && fastest || column.Header == "Allocated" && smallestAllocation
                     || column.Header == "Encoded B" && smallestSize;
                 html.Append(winner ? "<td class='winner'>" : "<td>")
                     .Append(Escape(summary.Table.FullContent[i][column.Index])).Append("</td>");
                 var value = Markdown(summary.Table.FullContent[i][column.Index]);
-                markdown.Append(winner ? $"**{value}**" : value).Append(" | ");
+                cells[c] = winner ? $"**{value}**" : value;
             }
             html.Append("</tr>");
-            markdown.AppendLine();
+            markdown.Append("| ").Append(string.Join(" | ", cells)).AppendLine(" |");
         }
-        html.Append("</tbody></table><p>Full provenance, correctness checks, hashes and exclusions: <a href='../validation.json'>validation.json</a>. BenchmarkDotNet's JSON/CSV reports retain raw statistics. No single overall winner is inferred across distinct workloads.</p></body></html>");
-        var path = Path.Combine(summary.ResultsDirectoryPath, summary.Title + "-comparison.html");
+        html.Append("</tbody></table></body></html>");
+        var path = Path.Combine(summary.ResultsDirectoryPath, title + "-comparison.html");
         File.WriteAllText(path, html.ToString());
         var markdownPath = Path.ChangeExtension(path, ".md");
-        File.WriteAllText(markdownPath, markdown.AppendLine().AppendLine("Allocated = managed B/op. Process peak includes runtime, pools and native heaps; sampling is a lower bound. Encoded size is not a quality-equivalent ranking. See validation.json and full artifacts for provenance, failures and unsupported combinations.").ToString());
+        File.WriteAllText(markdownPath, markdown.ToString());
         return [path, markdownPath];
     }
 
     public static void WriteIndex(RunOptions options)
     {
         var html = Header("Lucitex codec comparisons");
-        html.Append("<p>").Append(Escape(options.Quick ? "Smoke run; do not use timing for performance conclusions." : "BenchmarkDotNet comparison reports")).Append("</p><ul>");
+        html.Append("<p>Each case/profile/job is a separate comparison. Green timing cells use BenchmarkDotNet Rank = 1 (ties allowed). Ratio and statistical tests compare against Lucitex; the equivalence threshold is 5%. Green allocation and size cells show observed minima, not statistical significance. Size alone does not imply equal image quality.</p>");
+        html.Append("<p>Groups with only one supported implementation are standalone measurements and have no highlighted winner. EXR profiles measure normalized byte-to-HALF sample conversion, not full HDR quality. KTX2 profiles measure RGBA8 container conversion, not GPU block compression.</p>");
+        if (options.Quick) {
+            html.Append("<p class='warning'>SMOKE RUN: timing and rankings are for pipeline verification only.</p>");
+        }
+        html.Append("<p>Allocated: managed B/op from BenchmarkDotNet. All threads B: separate process workload. Process peak MiB: sampled total private bytes including managed/native heaps, pools and runtime; a lower bound, not native allocation bytes. Unavailable values remain N/A. Quality and exact encoded sizes are measured before timing.</p>");
+        html.Append("<p>Full provenance, correctness checks, hashes and exclusions: <a href='validation.json'>validation.json</a>. BenchmarkDotNet's JSON/CSV reports retain raw statistics. No single overall winner is inferred across distinct workloads.</p><ul>");
         foreach (var path in Directory.EnumerateFiles(options.Artifacts, "*-comparison.html", SearchOption.AllDirectories)) {
             html.Append("<li><a href='").Append(Escape(Path.GetRelativePath(options.Artifacts, path).Replace('\\', '/')))
                 .Append("'>").Append(Escape(Path.GetFileNameWithoutExtension(path))).Append("</a></li>");
         }
-        html.Append("</ul><p><a href='validation.json'>Correctness, corpus hashes, environment, capability exclusions and memory metadata</a></p></body></html>");
+        html.Append("</ul></body></html>");
         File.WriteAllText(Path.Combine(options.Artifacts, "index.html"), html.ToString());
     }
 

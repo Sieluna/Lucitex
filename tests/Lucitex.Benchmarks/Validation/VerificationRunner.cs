@@ -22,7 +22,7 @@ internal static class VerificationRunner
                 Console.Error.WriteLine($"FAIL {comparison.Key}: {exception.Message}");
             }
         }
-        if (options.Suite is "all" or "kernels") {
+        if (options.IncludesKernels()) {
             foreach (var image in options.Cases) {
                 new Crc32Benchmarks { Case = image }.Setup();
                 foreach (var filter in new[] { PngFilterType.Sub, PngFilterType.Up, PngFilterType.Average, PngFilterType.Paeth }) {

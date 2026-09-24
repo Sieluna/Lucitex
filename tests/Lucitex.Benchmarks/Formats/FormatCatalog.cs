@@ -36,18 +36,18 @@ internal static class FormatCatalog
     public static IEnumerable<Type> SelectBenchmarks(RunOptions options)
     {
         foreach (var module in Modules.Where(m => m.Profiles.Intersect(options.Profiles).Any())) {
-            if (options.Suite == "all" || options.Suite == module.Id) {
+            if (options.IncludesFormat(module.Id)) {
                 foreach (var type in module.BenchmarkTypes) {
                     yield return type;
                 }
             }
-            if (options.Suite is "all" or "convert") {
-                foreach (var route in Conversions.Where(r => r.Destination == module.Id)) {
+            if (options.IncludesConvert()) {
+                foreach (var route in Conversions.Where(r => r.Destination == module.Id && options.IncludesConvertRoute(r.Source, r.Destination))) {
                     yield return route.BenchmarkType;
                 }
             }
         }
-        if (options.Suite is "all" or "kernels") {
+        if (options.IncludesKernels()) {
             yield return typeof(Crc32Benchmarks);
             yield return typeof(PngFilterBenchmarks);
         }
@@ -57,18 +57,18 @@ internal static class FormatCatalog
     {
         foreach (var profile in options.Profiles) {
             var format = ForProfile(profile).Id;
-            if (options.Suite is not ("all" or "convert") && options.Suite != format) {
+            if (!options.IncludesFormat(format) && !options.IncludesConvert()) {
                 continue;
             }
             foreach (var image in options.Cases) {
                 foreach (var library in options.Libraries.Select(Enum.Parse<Library>)) {
                     foreach (var operation in Enum.GetValues<Operation>()) {
-                        if (operation == Operation.Convert && options.Suite is not ("all" or "convert")
-                            || operation != Operation.Convert && options.Suite == "convert") {
+                        if (operation == Operation.Convert && !options.IncludesConvert()
+                            || operation != Operation.Convert && !options.IncludesFormat(format)) {
                             continue;
                         }
                         if (operation == Operation.Convert) {
-                            foreach (var route in Conversions.Where(r => r.Destination == format)) {
+                            foreach (var route in Conversions.Where(r => r.Destination == format && options.IncludesConvertRoute(r.Source, r.Destination))) {
                                 yield return new ComparisonCase(image, profile, library, operation, route.Source);
                             }
                         }

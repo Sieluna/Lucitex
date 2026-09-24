@@ -11,4 +11,7 @@ internal static class CodecCapabilities
     };
 
     public static bool Supports(Library library, string format) => s_Formats.TryGetValue(library, out var formats) && formats.Contains(format);
+
+    public static bool IsComparable(string source, string destination) =>
+        Enum.GetValues<Library>().Count(l => Supports(l, source) && Supports(l, destination)) >= 2;
 }

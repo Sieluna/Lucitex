@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: Benchmark suite (all runs every registered suite)
-        type: choice
-        options: [all, convert, jpeg, png, exr, ktx2, webp, kernels]
+        description: Comma-separated suites (all/compare/convert/jpeg/png/exr/ktx2/webp/kernels; "all" wins if present)
+        type: string
         default: all
       cases:
         description: Comma-separated procedural cases
@@ -99,18 +98,24 @@ jobs:
 
     steps:
       - name: Download results
+        if: always()
         uses: actions/download-artifact@v7
         with:
           pattern: benchmark-*
           path: artifacts
 
       - name: Write job summary
+        if: always()
         run: |
           set -euo pipefail
           shopt -s nullglob
           {
             printf '# Benchmark\n\n'
-            printf 'Compare only within the same OS; Windows and Linux runners differ.\n\n'
+            printf 'Compare only within the same OS; Windows and Linux runners differ.\n'
+            printf 'Single-implementation groups have no winner. EXR: normalized byte/HALF samples, not HDR fidelity. KTX2: RGBA8 container conversion, not GPU block encoding.\n\n'
+            if [[ "${{ inputs.mode }}" == smoke ]]; then
+              printf '**Smoke run: timings and ranks are not performance evidence.**\n\n'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
           for dir in artifacts/benchmark-*; do
@@ -138,7 +143,7 @@ jobs:
               fi
 
               for report in "${reports[@]}"; do
-                cat "$report"
+                awk '/^##/ || /^\|/' "$report"
                 printf '\n'
               done
               if (( ${#reports[@]} == 0 )); then

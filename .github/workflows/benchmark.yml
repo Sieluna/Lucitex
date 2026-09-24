@@ -6,7 +6,7 @@ on:
       suite:
         description: Benchmark suite (all runs every registered suite)
         type: choice
-        options: [all, convert, jpeg, png, exr, ktx2, kernels]
+        options: [all, convert, jpeg, png, exr, ktx2, webp, kernels]
         default: all
       cases:
         description: Comma-separated procedural cases
@@ -15,7 +15,7 @@ on:
       profiles:
         description: Comma-separated profiles, or all
         type: string
-        default: jpeg-default420,png-default,exr-half-zip,ktx2-rgba8-none
+        default: jpeg-default420,png-default,exr-half-zip,ktx2-rgba8-none,webp-lossless
       mode:
         description: Full measurement or pipeline smoke check
         type: choice

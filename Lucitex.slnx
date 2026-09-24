@@ -5,8 +5,10 @@
     <Project Path="src/Lucitex.Dds/Lucitex.Dds.csproj" />
     <Project Path="src/Lucitex.Exr/Lucitex.Exr.csproj" />
     <Project Path="src/Lucitex.Hdr/Lucitex.Hdr.csproj" />
+    <Project Path="src/Lucitex.Jpeg/Lucitex.Jpeg.csproj" />
     <Project Path="src/Lucitex.Ktx2/Lucitex.Ktx2.csproj" />
     <Project Path="src/Lucitex.Png/Lucitex.Png.csproj" />
+    <Project Path="src/Lucitex.Webp/Lucitex.Webp.csproj" />
     <Project Path="src/Lucitex.Compression/Lucitex.Compression.csproj" />
   </Folder>
   <Folder Name="/examples/">

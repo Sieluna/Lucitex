@@ -2,8 +2,8 @@ namespace Lucitex.Webp.Lossy;
 
 internal static class Vp8Transform
 {
-    private const int CosPi8Sqrt2Minus1 = 20091;
-    private const int SinPi8Sqrt2 = 35468;
+    private const int k_CosPi8Sqrt2Minus1 = 20091;
+    private const int k_SinPi8Sqrt2 = 35468;
 
     public static void InverseWht(ReadOnlySpan<short> input, Span<short> output)
     {
@@ -49,11 +49,11 @@ internal static class Vp8Transform
         for (var i = 0; i < 4; i++) {
             var a1 = input[i] + input[8 + i];
             var b1 = input[i] - input[8 + i];
-            var temp1 = (input[4 + i] * SinPi8Sqrt2) >> 16;
-            var temp2 = input[12 + i] + ((input[12 + i] * CosPi8Sqrt2Minus1) >> 16);
+            var temp1 = (input[4 + i] * k_SinPi8Sqrt2) >> 16;
+            var temp2 = input[12 + i] + ((input[12 + i] * k_CosPi8Sqrt2Minus1) >> 16);
             var c1 = temp1 - temp2;
-            temp1 = input[4 + i] + ((input[4 + i] * CosPi8Sqrt2Minus1) >> 16);
-            temp2 = (input[12 + i] * SinPi8Sqrt2) >> 16;
+            temp1 = input[4 + i] + ((input[4 + i] * k_CosPi8Sqrt2Minus1) >> 16);
+            temp2 = (input[12 + i] * k_SinPi8Sqrt2) >> 16;
             var d1 = temp1 + temp2;
             temp[i] = (short)(a1 + d1);
             temp[12 + i] = (short)(a1 - d1);
@@ -64,11 +64,11 @@ internal static class Vp8Transform
             var row = i * 4;
             var a1 = temp[row] + temp[row + 2];
             var b1 = temp[row] - temp[row + 2];
-            var temp1 = (temp[row + 1] * SinPi8Sqrt2) >> 16;
-            var temp2 = temp[row + 3] + ((temp[row + 3] * CosPi8Sqrt2Minus1) >> 16);
+            var temp1 = (temp[row + 1] * k_SinPi8Sqrt2) >> 16;
+            var temp2 = temp[row + 3] + ((temp[row + 3] * k_CosPi8Sqrt2Minus1) >> 16);
             var c1 = temp1 - temp2;
-            temp1 = temp[row + 1] + ((temp[row + 1] * CosPi8Sqrt2Minus1) >> 16);
-            temp2 = (temp[row + 3] * SinPi8Sqrt2) >> 16;
+            temp1 = temp[row + 1] + ((temp[row + 1] * k_CosPi8Sqrt2Minus1) >> 16);
+            temp2 = (temp[row + 3] * k_SinPi8Sqrt2) >> 16;
             var d1 = temp1 + temp2;
             output[row] = (short)((a1 + d1 + 4) >> 3);
             output[row + 3] = (short)((a1 - d1 + 4) >> 3);

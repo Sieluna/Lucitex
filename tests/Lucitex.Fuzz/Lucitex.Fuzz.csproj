@@ -15,6 +15,7 @@
     <ProjectReference Include="..\..\src\Lucitex.Jpeg\Lucitex.Jpeg.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Ktx2\Lucitex.Ktx2.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Png\Lucitex.Png.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Webp\Lucitex.Webp.csproj" />
   </ItemGroup>
 
 </Project>

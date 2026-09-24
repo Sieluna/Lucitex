@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "builtin-baseline": "b61e5146d2e883945beda481ca4ab42fd3c287f5",
   "dependencies": [
+    "libjpeg-turbo",
     "libpng",
+    "libwebp",
     "openexr",
-    "ktx",
-    "libjpeg-turbo"
+    "ktx"
   ]
 }

@@ -19,7 +19,7 @@ internal sealed class LucitexAdapter : CodecAdapter
     {
         var descriptor = ImageLayout.Describe(source, comparison.Format == "exr");
         using var stream = new MemoryStream();
-        using (IImageWriter writer = comparison.Format switch {
+        using (var writer = comparison.Format switch {
             "jpeg" => new JpegCodec().CreateWriter(stream, descriptor, new JpegEncoderOptions {
                 Quality = ComparisonCase.Quality, OptimizeHuffmanTables = comparison.OptimizeHuffman,
                 Progressive = comparison.Progressive,
@@ -30,7 +30,9 @@ internal sealed class LucitexAdapter : CodecAdapter
                 Filter = comparison.Profile switch { "png-none" => PngFilterType.None, "png-paeth" => PngFilterType.Paeth, _ => null },
             }),
             "exr" => new ExrCodec(comparison.Profile switch {
-                "exr-half-none" => ExrCompressionId.None, "exr-half-piz" => ExrCompressionId.Piz, _ => ExrCompressionId.Zip,
+                "exr-half-none" => ExrCompressionId.None,
+                "exr-half-piz" => ExrCompressionId.Piz,
+                _ => ExrCompressionId.Zip,
             }).CreateWriter(stream, descriptor),
             "ktx2" => new Ktx2Codec().CreateWriter(stream, descriptor,
                 comparison.Profile == "ktx2-rgba8-zlib" ? Ktx2SupercompressionScheme.Zlib : Ktx2SupercompressionScheme.None),
@@ -50,7 +52,7 @@ internal sealed class LucitexAdapter : CodecAdapter
         var ktx2 = encoded[0] == 0xAB;
         var webp = encoded.AsSpan(0, 4).SequenceEqual("RIFF"u8);
         using var stream = new MemoryStream(encoded, false);
-        using IImageReader reader = jpeg
+        using var reader = jpeg
             ? new JpegCodec().OpenReader(stream, new JpegDecoderOptions { InterpolateChroma = layout.Width > 4 })
             : exr ? new ExrCodec().OpenReader(stream)
             : ktx2 ? new Ktx2Codec().OpenReader(stream)

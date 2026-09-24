@@ -20,7 +20,7 @@ internal static class WebpContainer
         if (!header[..4].SequenceEqual("RIFF"u8) || !header[8..].SequenceEqual("WEBP"u8)) {
             throw new InvalidDataException("Invalid WebP RIFF signature.");
         }
-        long remaining = BinaryPrimitives.ReadUInt32LittleEndian(header[4..]) - 4L;
+        var remaining = BinaryPrimitives.ReadUInt32LittleEndian(header[4..]) - 4L;
         if (remaining < 8 || (remaining & 1) != 0) {
             throw new InvalidDataException("Invalid WebP RIFF size.");
         }

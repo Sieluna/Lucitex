@@ -25,8 +25,10 @@ internal sealed class PngModule : IFormatModule
         if (comparison.Profile is "png-none" or "png-paeth") {
             ValidateFilters(encoded, comparison.Profile == "png-none" ? (byte)0 : (byte)4);
         }
-        return new { Width = BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(16)),
-            Height = BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(20)), BitDepth = 8, ColorType = "RGBA", Interlaced = false };
+        return new {
+            Width = BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(16)),
+            Height = BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(20)), BitDepth = 8, ColorType = "RGBA", Interlaced = false
+        };
     }
 
     private static void ValidateFilters(byte[] encoded, byte expected)

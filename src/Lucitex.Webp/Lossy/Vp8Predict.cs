@@ -131,14 +131,14 @@ internal static class Vp8Predict
 
         switch (mode) {
             case Vp8Tables.BDcPred: {
-                var v = 4;
-                for (var i = 0; i < 4; i++) {
-                    v += a[1 + i] + l[i];
+                    var v = 4;
+                    for (var i = 0; i < 4; i++) {
+                        v += a[1 + i] + l[i];
+                    }
+                    v >>= 3;
+                    Array.Fill(b, (byte)v);
+                    break;
                 }
-                v >>= 3;
-                Array.Fill(b, (byte)v);
-                break;
-            }
             case Vp8Tables.BTmPred:
                 for (var r = 0; r < 4; r++) {
                     for (var c = 0; c < 4; c++) {
@@ -156,85 +156,90 @@ internal static class Vp8Predict
                 }
                 break;
             case Vp8Tables.BHePred: {
-                var v = Avg3(l[2], l[3], l[3]);
-                Set(3, 0, v); Set(3, 1, v); Set(3, 2, v); Set(3, 3, v);
-                Span<byte> lFull = stackalloc byte[5];
-                lFull[0] = a[0];
-                l.CopyTo(lFull[1..]);
-                for (var r = 2; r >= 0; r--) {
-                    v = Avg3P(lFull, 1 + r);
-                    Set(r, 0, v); Set(r, 1, v); Set(r, 2, v); Set(r, 3, v);
+                    var v = Avg3(l[2], l[3], l[3]);
+                    Set(3, 0, v); Set(3, 1, v); Set(3, 2, v); Set(3, 3, v);
+                    Span<byte> lFull = stackalloc byte[5];
+                    lFull[0] = a[0];
+                    l.CopyTo(lFull[1..]);
+                    for (var r = 2; r >= 0; r--) {
+                        v = Avg3P(lFull, 1 + r);
+                        Set(r, 0, v); Set(r, 1, v); Set(r, 2, v); Set(r, 3, v);
+                    }
+                    break;
                 }
-                break;
-            }
-            case Vp8Tables.BLdPred:
-                Set(0, 0, Avg3P(aFull, 2));
-                { var v = Avg3P(aFull, 3); Set(0, 1, v); Set(1, 0, v); }
-                { var v = Avg3P(aFull, 4); Set(0, 2, v); Set(1, 1, v); Set(2, 0, v); }
-                { var v = Avg3P(aFull, 5); Set(0, 3, v); Set(1, 2, v); Set(2, 1, v); Set(3, 0, v); }
-                { var v = Avg3P(aFull, 6); Set(1, 3, v); Set(2, 2, v); Set(3, 1, v); }
-                { var v = Avg3P(aFull, 7); Set(2, 3, v); Set(3, 2, v); }
-                Set(3, 3, Avg3(aFull[7], aFull[8], aFull[8]));
-                break;
-            case Vp8Tables.BRdPred:
-                Set(3, 0, Avg3P(e, 1));
-                { var v = Avg3P(e, 2); Set(3, 1, v); Set(2, 0, v); }
-                { var v = Avg3P(e, 3); Set(3, 2, v); Set(2, 1, v); Set(1, 0, v); }
-                { var v = Avg3P(e, 4); Set(3, 3, v); Set(2, 2, v); Set(1, 1, v); Set(0, 0, v); }
-                { var v = Avg3P(e, 5); Set(2, 3, v); Set(1, 2, v); Set(0, 1, v); }
-                { var v = Avg3P(e, 6); Set(1, 3, v); Set(0, 2, v); }
-                Set(0, 3, Avg3P(e, 7));
-                break;
-            case Vp8Tables.BVrPred:
-                Set(3, 0, Avg3P(e, 2));
-                Set(2, 0, Avg3P(e, 3));
-                { var v = Avg3P(e, 4); Set(3, 1, v); Set(1, 0, v); }
-                { var v = Avg2P(e, 4); Set(2, 1, v); Set(0, 0, v); }
-                { var v = Avg3P(e, 5); Set(3, 2, v); Set(1, 1, v); }
-                { var v = Avg2P(e, 5); Set(2, 2, v); Set(0, 1, v); }
-                { var v = Avg3P(e, 6); Set(3, 3, v); Set(1, 2, v); }
-                { var v = Avg2P(e, 6); Set(2, 3, v); Set(0, 2, v); }
-                Set(1, 3, Avg3P(e, 7));
-                Set(0, 3, Avg2P(e, 7));
-                break;
-            case Vp8Tables.BVlPred:
-                Set(0, 0, Avg2P(aFull, 1));
-                Set(1, 0, Avg3P(aFull, 2));
-                { var v = Avg2P(aFull, 2); Set(2, 0, v); Set(0, 1, v); }
-                { var v = Avg3P(aFull, 3); Set(1, 1, v); Set(3, 0, v); }
-                { var v = Avg2P(aFull, 3); Set(2, 1, v); Set(0, 2, v); }
-                { var v = Avg3P(aFull, 4); Set(3, 1, v); Set(1, 2, v); }
-                { var v = Avg2P(aFull, 4); Set(2, 2, v); Set(0, 3, v); }
-                { var v = Avg3P(aFull, 5); Set(3, 2, v); Set(1, 3, v); }
-                Set(2, 3, Avg3P(aFull, 6));
-                Set(3, 3, Avg3P(aFull, 7));
-                break;
-            case Vp8Tables.BHdPred:
-                Set(3, 0, Avg2P(e, 0));
-                Set(3, 1, Avg3P(e, 1));
-                { var v = Avg2P(e, 1); Set(2, 0, v); Set(3, 2, v); }
-                { var v = Avg3P(e, 2); Set(2, 1, v); Set(3, 3, v); }
-                { var v = Avg2P(e, 2); Set(2, 2, v); Set(1, 0, v); }
-                { var v = Avg3P(e, 3); Set(2, 3, v); Set(1, 1, v); }
-                { var v = Avg2P(e, 3); Set(1, 2, v); Set(0, 0, v); }
-                { var v = Avg3P(e, 4); Set(1, 3, v); Set(0, 1, v); }
-                Set(0, 2, Avg3P(e, 5));
-                Set(0, 3, Avg3P(e, 6));
-                break;
+            case Vp8Tables.BLdPred: {
+                    Set(0, 0, Avg3P(aFull, 2));
+                    var v01 = Avg3P(aFull, 3); Set(0, 1, v01); Set(1, 0, v01);
+                    var v02 = Avg3P(aFull, 4); Set(0, 2, v02); Set(1, 1, v02); Set(2, 0, v02);
+                    var v03 = Avg3P(aFull, 5); Set(0, 3, v03); Set(1, 2, v03); Set(2, 1, v03); Set(3, 0, v03);
+                    var v13 = Avg3P(aFull, 6); Set(1, 3, v13); Set(2, 2, v13); Set(3, 1, v13);
+                    var v23 = Avg3P(aFull, 7); Set(2, 3, v23); Set(3, 2, v23);
+                    Set(3, 3, Avg3(aFull[7], aFull[8], aFull[8]));
+                    break;
+                }
+            case Vp8Tables.BRdPred: {
+                    Set(3, 0, Avg3P(e, 1));
+                    var v30 = Avg3P(e, 2); Set(3, 1, v30); Set(2, 0, v30);
+                    var v31 = Avg3P(e, 3); Set(3, 2, v31); Set(2, 1, v31); Set(1, 0, v31);
+                    var v32 = Avg3P(e, 4); Set(3, 3, v32); Set(2, 2, v32); Set(1, 1, v32); Set(0, 0, v32);
+                    var v23 = Avg3P(e, 5); Set(2, 3, v23); Set(1, 2, v23); Set(0, 1, v23);
+                    var v13 = Avg3P(e, 6); Set(1, 3, v13); Set(0, 2, v13);
+                    Set(0, 3, Avg3P(e, 7));
+                    break;
+                }
+            case Vp8Tables.BVrPred: {
+                    Set(3, 0, Avg3P(e, 2));
+                    Set(2, 0, Avg3P(e, 3));
+                    var v31 = Avg3P(e, 4); Set(3, 1, v31); Set(1, 0, v31);
+                    var v21 = Avg2P(e, 4); Set(2, 1, v21); Set(0, 0, v21);
+                    var v32 = Avg3P(e, 5); Set(3, 2, v32); Set(1, 1, v32);
+                    var v22 = Avg2P(e, 5); Set(2, 2, v22); Set(0, 1, v22);
+                    var v33 = Avg3P(e, 6); Set(3, 3, v33); Set(1, 2, v33);
+                    var v23 = Avg2P(e, 6); Set(2, 3, v23); Set(0, 2, v23);
+                    Set(1, 3, Avg3P(e, 7));
+                    Set(0, 3, Avg2P(e, 7));
+                    break;
+                }
+            case Vp8Tables.BVlPred: {
+                    Set(0, 0, Avg2P(aFull, 1));
+                    Set(1, 0, Avg3P(aFull, 2));
+                    var v20 = Avg2P(aFull, 2); Set(2, 0, v20); Set(0, 1, v20);
+                    var v11 = Avg3P(aFull, 3); Set(1, 1, v11); Set(3, 0, v11);
+                    var v21 = Avg2P(aFull, 3); Set(2, 1, v21); Set(0, 2, v21);
+                    var v31 = Avg3P(aFull, 4); Set(3, 1, v31); Set(1, 2, v31);
+                    var v22 = Avg2P(aFull, 4); Set(2, 2, v22); Set(0, 3, v22);
+                    var v32 = Avg3P(aFull, 5); Set(3, 2, v32); Set(1, 3, v32);
+                    Set(2, 3, Avg3P(aFull, 6));
+                    Set(3, 3, Avg3P(aFull, 7));
+                    break;
+                }
+            case Vp8Tables.BHdPred: {
+                    Set(3, 0, Avg2P(e, 0));
+                    Set(3, 1, Avg3P(e, 1));
+                    var v20 = Avg2P(e, 1); Set(2, 0, v20); Set(3, 2, v20);
+                    var v21 = Avg3P(e, 2); Set(2, 1, v21); Set(3, 3, v21);
+                    var v22 = Avg2P(e, 2); Set(2, 2, v22); Set(1, 0, v22);
+                    var v23 = Avg3P(e, 3); Set(2, 3, v23); Set(1, 1, v23);
+                    var v12 = Avg2P(e, 3); Set(1, 2, v12); Set(0, 0, v12);
+                    var v13 = Avg3P(e, 4); Set(1, 3, v13); Set(0, 1, v13);
+                    Set(0, 2, Avg3P(e, 5));
+                    Set(0, 3, Avg3P(e, 6));
+                    break;
+                }
             case Vp8Tables.BHuPred: {
-                Span<byte> lFull = stackalloc byte[4];
-                l.CopyTo(lFull);
-                Set(0, 0, Avg2P(lFull, 0));
-                Set(0, 1, Avg3P(lFull, 1));
-                { var v = Avg2P(lFull, 1); Set(0, 2, v); Set(1, 0, v); }
-                { var v = Avg3P(lFull, 2); Set(0, 3, v); Set(1, 1, v); }
-                { var v = Avg2P(lFull, 2); Set(1, 2, v); Set(2, 0, v); }
-                { var v = Avg3(lFull[2], lFull[3], lFull[3]); Set(1, 3, v); Set(2, 1, v); }
-                var last = lFull[3];
-                Set(2, 2, last); Set(2, 3, last);
-                Set(3, 0, last); Set(3, 1, last); Set(3, 2, last); Set(3, 3, last);
-                break;
-            }
+                    Span<byte> lFull = stackalloc byte[4];
+                    l.CopyTo(lFull);
+                    Set(0, 0, Avg2P(lFull, 0));
+                    Set(0, 1, Avg3P(lFull, 1));
+                    var v02 = Avg2P(lFull, 1); Set(0, 2, v02); Set(1, 0, v02);
+                    var v03 = Avg3P(lFull, 2); Set(0, 3, v03); Set(1, 1, v03);
+                    var v12 = Avg2P(lFull, 2); Set(1, 2, v12); Set(2, 0, v12);
+                    var v13 = Avg3(lFull[2], lFull[3], lFull[3]); Set(1, 3, v13); Set(2, 1, v13);
+                    var last = lFull[3];
+                    Set(2, 2, last); Set(2, 3, last);
+                    Set(3, 0, last); Set(3, 1, last); Set(3, 2, last); Set(3, 3, last);
+                    break;
+                }
         }
 
         for (var r = 0; r < 4; r++) {

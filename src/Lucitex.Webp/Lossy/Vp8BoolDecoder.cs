@@ -67,7 +67,7 @@ internal sealed class Vp8BoolDecoder
 
     public int GetTree(ReadOnlySpan<sbyte> tree, ReadOnlySpan<byte> probabilities, int start = 0)
     {
-        int i = start;
+        var i = start;
         while ((i = tree[i + GetBool(probabilities[i >> 1])]) > 0) {
         }
         return -i;

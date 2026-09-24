@@ -2,6 +2,8 @@
 #include <jpeglib.h>
 #include <ktx.h>
 #include <png.h>
+#include <webp/decode.h>
+#include <webp/encode.h>
 
 #include <algorithm>
 #include <chrono>
@@ -10,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -18,6 +21,165 @@
 namespace
 {
 constexpr std::uint64_t max_decoded_bytes = 512ULL * 1024ULL * 1024ULL;
+
+bool read_file(const char* path, std::vector<unsigned char>& bytes)
+{
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file)
+    {
+        return false;
+    }
+
+    const auto size = file.tellg();
+    if (size < 0)
+    {
+        return false;
+    }
+
+    bytes.resize(static_cast<std::size_t>(size));
+    file.seekg(0);
+    return static_cast<bool>(file.read(reinterpret_cast<char*>(bytes.data()), size));
+}
+
+bool validate_webp(const char* path)
+{
+    std::vector<unsigned char> bytes;
+    if (!read_file(path, bytes) || bytes.empty())
+    {
+        return false;
+    }
+
+    int width = 0;
+    int height = 0;
+    if (!WebPGetInfo(bytes.data(), bytes.size(), &width, &height))
+    {
+        return false;
+    }
+
+    if (width <= 0 || height <= 0)
+    {
+        return false;
+    }
+
+    const auto pixel_count = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
+    if (pixel_count > max_decoded_bytes / 4)
+    {
+        return false;
+    }
+
+    int decoded_width = 0;
+    int decoded_height = 0;
+    auto* pixels = WebPDecodeRGBA(bytes.data(), bytes.size(), &decoded_width, &decoded_height);
+    const auto accepted = pixels != nullptr;
+    WebPFree(pixels);
+    return accepted;
+}
+
+bool encode_rgba_file_to_webp(const char* input_path, int width, int height, float quality, const char* output_path)
+{
+    std::vector<unsigned char> rgba;
+    if (!read_file(input_path, rgba))
+    {
+        return false;
+    }
+
+    const auto expected = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4;
+    if (rgba.size() != expected)
+    {
+        return false;
+    }
+
+    unsigned char* output = nullptr;
+    const auto size = WebPEncodeRGBA(rgba.data(), width, height, width * 4, quality, &output);
+    if (size == 0 || output == nullptr)
+    {
+        return false;
+    }
+
+    std::ofstream out(output_path, std::ios::binary);
+    const auto ok = static_cast<bool>(out.write(reinterpret_cast<const char*>(output), static_cast<std::streamsize>(size)));
+    WebPFree(output);
+    return ok;
+}
+
+bool decode_webp_to_yuv_file(const char* input_path, const char* output_path)
+{
+    std::vector<unsigned char> bytes;
+    if (!read_file(input_path, bytes) || bytes.empty())
+    {
+        return false;
+    }
+
+    int width = 0;
+    int height = 0;
+    int y_stride = 0;
+    int uv_stride = 0;
+    unsigned char* u = nullptr;
+    unsigned char* v = nullptr;
+    auto* y = WebPDecodeYUV(bytes.data(), bytes.size(), &width, &height, &u, &v, &y_stride, &uv_stride);
+    if (y == nullptr)
+    {
+        return false;
+    }
+
+    std::ofstream out(output_path, std::ios::binary);
+    if (!out)
+    {
+        WebPFree(y);
+        return false;
+    }
+
+    const auto chroma_width = (width + 1) / 2;
+    const auto chroma_height = (height + 1) / 2;
+
+    std::int32_t header[2] = {width, height};
+    out.write(reinterpret_cast<const char*>(header), sizeof(header));
+    for (auto row = 0; row < height; ++row)
+    {
+        out.write(reinterpret_cast<const char*>(y + (static_cast<std::ptrdiff_t>(row) * y_stride)), width);
+    }
+    for (auto row = 0; row < chroma_height; ++row)
+    {
+        out.write(reinterpret_cast<const char*>(u + (static_cast<std::ptrdiff_t>(row) * uv_stride)), chroma_width);
+    }
+    for (auto row = 0; row < chroma_height; ++row)
+    {
+        out.write(reinterpret_cast<const char*>(v + (static_cast<std::ptrdiff_t>(row) * uv_stride)), chroma_width);
+    }
+
+    WebPFree(y);
+    return static_cast<bool>(out);
+}
+
+bool decode_webp_to_rgba_file(const char* input_path, const char* output_path)
+{
+    std::vector<unsigned char> bytes;
+    if (!read_file(input_path, bytes) || bytes.empty())
+    {
+        return false;
+    }
+
+    int width = 0;
+    int height = 0;
+    auto* pixels = WebPDecodeRGBA(bytes.data(), bytes.size(), &width, &height);
+    if (pixels == nullptr)
+    {
+        return false;
+    }
+
+    std::ofstream out(output_path, std::ios::binary);
+    if (!out)
+    {
+        WebPFree(pixels);
+        return false;
+    }
+
+    std::uint32_t header[2] = {static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
+    out.write(reinterpret_cast<const char*>(header), sizeof(header));
+    out.write(reinterpret_cast<const char*>(pixels), static_cast<std::streamsize>(width) * height * 4);
+    WebPFree(pixels);
+    return static_cast<bool>(out);
+}
 
 bool validate_png(const char* path)
 {
@@ -181,10 +343,37 @@ bool validate_jpeg(const char* path)
 
 int main(int argc, char** argv)
 {
+    if (argc == 4 && std::strcmp(argv[1], "decode-rgba") == 0)
+    {
+        return decode_webp_to_rgba_file(argv[2], argv[3]) ? 0 : 1;
+    }
+
+    if (argc == 4 && std::strcmp(argv[1], "decode-yuv") == 0)
+    {
+        return decode_webp_to_yuv_file(argv[2], argv[3]) ? 0 : 1;
+    }
+
+    if (argc == 6 && std::strcmp(argv[1], "encode-rgba") == 0)
+    {
+        const auto width = std::stoi(argv[3]);
+        const auto height = std::stoi(argv[4]);
+        return encode_rgba_file_to_webp(argv[2], width, height, 80.0f, argv[5]) ? 0 : 1;
+    }
+
+    if (argc == 7 && std::strcmp(argv[1], "encode-rgba") == 0)
+    {
+        const auto width = std::stoi(argv[3]);
+        const auto height = std::stoi(argv[4]);
+        const auto quality = std::stof(argv[6]);
+        return encode_rgba_file_to_webp(argv[2], width, height, quality, argv[5]) ? 0 : 1;
+    }
+
     if (argc != 3 && argc != 5)
     {
-        std::cerr << "usage: lucitex_native_oracle <png|exr|ktx2|jpg> <path>\n";
-        std::cerr << "       lucitex_native_oracle bench <png|exr|ktx2|jpg> <path> <iterations>\n";
+        std::cerr << "usage: lucitex_native_oracle <png|exr|ktx2|jpg|webp> <path>\n";
+        std::cerr << "       lucitex_native_oracle bench <png|exr|ktx2|jpg|webp> <path> <iterations>\n";
+        std::cerr << "       lucitex_native_oracle decode-rgba <webp-path> <out-path>\n";
+        std::cerr << "       lucitex_native_oracle encode-rgba <rgba-path> <width> <height> <out.webp> [quality]\n";
         return 64;
     }
 
@@ -216,6 +405,11 @@ int main(int argc, char** argv)
             if (std::strcmp(argv[2], "jpg") == 0)
             {
                 return validate_jpeg(argv[3]);
+            }
+
+            if (std::strcmp(argv[2], "webp") == 0)
+            {
+                return validate_webp(argv[3]);
             }
 
             return false;
@@ -262,6 +456,11 @@ int main(int argc, char** argv)
     if (std::strcmp(argv[1], "jpg") == 0)
     {
         return validate_jpeg(argv[2]) ? 0 : 1;
+    }
+
+    if (std::strcmp(argv[1], "webp") == 0)
+    {
+        return validate_webp(argv[2]) ? 0 : 1;
     }
 
     std::cerr << "unknown format\n";

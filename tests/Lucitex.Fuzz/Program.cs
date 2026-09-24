@@ -14,6 +14,7 @@ using Lucitex.Hdr;
 using Lucitex.Jpeg;
 using Lucitex.Ktx2;
 using Lucitex.Png;
+using Lucitex.Webp;
 
 return FuzzApplication.Run(args);
 
@@ -246,6 +247,7 @@ internal enum ImageFormat
     Hdr,
     Ktx2,
     Jpeg,
+    Webp,
 }
 
 internal static class ImageFormatExtensions
@@ -277,6 +279,11 @@ internal static class ImageFormatExtensions
             return true;
         }
 
+        if (string.Equals(value, "webp", StringComparison.OrdinalIgnoreCase)) {
+            format = ImageFormat.Webp;
+            return true;
+        }
+
         format = default;
         return false;
     }
@@ -287,6 +294,7 @@ internal static class ImageFormatExtensions
         ImageFormat.Hdr => "hdr",
         ImageFormat.Ktx2 => "ktx2",
         ImageFormat.Jpeg => "jpg",
+        ImageFormat.Webp => "webp",
         _ => throw new ArgumentOutOfRangeException(nameof(format)),
     };
 }
@@ -336,6 +344,7 @@ internal static class ManagedDecoder
         ImageFormat.Hdr => new HdrCodec(),
         ImageFormat.Ktx2 => new Ktx2Codec(),
         ImageFormat.Jpeg => new JpegCodec(),
+        ImageFormat.Webp => new WebpCodec(),
         _ => throw new ArgumentOutOfRangeException(nameof(format)),
     };
 
@@ -378,6 +387,8 @@ internal static class SeedCorpus
             new("rgbe.hdr", ImageFormat.Hdr, WriteHdr(31, 12, 10)),
             new("rgb8.jpg", ImageFormat.Jpeg, WriteJpegRgb8(24, 18, 14)),
             new("gray8.jpg", ImageFormat.Jpeg, WriteJpegGray8(20, 16, 15)),
+            new("rgba8.webp", ImageFormat.Webp, WriteWebpRgba8(17, 13, 16)),
+            new("lossy-alpha.webp", ImageFormat.Webp, s_WebpLossyAlphaSeed),
             new("rgba8.ktx2", ImageFormat.Ktx2, WriteKtx2Rgba8(12, 9, 8)),
             new("r32f.ktx2", ImageFormat.Ktx2, WriteKtx2R32Float(11, 6, 9)),
             new("r10g10b10a2.ktx2", ImageFormat.Ktx2, WriteKtx2Packed(EncodedFormatId.R10G10B10A2, 13, 7, 11)),
@@ -498,6 +509,42 @@ internal static class SeedCorpus
             }).ToList(),
         });
         return Write(new ExrCodec(compression), descriptor, width * height * channels.Count * 2, randomSeed);
+    }
+
+    private static readonly byte[] s_WebpLossyAlphaSeed = Convert.FromBase64String(
+        "UklGRtoBAABXRUJQVlA4WAoAAAAQAAAAHwAAHwAAQUxQSBgAAAABuYzof4BI22Zs9+96+CRiAiaAqJXNfQFWUDggnAEAABAJAJ0BKiAAIAA+bS6URyQioiEoCqiADYlsPF+jAsMUIovV1FEAfwCkNESxv6Bbh2gnFvp/5v+5AP//pJf9L/s33//ix///T/9AD9/wvfY/AAD+5k/YNPF3vY/+pP/tXaEgD3OEGlNFaI9iaqzs6do49GWH+Fo3y6v9+ienQdBMm2OwY6KBSn5jJujlF/IzFbw4px/9e+L+lIXjwaP6+wcT7Mkhp/lkS34UhZ/tav7jm9XsMqeL4WsaPWf2uiqJkU/DTJCiPxeWeK7InOyvVOwhfK3H8bf9U62Ol0PuKoTdGcTJBKbdkq5nIoBL3pNQCQi7fkLfSS+wq0pbsv4QWDsEemlZspIwUs/iJT+7ln/MDJDnGnUxJg76eIN9QNYDwWc/ivr1nHmJcAJBGjAUhZ//hFRn+i5zyENYCVVfljZhul55JX8ZMxnYhWYLsMqgzHsLJTTfHGVF5sxtWoV3hSkGhyphPCYqSkgmGSYaP4rgP19bQK8Nd/qSpPsQSz9e9XuDEFI8D6Tpnl5CMBNZKN7zF6/1wp8uPtKwAAA=");
+
+    private static byte[] WriteWebpRgba8(int width, int height, int randomSeed)
+    {
+        string[] names = ["R", "G", "B", "A"];
+        var channels = names.Select(name => new ChannelDescriptor {
+            Name = name,
+            SampleType = SampleType.UNorm8,
+            Sampling = SampleGrid.Unit,
+        }).ToList();
+        var window = ImageBox.FromOrigin(width, height);
+        var part = new ImagePartDescriptor {
+            Name = "image",
+            Spatial = new SpatialDomain {
+                DataWindow = window,
+                DisplayWindow = window,
+                Orientation = LogicalOrientation.Identity,
+                Traversal = StorageTraversal.IncreasingY,
+            },
+            Topology = new ResourceTopology {
+                SpatialDimensions = 2,
+                BaseExtent = new Extent3L(width, height, 1),
+                Levels = [new ResolutionLevel { Key = LevelKey.Base, Extent = new Extent3L(width, height, 1) }],
+            },
+            Channels = new ChannelSchema { Channels = channels },
+            Representation = new PlainSampleRepresentation {
+                Planes = [new SamplePlaneDescriptor { Channels = names.Select(name => (ChannelPath)name).ToList(), Extent = new Extent3L(width, height, 1), Layout = PlaneLayout.Interleaved }],
+            },
+            Alpha = new AlphaDescriptor { Mode = AlphaMode.Straight },
+            Color = new ColorEncoding { Transfer = TransferFunction.Srgb },
+        };
+        var descriptor = new ImageAssetDescriptor { Parts = [part] };
+        return Write(new WebpCodec(), descriptor, width * height * 4, randomSeed);
     }
 
     private static byte[] WriteKtx2Rgba8(int width, int height, int randomSeed)
@@ -660,7 +707,7 @@ internal static class Mutator
 
 internal static class NativeOracle
 {
-    public static bool Supports(ImageFormat format) => format is ImageFormat.Png or ImageFormat.Exr or ImageFormat.Ktx2 or ImageFormat.Jpeg;
+    public static bool Supports(ImageFormat format) => format is ImageFormat.Png or ImageFormat.Exr or ImageFormat.Ktx2 or ImageFormat.Jpeg or ImageFormat.Webp;
 
     public static bool Accepts(string executable, ImageFormat format, byte[] data)
     {

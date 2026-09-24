@@ -28,6 +28,8 @@ internal static class PngDocumentReader
         long metadataBytes = 0;
         var sawIhdr = false;
         var sawIdat = false;
+        var endedIdat = false;
+        var sawPalette = false;
         var sawIend = false;
 
         while (true) {
@@ -35,6 +37,10 @@ internal static class PngDocumentReader
 
             if (!sawIhdr && chunk.Type != "IHDR") {
                 throw new ImageFormatException("png", "BadChunkOrder", "IHDR must be the first PNG chunk.");
+            }
+
+            if (sawIdat && chunk.Type != "IDAT") {
+                endedIdat = true;
             }
 
             switch (chunk.Type) {
@@ -47,7 +53,20 @@ internal static class PngDocumentReader
                     sawIhdr = true;
                     break;
                 case "PLTE":
+                    if (sawPalette) {
+                        throw new ImageFormatException("png", "DuplicateChunk", "PNG contains more than one PLTE chunk.");
+                    }
+                    if (sawIdat) {
+                        throw new ImageFormatException("png", "BadChunkOrder", "PLTE must precede IDAT.");
+                    }
+                    if (ihdr!.Value.ColorType is PngColorType.Grayscale or PngColorType.GrayscaleAlpha) {
+                        throw new ImageFormatException("png", "BadChunk", "Grayscale PNG images cannot contain PLTE.");
+                    }
                     palette = ParsePalette(chunk.Data);
+                    if (ihdr.Value.ColorType == PngColorType.Indexed && palette.Count > 1 << ihdr.Value.BitDepth) {
+                        throw new ImageFormatException("png", "BadChunk", "PLTE has more entries than the indexed bit depth allows.");
+                    }
+                    sawPalette = true;
                     break;
                 case "tRNS":
                     transparency = chunk.Data;
@@ -74,6 +93,9 @@ internal static class PngDocumentReader
                     textEntries.Add(ParseITxt(chunk.Data));
                     break;
                 case "IDAT":
+                    if (endedIdat) {
+                        throw new ImageFormatException("png", "BadChunkOrder", "IDAT chunks must be consecutive.");
+                    }
                     idatBytes = checked(idatBytes + chunk.Length);
                     if (idatBytes > limits.MaxWorkingSet) {
                         throw new ImageFormatException("png", "LimitExceeded", "Compressed PNG image data exceeds MaxWorkingSet.");
@@ -90,6 +112,9 @@ internal static class PngDocumentReader
                     sawIend = true;
                     goto done;
                 default:
+                    if ((chunk.Type[0] & 0x20) == 0) {
+                        throw new ImageFormatException("png", "Unsupported.Png.CriticalChunk", $"Unknown critical PNG chunk {chunk.Type}.");
+                    }
                     unknown.Add(new PngRawChunk { Type = chunk.Type, Data = chunk.Data });
                     break;
             }

@@ -4,9 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: Comma-separated suites (all/compare/convert/jpeg/png/exr/ktx2/webp/kernels; "all" wins if present)
+        description: Comma-separated suites (all/convert/jpeg/png/exr/ktx2/webp/kernels; "all" wins if present)
         type: string
         default: all
+      comparable:
+        description: Filter suite to formats/routes with 2+ supporting libraries (never affects kernels)
+        type: boolean
+        default: false
       cases:
         description: Comma-separated procedural cases
         type: string
@@ -64,6 +68,7 @@ jobs:
       - name: Run benchmarks
         env:
           BENCH_SUITE: ${{ inputs.suite }}
+          BENCH_COMPARABLE: ${{ inputs.comparable }}
           BENCH_CASES: ${{ inputs.cases }}
           BENCH_PROFILES: ${{ inputs.profiles }}
           BENCH_MODE: ${{ inputs.mode }}
@@ -79,6 +84,9 @@ jobs:
           )
           if [[ "$BENCH_MODE" == smoke ]]; then
             args+=(--quick)
+          fi
+          if [[ "$BENCH_COMPARABLE" == true ]]; then
+            args+=(--comparable)
           fi
           dotnet run --project "$BENCH_PROJECT" --configuration "$BUILD_CONFIGURATION" --no-build -- "${args[@]}"
 

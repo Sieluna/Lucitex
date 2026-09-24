@@ -40,11 +40,12 @@ internal static class Program
             Console.WriteLine("""
                 Lucitex format comparisons (BenchmarkDotNet; Windows/Linux)
                 No arguments: run every registered suite with the default corpus/profiles.
-                --suite all|compare,convert,jpeg,png,exr,ktx2,webp,kernels
+                --suite all|convert,jpeg,png,exr,ktx2,webp,kernels
                     Comma-separated; "all" wins if present
-                    compare: filters the rest to formats/routes with 2+ supporting
-                    libraries, e.g. "all,compare" or "ktx2,compare" (empty: no
-                    other library implements ktx2). Never affects kernels.
+                --comparable Filters --suite to formats/routes with 2+ supporting
+                    libraries, e.g. "--suite all --comparable" or "--suite ktx2
+                    --comparable" (empty: no other library implements ktx2).
+                    Never affects kernels.
                 --cases ramp@128x128,checker@129x97
                     Patterns: ramp,checker,impulse,stripes,chroma,flat,alpha,noise
                     External: external:<manifest-id>, with --dataset-manifest <path>

@@ -48,6 +48,13 @@ internal sealed class MagickNetAdapter(bool fancyUpsampling = true) : CodecAdapt
     {
         image.Strip();
         image.Depth = 8;
+        if (comparison.Format == "webp") {
+            image.Quality = 100;
+            image.Settings.SetDefine(MagickFormat.WebP, "lossless", "true");
+            image.Settings.SetDefine(MagickFormat.WebP, "exact", "true");
+            image.Settings.SetDefine(MagickFormat.WebP, "method", "4");
+            return image.ToByteArray(MagickFormat.WebP);
+        }
         if (comparison.Format == "exr") {
             image.Settings.SetDefine(MagickFormat.Exr, "color-type", "RGBA");
             image.Settings.Compression = comparison.Profile switch {

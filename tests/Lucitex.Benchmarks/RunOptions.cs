@@ -6,7 +6,7 @@ namespace Lucitex.Benchmarks;
 internal sealed record RunOptions
 {
     public string[] Cases { get; init; } = ["ramp@128x128", "checker@129x97"];
-    public string[] Profiles { get; init; } = ["jpeg-default420", "png-default", "exr-half-zip", "ktx2-rgba8-none"];
+    public string[] Profiles { get; init; } = ["jpeg-default420", "png-default", "exr-half-zip", "ktx2-rgba8-none", "webp-lossless"];
     public string[] Libraries { get; init; } = ["Lucitex", "ImageSharp", "SkiaSharp", "NetVips", "MagickNet"];
     public string Suite { get; init; } = "all";
     public string Memory { get; init; } = "process";
@@ -45,7 +45,7 @@ internal sealed record RunOptions
         }
         if (options.Suite is not ("all" or "convert" or "kernels") && !FormatCatalog.Modules.Any(m => m.Id == options.Suite)
             || options.Memory is not ("managed" or "process" or "etw")) {
-            throw new ArgumentException("Suites: all/convert/jpeg/png/exr/ktx2/kernels. Memory modes: managed/process/etw.");
+            throw new ArgumentException("Suites: all/convert/jpeg/png/exr/ktx2/webp/kernels. Memory modes: managed/process/etw.");
         }
         if (!options.Libraries.Contains("Lucitex")) {
             throw new ArgumentException("Include Lucitex as the BenchmarkDotNet baseline.");

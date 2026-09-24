@@ -3,6 +3,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.Formats.Webp;
 using SixLabors.ImageSharp.PixelFormats;
 
 namespace Lucitex.Benchmarks.Codecs;
@@ -42,7 +43,10 @@ internal sealed class ImageSharpAdapter : CodecAdapter
                 Quality = ComparisonCase.Quality,
                 ColorType = comparison.Is444 ? JpegEncodingColor.YCbCrRatio444 : JpegEncodingColor.YCbCrRatio420,
             }
-            : new PngEncoder {
+            : comparison.Format == "webp" ? new WebpEncoder {
+                FileFormat = WebpFileFormatType.Lossless, Quality = 100, Method = WebpEncodingMethod.Level4,
+                NearLossless = false, TransparentColorMode = WebpTransparentColorMode.Preserve,
+            } : new PngEncoder {
                 ColorType = PngColorType.RgbWithAlpha, BitDepth = PngBitDepth.Bit8,
                 FilterMethod = comparison.Profile switch { "png-none" => PngFilterMethod.None, "png-paeth" => PngFilterMethod.Paeth, _ => PngFilterMethod.Adaptive },
             };

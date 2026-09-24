@@ -83,47 +83,66 @@ jobs:
           fi
           dotnet run --project "$BENCH_PROJECT" --configuration "$BUILD_CONFIGURATION" --no-build -- "${args[@]}"
 
-      - name: Write job summary
+      - name: Upload results
         if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-${{ matrix.os }}
+          path: ${{ env.BENCH_OUTPUT }}
+          if-no-files-found: warn
+
+  summary:
+    name: Summary
+    needs: benchmark
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: benchmark-*
+          path: artifacts
+
+      - name: Write job summary
         run: |
           set -euo pipefail
           shopt -s nullglob
-          validation="$BENCH_OUTPUT/validation.json"
-          reports=("$BENCH_OUTPUT"/results/*-comparison.md)
           {
             printf '# Benchmark\n\n'
-            printf 'Platform: %s\n\n' "$(uname -s)"
-            printf 'Hosted CI results should be compared within the same runner environment. Windows and Linux runners are different machines.\n\n'
-            if [[ -f "$validation" ]]; then
-              jq -r '
-                "Runtime: \(.Runtime). Successful codec checks: \(.Results | length).\n",
-                (if (.Errors | length) > 0 then
-                  "## Validation failures\n",
-                  (.Errors | to_entries | .[:50][] | "- \(.key): \(.value | split("\n")[0])"),
-                  "\nShowing up to 50 of \(.Errors | length) failures. See workflow logs for diagnostics.\n"
-                else empty end),
-                (if (.Skipped | length) > 0 then
-                  "<details><summary>Unsupported combinations</summary>\n",
-                  (.Skipped | to_entries | .[:50][] | "- \(.key): \(.value)"),
-                  "\nShowing up to 50 of \(.Skipped | length) unsupported combinations.\n\n</details>\n"
-                else empty end)
-              ' "$validation"
-            else
-              printf 'No validation report was produced. Inspect build/run logs; missing data is not a successful benchmark.\n\n'
-            fi
-
-            budget=800000
-            for report in "${reports[@]}"; do
-              size=$(wc -c < "$report")
-              if (( size > budget )); then
-                printf 'Remaining tables are omitted because of the summary size limit. See workflow logs for benchmark output.\n\n'
-                break
-              fi
-              cat "$report"
-              printf '\n'
-              budget=$((budget - size))
-            done
-            if (( ${#reports[@]} == 0 )); then
-              printf 'No completed timing report is available. Check validation failures and workflow logs.\n\n'
-            fi
+            printf 'Compare only within the same OS; Windows and Linux runners differ.\n\n'
           } >> "$GITHUB_STEP_SUMMARY"
+
+          for dir in artifacts/benchmark-*; do
+            os="${dir#artifacts/benchmark-}"
+            validation="$dir/validation.json"
+            reports=("$dir"/results/*-comparison.md)
+            {
+              printf '## %s\n\n' "$os"
+              if [[ -f "$validation" ]]; then
+                jq -r '
+                  "Runtime: \(.Runtime) · Checks: \(.Results | length)\n",
+                  (if (.Errors | length) > 0 then
+                    "### Failures (\(.Errors | length))\n",
+                    (.Errors | to_entries | .[:50][] | "- \(.key): \(.value | split("\n")[0])"),
+                    "\n(showing 50; full log in workflow run)\n"
+                  else empty end),
+                  (if (.Skipped | length) > 0 then
+                    "<details><summary>Skipped (\(.Skipped | length))</summary>\n",
+                    (.Skipped | to_entries | .[:50][] | "- \(.key): \(.value)"),
+                    "\n</details>\n"
+                  else empty end)
+                ' "$validation"
+              else
+                printf 'No validation report. Check logs.\n\n'
+              fi
+
+              for report in "${reports[@]}"; do
+                cat "$report"
+                printf '\n'
+              done
+              if (( ${#reports[@]} == 0 )); then
+                printf 'No timing report available.\n\n'
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          done

@@ -40,7 +40,7 @@ internal static class Program
             Console.WriteLine("""
                 Lucitex format comparisons (BenchmarkDotNet; Windows/Linux)
                 No arguments: run every registered suite with the default corpus/profiles.
-                --suite all|convert|jpeg|png|exr|ktx2|kernels
+                --suite all|convert|jpeg|png|exr|ktx2|webp|kernels
                 --cases ramp@128x128,checker@129x97
                     Patterns: ramp,checker,impulse,stripes,chroma,flat,alpha,noise
                     External: external:<manifest-id>, with --dataset-manifest <path>

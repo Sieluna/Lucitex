@@ -7,6 +7,7 @@
 **A pure C# image & texture library — decode, encode, and convert between formats.**
 
 [![Test](https://github.com/Sieluna/Lucitex/actions/workflows/test.yml/badge.svg)](https://github.com/Sieluna/Lucitex/actions/workflows/test.yml)
+[![Benchmark](https://github.com/Sieluna/Lucitex/actions/workflows/benchmark.yml/badge.svg)](https://github.com/Sieluna/Lucitex/actions/workflows/benchmark.yml)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)](https://dotnet.microsoft.com)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Live demo](https://img.shields.io/badge/demo-live-brightgreen)](https://sieluna.github.io/Lucitex/)

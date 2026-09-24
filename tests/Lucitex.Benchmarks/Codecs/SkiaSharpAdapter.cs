@@ -39,6 +39,12 @@ internal sealed class SkiaSharpAdapter : CodecAdapter
 
     private static byte[] Save(SKBitmap bitmap, ComparisonCase comparison)
     {
+        if (comparison.Format == "webp") {
+            using var pixels = bitmap.PeekPixels();
+            using var lossless = pixels.Encode(new SKWebpEncoderOptions(SKWebpEncoderCompression.Lossless, 100))
+                ?? throw new InvalidDataException("SkiaSharp failed to encode lossless WebP.");
+            return lossless.ToArray();
+        }
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(comparison.Format == "jpeg" ? SKEncodedImageFormat.Jpeg : SKEncodedImageFormat.Png, ComparisonCase.Quality);
         return data.ToArray();

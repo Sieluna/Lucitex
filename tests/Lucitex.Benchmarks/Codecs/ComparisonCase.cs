@@ -33,14 +33,31 @@ internal sealed record ComparisonCase(string Image, string Profile, Library Libr
         if (Operation == Operation.Decode) {
             return null;
         }
+        if (Library == Library.SkiaSharp && Format == "webp" && InputFormat != "jpeg" && HasHiddenColor()) {
+            return "SkiaSharp's WebP encoder does not expose exact transparent RGB preservation; this input contains nonzero RGB under zero alpha. Decoding remains comparable.";
+        }
         return Library switch {
             Library.ImageSharp when Progressive || Profile == "jpeg-optimized420" => "ImageSharp 3.1.11 does not expose this encoding policy.",
-            Library.SkiaSharp when Profile is not ("jpeg-default420" or "png-default") => "SkiaSharp does not expose this encoding policy.",
+            Library.SkiaSharp when Profile is not ("jpeg-default420" or "png-default" or "webp-lossless") => "SkiaSharp does not expose this encoding policy.",
             Library.MagickNet when Profile is "png-none" or "png-paeth" => "Magick.NET 14.17.1's PNG path does not honor the strict per-row fixed-filter contract in verification; use png-default.",
             Library.NetVips when Profile == "png-paeth" && TestImage.DeclaredDimensions(Image) is { } size && (size.Width == 1 || size.Height == 1)
                 => "libpng disables Paeth for single-row/column inputs; this is outside the strict fixed-filter contract.",
             _ => null,
         };
+    }
+
+    private bool HasHiddenColor()
+    {
+        if (!Image.StartsWith("external:", StringComparison.Ordinal)) {
+            return Image.StartsWith("alpha@", StringComparison.Ordinal);
+        }
+        var pixels = TestImage.Create(Image, "webp").Pixels;
+        for (var i = 0; i < pixels.Length; i += 4) {
+            if (pixels[i + 3] == 0 && (pixels[i] | pixels[i + 1] | pixels[i + 2]) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static ComparisonCase? From(BenchmarkCase benchmark)

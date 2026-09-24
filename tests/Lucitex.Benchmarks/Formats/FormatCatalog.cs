@@ -5,7 +5,7 @@ namespace Lucitex.Benchmarks.Formats;
 
 internal static class FormatCatalog
 {
-    public static IReadOnlyList<IFormatModule> Modules { get; } = [new JpegModule(), new PngModule(), new ExrModule(), new Ktx2Module()];
+    public static IReadOnlyList<IFormatModule> Modules { get; } = [new JpegModule(), new PngModule(), new ExrModule(), new Ktx2Module(), new WebpModule()];
     public static IReadOnlyList<ConversionRoute> Conversions { get; } = [
         new("png", "jpeg", typeof(PngToJpegBenchmarks)),
         new("jpeg", "png", typeof(JpegToPngBenchmarks)),
@@ -19,6 +19,14 @@ internal static class FormatCatalog
         new("ktx2", "jpeg", typeof(Ktx2ToJpegBenchmarks)),
         new("exr", "ktx2", typeof(ExrToKtx2Benchmarks)),
         new("ktx2", "exr", typeof(Ktx2ToExrBenchmarks)),
+        new("png", "webp", typeof(PngToWebpBenchmarks)),
+        new("webp", "png", typeof(WebpToPngBenchmarks)),
+        new("jpeg", "webp", typeof(JpegToWebpBenchmarks)),
+        new("webp", "jpeg", typeof(WebpToJpegBenchmarks)),
+        new("exr", "webp", typeof(ExrToWebpBenchmarks)),
+        new("webp", "exr", typeof(WebpToExrBenchmarks)),
+        new("ktx2", "webp", typeof(Ktx2ToWebpBenchmarks)),
+        new("webp", "ktx2", typeof(WebpToKtx2Benchmarks)),
     ];
     public static IReadOnlyList<string> PlannedFormats { get; } = ["dds", "hdr"];
     public static IEnumerable<string> Profiles => Modules.SelectMany(m => m.Profiles);

@@ -49,6 +49,7 @@ internal sealed class NetVipsAdapter : CodecAdapter
         ? image.JpegsaveBuffer(q: ComparisonCase.Quality, optimizeCoding: comparison.Profile == "jpeg-default420" ? null : comparison.OptimizeHuffman,
             interlace: comparison.Progressive, subsampleMode: comparison.Is444 ? Enums.ForeignSubsample.Off : Enums.ForeignSubsample.On,
             keep: Enums.ForeignKeep.None)
+        : comparison.Format == "webp" ? image.WebpsaveBuffer(lossless: true, nearLossless: false, exact: true, q: 100, effort: 4, keep: Enums.ForeignKeep.None)
         : image.PngsaveBuffer(bitdepth: 8, palette: false,
             filter: comparison.Profile switch { "png-none" => Enums.ForeignPngFilter.None, "png-paeth" => Enums.ForeignPngFilter.Paeth, _ => null },
             keep: Enums.ForeignKeep.None);

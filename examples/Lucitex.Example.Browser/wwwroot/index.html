@@ -18,15 +18,17 @@
     <p>Runs Lucitex's format planner and executor entirely in the browser via WebAssembly.</p>
 
     <label for="source">Source image</label>
-    <input id="source" type="file" accept=".png,.dds,.exr,.hdr,.pic,.ktx2" />
+    <input id="source" type="file" accept=".png,.jpg,.jpeg,.webp,.dds,.exr,.hdr,.pic,.ktx2" />
 
     <label for="target">Target format</label>
     <select id="target">
         <option value="png">PNG</option>
+        <option value="jpeg">JPEG</option>
         <option value="dds">DDS</option>
         <option value="exr">EXR</option>
         <option value="hdr">HDR</option>
         <option value="ktx2">KTX2</option>
+        <option value="webp">WebP (lossless)</option>
     </select>
 
     <button id="convert" type="button" disabled>Convert</button>

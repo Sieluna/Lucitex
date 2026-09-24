@@ -4,14 +4,16 @@ using Lucitex.Core.Execution.Codecs;
 using Lucitex.Dds;
 using Lucitex.Exr;
 using Lucitex.Hdr;
+using Lucitex.Jpeg;
 using Lucitex.Ktx2;
 using Lucitex.Png;
+using Lucitex.Webp;
 
 namespace Lucitex.Example.Browser;
 
 public static partial class ImageConversion
 {
-    private static readonly IImageCodec[] s_Codecs = [new PngCodec(), new DdsCodec(), new ExrCodec(), new HdrCodec(), new Ktx2Codec()];
+    private static readonly IImageCodec[] s_Codecs = [new PngCodec(), new JpegCodec(), new DdsCodec(), new ExrCodec(), new HdrCodec(), new Ktx2Codec(), new WebpCodec()];
 
     [JSExport]
     public static byte[] Convert(byte[] source, string sourceExtension, string targetExtension)

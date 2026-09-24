@@ -3,8 +3,10 @@ using Lucitex.Core.Execution.Codecs;
 using Lucitex.Dds;
 using Lucitex.Exr;
 using Lucitex.Hdr;
+using Lucitex.Jpeg;
 using Lucitex.Ktx2;
 using Lucitex.Png;
+using Lucitex.Webp;
 
 if (args.Length != 2) {
     Console.Error.WriteLine("usage: Lucitex.Example <source-image> <target-image>");
@@ -14,7 +16,7 @@ if (args.Length != 2) {
 var sourcePath = args[0];
 var targetPath = args[1];
 
-IImageCodec[] codecs = [new PngCodec(), new DdsCodec(), new ExrCodec(), new HdrCodec(), new Ktx2Codec()];
+IImageCodec[] codecs = [new PngCodec(), new JpegCodec(), new DdsCodec(), new ExrCodec(), new HdrCodec(), new Ktx2Codec(), new WebpCodec()];
 
 try {
     var sourceCodec = ResolveCodec(sourcePath);

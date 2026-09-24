@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using Lucitex.Core.Execution;
+using Lucitex.Webp.Lossy;
 
 namespace Lucitex.Webp;
 
@@ -8,7 +9,7 @@ internal sealed record WebpMetadata(byte[]? Icc = null, byte[]? Exif = null, byt
     public bool IsEmpty => Icc is null && Exif is null && Xmp is null;
 }
 
-internal sealed record WebpDocument(int Width, int Height, WebpBuffer<byte> Payload, WebpMetadata Metadata);
+internal sealed record WebpDocument(int Width, int Height, bool IsLossy, WebpBuffer<byte> Payload, WebpBuffer<byte>? AlphaPayload, WebpMetadata Metadata);
 
 internal static class WebpContainer
 {
@@ -24,6 +25,8 @@ internal static class WebpContainer
             throw new InvalidDataException("Invalid WebP RIFF size.");
         }
         WebpBuffer<byte>? payload = null;
+        WebpBuffer<byte>? alphaPayload = null;
+        var isLossy = false;
         byte[]? icc = null;
         byte[]? exif = null;
         byte[]? xmp = null;
@@ -81,8 +84,39 @@ internal static class WebpContainer
                     payload = memory.Rent<byte>((int)size - 5);
                     stream.ReadExactly(payload.Span);
                 }
-                else if (type == FourCc("VP8 "u8) || type == FourCc("ALPH"u8) || type == FourCc("ANIM"u8) || type == FourCc("ANMF"u8)) {
-                    throw new NotSupportedException("Only static lossless VP8L WebP images are supported.");
+                else if (type == FourCc("VP8 "u8)) {
+                    if (payload is not null || size < 10) {
+                        throw new InvalidDataException("Invalid or duplicate WebP lossy payload.");
+                    }
+                    if (size > int.MaxValue) {
+                        throw new ImageFormatException("webp", "LimitExceeded", "WebP payload is too large.");
+                    }
+                    var chunk = memory.Rent<byte>((int)size);
+                    stream.ReadExactly(chunk.Span);
+                    var frameHeader = Vp8FrameHeader.ParseUncompressed(chunk.Span, out _, out _);
+                    width = frameHeader.Width;
+                    height = frameHeader.Height;
+                    var decodedBytes = (long)width * height * 4;
+                    if (width > limits.MaxDimensions || height > limits.MaxDimensions || (long)width * height > limits.MaxPixels || decodedBytes > limits.MaxDecodedBytes || decodedBytes / (double)size > limits.MaxCompressionRatio) {
+                        chunk.Dispose();
+                        throw new ImageFormatException("webp", "LimitExceeded", "WebP dimensions, decoded size or compression ratio exceeds the configured limit.");
+                    }
+                    payload = chunk;
+                    isLossy = true;
+                }
+                else if (type == FourCc("ALPH"u8)) {
+                    if (alphaPayload is not null || size < 1) {
+                        throw new InvalidDataException("Invalid or duplicate WebP ALPH chunk.");
+                    }
+                    if (size > int.MaxValue) {
+                        throw new ImageFormatException("webp", "LimitExceeded", "WebP alpha payload is too large.");
+                    }
+                    var chunk = memory.Rent<byte>((int)size);
+                    stream.ReadExactly(chunk.Span);
+                    alphaPayload = chunk;
+                }
+                else if (type == FourCc("ANIM"u8) || type == FourCc("ANMF"u8)) {
+                    throw new NotSupportedException("Animated WebP is not supported.");
                 }
                 else {
                     metadataBytes += size;
@@ -124,13 +158,15 @@ internal static class WebpContainer
                 chunkCount++;
             }
             if (payload is null || (canvasWidth != 0 && (canvasWidth != width || canvasHeight != height)) ||
-                ((flags & 32) != 0) != (icc is not null) || ((flags & 8) != 0) != (exif is not null) || ((flags & 4) != 0) != (xmp is not null)) {
+                ((flags & 32) != 0) != (icc is not null) || ((flags & 8) != 0) != (exif is not null) || ((flags & 4) != 0) != (xmp is not null) ||
+                ((flags & 16) != 0) != (alphaPayload is not null) || (alphaPayload is not null && !isLossy)) {
                 throw new InvalidDataException("WebP chunks do not match the container header.");
             }
-            return new WebpDocument(width, height, payload, new WebpMetadata(icc, exif, xmp));
+            return new WebpDocument(width, height, isLossy, payload, alphaPayload, new WebpMetadata(icc, exif, xmp));
         }
         catch {
             payload?.Dispose();
+            alphaPayload?.Dispose();
             throw;
         }
     }

@@ -2,6 +2,7 @@ using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
 using Lucitex.Core.Semantic;
 using Lucitex.Webp.Lossless;
+using Lucitex.Webp.Lossy;
 
 namespace Lucitex.Webp;
 
@@ -11,6 +12,8 @@ internal sealed class WebpReader : IImageReader
     private readonly ImageAssetDescriptor _descriptor;
     private readonly WebpMemory _memory;
     private WebpBuffer<uint>? _pixels;
+    private Vp8DecodedFrame? _lossyFrame;
+    private byte[]? _alpha;
     private bool _disposed;
 
     public WebpReader(Stream stream, DecodeLimits limits)
@@ -26,6 +29,7 @@ internal sealed class WebpReader : IImageReader
         }
         catch {
             _document.Payload.Dispose();
+            _document.AlphaPayload?.Dispose();
             throw;
         }
     }
@@ -46,16 +50,20 @@ internal sealed class WebpReader : IImageReader
         if (count == 0) {
             return 0;
         }
-        if (_pixels is null) {
-            try {
-                _pixels = Vp8LDecoder.Decode(_document.Payload.Span, _document.Width, _document.Height, _memory);
-                _document.Payload.Dispose();
+        EnsureDecoded();
+
+        var startRow = (int)region.Region.MinY;
+        var rows = count / 4 / _document.Width;
+        if (_lossyFrame is { } frame) {
+            for (var r = 0; r < rows; r++) {
+                var row = startRow + r;
+                var alphaRow = _alpha is null ? ReadOnlySpan<byte>.Empty : _alpha.AsSpan(row * _document.Width, _document.Width);
+                Vp8YuvToRgb.ConvertRowToRgba(frame, row, destination.Slice(r * _document.Width * 4, _document.Width * 4), alphaRow);
             }
-            catch (Exception exception) when (WebpFormatErrors.IsMalformed(exception)) {
-                throw WebpFormatErrors.Wrap(exception);
-            }
+            return count;
         }
-        var pixels = _pixels.Span.Slice((int)region.Region.MinY * _document.Width, count / 4);
+
+        var pixels = _pixels!.Span.Slice(startRow * _document.Width, count / 4);
         for (var i = 0; i < pixels.Length; i++) {
             var pixel = pixels[i];
             destination[i * 4] = (byte)(pixel >> 16);
@@ -66,6 +74,31 @@ internal sealed class WebpReader : IImageReader
         return count;
     }
 
+    private void EnsureDecoded()
+    {
+        if (_pixels is not null || _lossyFrame is not null) {
+            return;
+        }
+        try {
+            if (_document.IsLossy) {
+                _lossyFrame = Vp8Decoder.Decode(_document.Payload.Span);
+                if (_document.AlphaPayload is { } alphaChunk) {
+                    _alpha = WebpAlpha.Decode(alphaChunk.Span, _document.Width, _document.Height, _memory);
+                }
+            }
+            else {
+                _pixels = Vp8LDecoder.Decode(_document.Payload.Span, _document.Width, _document.Height, _memory);
+            }
+        }
+        catch (Exception exception) when (WebpFormatErrors.IsMalformed(exception)) {
+            throw WebpFormatErrors.Wrap(exception);
+        }
+        finally {
+            _document.Payload.Dispose();
+            _document.AlphaPayload?.Dispose();
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) {
@@ -73,6 +106,7 @@ internal sealed class WebpReader : IImageReader
         }
         _disposed = true;
         _document.Payload.Dispose();
+        _document.AlphaPayload?.Dispose();
         _pixels?.Dispose();
         _pixels = null;
     }

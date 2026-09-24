@@ -1,0 +1,167 @@
+name: Fuzz
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Number of mutations per platform (1-1000000)
+        type: number
+        default: 1000
+      seed:
+        description: Reproducible random seed (signed 32-bit integer)
+        type: number
+        default: 42
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: FFI fuzz (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            triplet: x64-linux
+            library: lib/liblucitex_fuzz_native.so
+          - os: windows-latest
+            triplet: x64-windows-static
+            library: bin/lucitex_fuzz_native.dll
+
+    defaults:
+      run:
+        shell: pwsh
+
+    env:
+      VCPKG_BINARY_SOURCES: clear;default,readwrite
+      VCPKG_MAX_CONCURRENCY: '2'
+      FUZZ_ITERATIONS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.iterations) || '1000' }}
+      FUZZ_SEED: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.seed) || '42' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Read native dependency baseline and validate inputs
+        id: native
+        run: |
+          $iterations = 0
+          $seed = 0
+          if (-not [int]::TryParse($env:FUZZ_ITERATIONS, [ref]$iterations) -or $iterations -lt 1 -or $iterations -gt 1000000) {
+            throw 'Iterations must be between 1 and 1000000.'
+          }
+          if (-not [int]::TryParse($env:FUZZ_SEED, [ref]$seed)) {
+            throw 'Seed must be a signed 32-bit integer.'
+          }
+          $manifest = Get-Content tests/Lucitex.Fuzz.Native/vcpkg.json -Raw | ConvertFrom-Json
+          "baseline=$($manifest.'builtin-baseline')" >> $env:GITHUB_OUTPUT
+          $cachePath = Join-Path $env:RUNNER_TEMP 'vcpkg-cache'
+          "VCPKG_DEFAULT_BINARY_CACHE=$cachePath" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force -Path $cachePath, artifacts/fuzz | Out-Null
+
+      - name: Checkout pinned vcpkg
+        uses: actions/checkout@v7
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ steps.native.outputs.baseline }}
+          path: artifacts/vcpkg
+          persist-credentials: false
+
+      - name: Restore native dependency cache
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: fuzz-vcpkg-v1-${{ matrix.os }}-${{ matrix.triplet }}-${{ hashFiles('tests/Lucitex.Fuzz.Native/vcpkg.json') }}
+
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          if ($LASTEXITCODE -ne 0) { throw 'apt-get update failed.' }
+          sudo apt-get install -y autoconf automake libtool nasm pkg-config ninja-build
+          if ($LASTEXITCODE -ne 0) { throw 'Installing native build prerequisites failed.' }
+
+      - name: Bootstrap vcpkg
+        run: |
+          if ($IsWindows) {
+            & ./artifacts/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          }
+          else {
+            & ./artifacts/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed.' }
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.x
+
+      - name: Build FFI oracle
+        id: oracle
+        env:
+          NATIVE_TRIPLET: ${{ matrix.triplet }}
+        run: |
+          $toolchain = Join-Path $PWD 'artifacts/vcpkg/scripts/buildsystems/vcpkg.cmake'
+          $arguments = @(
+            '-S', 'tests/Lucitex.Fuzz.Native', '-B', 'artifacts/fuzz-native',
+            "-DCMAKE_TOOLCHAIN_FILE=$toolchain",
+            "-DVCPKG_TARGET_TRIPLET=$env:NATIVE_TRIPLET",
+            '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded'
+          )
+          if ($IsWindows) { $arguments += @('-A', 'x64') }
+          cmake @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Native CMake configuration failed.' }
+          cmake --build artifacts/fuzz-native --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
+          cmake --install artifacts/fuzz-native --config Release --prefix artifacts/fuzz-oracle
+          if ($LASTEXITCODE -ne 0) { throw 'Native install failed.' }
+
+      - name: Save native dependency cache
+        if: steps.oracle.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Build fuzz harness
+        run: dotnet build tests/Lucitex.Fuzz/Lucitex.Fuzz.csproj --configuration Release
+
+      - name: Run fuzz through FFI
+        timeout-minutes: 10
+        env:
+          ORACLE_LIBRARY: ${{ matrix.library }}
+        run: |
+          $library = Join-Path $PWD "artifacts/fuzz-oracle/$env:ORACLE_LIBRARY"
+          if (-not (Test-Path -LiteralPath $library -PathType Leaf)) {
+            throw "FFI library is missing: $library"
+          }
+          dotnet run --project tests/Lucitex.Fuzz --configuration Release --no-build -- run `
+            --iterations $env:FUZZ_ITERATIONS --seed $env:FUZZ_SEED --mutation mixed `
+            --oracle $library --artifacts artifacts/fuzz/cases 2>&1 |
+            Tee-Object -FilePath artifacts/fuzz/run.log
+          $fuzzExitCode = $LASTEXITCODE
+          "Fuzz exit code: $fuzzExitCode; iterations: $env:FUZZ_ITERATIONS; seed: $env:FUZZ_SEED" >> $env:GITHUB_STEP_SUMMARY
+          exit $fuzzExitCode
+
+      - name: Upload fuzz diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.os }}-${{ github.run_attempt }}
+          path: |
+            artifacts/fuzz/
+            artifacts/fuzz-native/CMakeFiles/CMakeConfigureLog.yaml
+            artifacts/fuzz-native/vcpkg-manifest-install.log
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 using System.Numerics;
 using Lucitex.Core.Execution;
@@ -13,7 +14,7 @@ internal sealed class PngWriter : IImageWriter
 {
     private readonly Stream _stream;
     private readonly PngDocument _document;
-    private readonly byte[] _pixelBuffer;
+    private byte[]? _pixelBuffer;
     private readonly int _rowStrideBytes;
     private readonly PngEncoderOptions _options;
     private bool _finished;
@@ -27,7 +28,9 @@ internal sealed class PngWriter : IImageWriter
         }
         _document = PngDescriptorMapper.ToPngDocument(descriptor.Parts[0]);
         _rowStrideBytes = _document.Ihdr.RowByteLength(_document.Ihdr.Width);
-        _pixelBuffer = new byte[checked((long)_rowStrideBytes * _document.Ihdr.Height)];
+        var pixelCount = checked(_rowStrideBytes * _document.Ihdr.Height);
+        _pixelBuffer = ArrayPool<byte>.Shared.Rent(pixelCount);
+        _pixelBuffer.AsSpan(0, pixelCount).Clear();
     }
 
     public WriterExecutionContract Contract { get; } = new() {
@@ -43,6 +46,7 @@ internal sealed class PngWriter : IImageWriter
 
     public void Write(WorkRegion region, ReadOnlySpan<byte> data)
     {
+        ObjectDisposedException.ThrowIf(_pixelBuffer is null, this);
         var width = _document.Ihdr.Width;
 
         if (region.Region.MinX != 0 || region.Region.MaxXExclusive != width) {
@@ -62,34 +66,56 @@ internal sealed class PngWriter : IImageWriter
             return;
         }
 
-        PngDocumentWriter.WriteHeader(_stream, _document);
-        using (var chunks = new PngIdatStream(_stream))
-        using (var zlib = new ZLibStream(chunks, _options.CompressionLevel, leaveOpen: true)) {
-            var best = new byte[_rowStrideBytes + 1];
-            var candidate = new byte[_rowStrideBytes + 1];
-            for (var y = 0; y < _document.Ihdr.Height; y++) {
-                var row = _pixelBuffer.AsSpan(y * _rowStrideBytes, _rowStrideBytes);
-                var previous = y == 0 ? ReadOnlySpan<byte>.Empty : _pixelBuffer.AsSpan((y - 1) * _rowStrideBytes, _rowStrideBytes);
-                var filter = _options.Filter ?? PngFilterType.None;
-                PngFilter.Apply(filter, best.AsSpan(1), row, previous, _document.Ihdr.BytesPerPixel);
-                if (_options.Filter is null && _document.Ihdr.BitDepth >= 8 && _document.Ihdr.ColorType != PngColorType.Indexed) {
-                    var bestScore = Score(best.AsSpan(1));
-                    for (var choice = PngFilterType.Sub; choice <= PngFilterType.Paeth && bestScore > 0; choice++) {
-                        PngFilter.Apply(choice, candidate.AsSpan(1), row, previous, _document.Ihdr.BytesPerPixel);
-                        var score = Score(candidate.AsSpan(1));
-                        if (score < bestScore) {
-                            bestScore = score;
-                            filter = choice;
-                            (best, candidate) = (candidate, best);
+        ObjectDisposedException.ThrowIf(_pixelBuffer is null, this);
+        try {
+            PngDocumentWriter.WriteHeader(_stream, _document);
+            using (var chunks = new PngIdatStream(_stream))
+            using (var zlib = new ZLibStream(chunks, _options.CompressionLevel, leaveOpen: true)) {
+                var bestOwner = ArrayPool<byte>.Shared.Rent(_rowStrideBytes + 1);
+                var candidateOwner = ArrayPool<byte>.Shared.Rent(_rowStrideBytes + 1);
+                var best = bestOwner.AsMemory(0, _rowStrideBytes + 1);
+                var candidate = candidateOwner.AsMemory(0, _rowStrideBytes + 1);
+                try {
+                    for (var y = 0; y < _document.Ihdr.Height; y++) {
+                        var row = _pixelBuffer.AsSpan(y * _rowStrideBytes, _rowStrideBytes);
+                        var previous = y == 0 ? ReadOnlySpan<byte>.Empty : _pixelBuffer.AsSpan((y - 1) * _rowStrideBytes, _rowStrideBytes);
+                        var filter = _options.Filter ?? PngFilterType.None;
+                        PngFilter.Apply(filter, best.Span[1..], row, previous, _document.Ihdr.BytesPerPixel);
+                        if (_options.Filter is null && _document.Ihdr.BitDepth >= 8 && _document.Ihdr.ColorType != PngColorType.Indexed) {
+                            var bestScore = Score(best.Span[1..]);
+                            for (var choice = PngFilterType.Sub; choice <= PngFilterType.Paeth && bestScore > 0; choice++) {
+                                PngFilter.Apply(choice, candidate.Span[1..], row, previous, _document.Ihdr.BytesPerPixel);
+                                var score = Score(candidate.Span[1..]);
+                                if (score < bestScore) {
+                                    bestScore = score;
+                                    filter = choice;
+                                    (best, candidate) = (candidate, best);
+                                }
+                            }
                         }
+                        best.Span[0] = (byte)filter;
+                        zlib.Write(best.Span);
                     }
                 }
-                best[0] = (byte)filter;
-                zlib.Write(best);
+                finally {
+                    ArrayPool<byte>.Shared.Return(bestOwner);
+                    ArrayPool<byte>.Shared.Return(candidateOwner);
+                }
             }
+            PngDocumentWriter.WriteEnd(_stream);
+            _finished = true;
         }
-        PngDocumentWriter.WriteEnd(_stream);
-        _finished = true;
+        finally {
+            Dispose();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_pixelBuffer is { } pixels) {
+            _pixelBuffer = null;
+            ArrayPool<byte>.Shared.Return(pixels);
+        }
     }
 
     private static long Score(ReadOnlySpan<byte> data)

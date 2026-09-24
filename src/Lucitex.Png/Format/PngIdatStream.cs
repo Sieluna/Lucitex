@@ -1,9 +1,12 @@
+using System.Buffers;
+
 namespace Lucitex.Png.Format;
 
 internal sealed class PngIdatStream(Stream output) : Stream
 {
-    private readonly byte[] _buffer = new byte[65536];
+    private readonly byte[] _buffer = ArrayPool<byte>.Shared.Rent(65536);
     private int _count;
+    private bool _disposed;
 
     public override bool CanRead => false;
     public override bool CanSeek => false;
@@ -36,8 +39,12 @@ internal sealed class PngIdatStream(Stream output) : Stream
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) {
-            Flush();
+        if (!_disposed) {
+            _disposed = true;
+            if (disposing) {
+                Flush();
+            }
+            ArrayPool<byte>.Shared.Return(_buffer);
         }
         base.Dispose(disposing);
     }

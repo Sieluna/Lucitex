@@ -3,6 +3,7 @@ using Lucitex.Core.Execution.Codecs;
 using Lucitex.Core.Semantic;
 using Lucitex.Core.Spatial;
 using Lucitex.Webp.Lossless;
+using Lucitex.Webp.Lossy;
 
 namespace Lucitex.Webp;
 
@@ -29,10 +30,13 @@ internal sealed class WebpWriter : IImageWriter
         if (!stream.CanWrite) {
             throw new ArgumentException("Output stream must be writable.", nameof(stream));
         }
-        if (!Enum.IsDefined(options.Effort) || options.MaxWorkingSet <= 0) {
+        if (!Enum.IsDefined(options.Effort) || options.Quality is < 0 or > 100 || options.MaxWorkingSet <= 0) {
             throw new ArgumentOutOfRangeException(nameof(options));
         }
         (_width, _height, _channels, _metadata) = WebpDescriptorMapper.Validate(descriptor);
+        if (!options.Lossless && (_width > 16383 || _height > 16383)) {
+            throw new NotSupportedException("Lossy WebP dimensions must not exceed 16383 pixels.");
+        }
         _stream = stream;
         _options = options;
         _memory = new WebpMemory(options.MaxWorkingSet);
@@ -87,7 +91,12 @@ internal sealed class WebpWriter : IImageWriter
             throw new InvalidOperationException("Every WebP image row must be written before finishing.");
         }
         try {
-            Vp8LEncoder.Encode(_stream, _pixels.Span, _width, _height, _options, _memory, _metadata);
+            if (_options.Lossless) {
+                Vp8LEncoder.Encode(_stream, _pixels.Span, _width, _height, _options, _memory, _metadata);
+            }
+            else {
+                Vp8Encoder.Encode(_stream, _pixels.Span, _width, _height, _options, _memory, _metadata);
+            }
             _finished = true;
         }
         catch {

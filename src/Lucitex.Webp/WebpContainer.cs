@@ -171,18 +171,22 @@ internal static class WebpContainer
         }
     }
 
-    public static void WriteHeader(Stream stream, int payloadSize, int width, int height, bool alpha, WebpMetadata metadata)
+    public static void WriteHeader(Stream stream, int payloadSize, int width, int height, bool alpha, WebpMetadata metadata, bool lossless, int alphaSize = 0)
     {
         var size = 4L + ChunkSize(payloadSize);
-        if (!metadata.IsEmpty) {
+        var extended = !metadata.IsEmpty || alphaSize > 0;
+        if (extended) {
             size += 18 + MetadataSize(metadata.Icc) + MetadataSize(metadata.Exif) + MetadataSize(metadata.Xmp);
+        }
+        if (alphaSize > 0) {
+            size += ChunkSize(alphaSize);
         }
         Span<byte> header = stackalloc byte[12];
         "RIFF"u8.CopyTo(header);
         BinaryPrimitives.WriteUInt32LittleEndian(header[4..], checked((uint)size));
         "WEBP"u8.CopyTo(header[8..]);
         stream.Write(header);
-        if (!metadata.IsEmpty) {
+        if (extended) {
             WriteChunkHeader(stream, "VP8X"u8, 10);
             header[..10].Clear();
             header[0] = (byte)((alpha ? 16 : 0) | (metadata.Icc is null ? 0 : 32) | (metadata.Exif is null ? 0 : 8) | (metadata.Xmp is null ? 0 : 4));
@@ -191,7 +195,23 @@ internal static class WebpContainer
             stream.Write(header[..10]);
             WriteMetadata(stream, "ICCP"u8, metadata.Icc);
         }
-        WriteChunkHeader(stream, "VP8L"u8, payloadSize);
+        WriteChunkHeader(stream, alphaSize > 0 ? "ALPH"u8 : lossless ? "VP8L"u8 : "VP8 "u8, alphaSize > 0 ? alphaSize : payloadSize);
+    }
+
+    public static void WriteAlpha(Stream stream, ReadOnlySpan<uint> pixels)
+    {
+        stream.WriteByte(0);
+        Span<byte> buffer = stackalloc byte[4096];
+        for (var offset = 0; offset < pixels.Length; offset += buffer.Length) {
+            var count = Math.Min(buffer.Length, pixels.Length - offset);
+            for (var i = 0; i < count; i++) {
+                buffer[i] = (byte)(pixels[offset + i] >> 24);
+            }
+            stream.Write(buffer[..count]);
+        }
+        if (((pixels.Length + 1) & 1) != 0) {
+            stream.WriteByte(0);
+        }
     }
 
     public static void WriteTrailingMetadata(Stream stream, WebpMetadata metadata)
@@ -216,7 +236,7 @@ internal static class WebpContainer
         }
     }
 
-    private static void WriteChunkHeader(Stream stream, ReadOnlySpan<byte> type, int size)
+    internal static void WriteChunkHeader(Stream stream, ReadOnlySpan<byte> type, int size)
     {
         Span<byte> header = stackalloc byte[8];
         type.CopyTo(header);

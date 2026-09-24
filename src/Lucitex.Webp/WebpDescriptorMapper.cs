@@ -66,7 +66,7 @@ internal static class WebpDescriptorMapper
             throw new NotSupportedException("WebP encoding requires interleaved RGB8 or RGBA8 samples.");
         }
         if (part.Alpha?.Mode == AlphaMode.Premultiplied) {
-            throw new NotSupportedException("Lossless WebP encoding requires straight alpha.");
+            throw new NotSupportedException("WebP encoding requires straight alpha.");
         }
         if (part.Color?.Transfer is not (null or TransferFunction.Unknown or TransferFunction.Srgb) && part.Color.IccProfile is null) {
             throw new NotSupportedException("WebP requires sRGB samples or an ICC profile describing their color encoding.");

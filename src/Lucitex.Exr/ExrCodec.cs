@@ -1,5 +1,6 @@
 using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
+using Lucitex.Core.Representation;
 using Lucitex.Core.Sampling;
 using Lucitex.Core.Semantic;
 using Lucitex.Exr.Format;
@@ -16,6 +17,8 @@ public sealed class ExrCodec(ExrCompressionId defaultCompression = ExrCompressio
 
     public CodecCapabilities Capabilities { get; } = new() {
         SupportedSampleTypes = [SampleType.Float16, SampleType.Float32, SampleType.UInt32],
+        SampleLayout = PlaneLayout.Planar,
+        RequiresSortedChannels = true,
         SupportsIndexed = false,
         SupportsDeep = false,
         SupportsMultiplePartsPerAsset = true,

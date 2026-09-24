@@ -220,8 +220,16 @@ public static class ConversionPlanner
                 targetRepresentation = EncodedRepresentation(targetFormat);
             }
             else {
+                var layoutChannels = resultChannelSchema.Channels.Select(channel => channel.Name);
+                if (targetCapabilities.RequiresSortedChannels) {
+                    layoutChannels = layoutChannels.OrderBy(name => name.FullName, StringComparer.Ordinal);
+                }
                 targetRepresentation = new PlainSampleRepresentation {
-                    Planes = [new() { Channels = resultChannelSchema.Channels.Select(c => c.Name).ToList(), Extent = plain.Planes[0].Extent }],
+                    Planes = [new() {
+                        Channels = layoutChannels.ToArray(),
+                        Extent = sourcePart.Topology.BaseExtent,
+                        Layout = targetCapabilities.SampleLayout,
+                    }],
                 };
             }
 
@@ -478,7 +486,27 @@ public static class ConversionPlanner
         // canonicalized into that order, not merely filtered down to recognized names. EXR in
         // particular reports channels in the file's alphabetical order (A,B,G,R), which is why this
         // reordering is required even when nothing is actually being dropped.
-        var canonicalOrder = new[] { "R", "G", "B", "A", "Y" };
+        var steps = new List<ConversionStep>();
+        var grayscale = sourceChannels.Channels.Any(channel => channel.Name.FullName == "Y") &&
+            sourceChannels.Channels.All(channel => channel.Name.FullName is "Y" or "A");
+        if (grayscale && targetCapabilities.SupportedChannelCounts is { } counts &&
+            !counts.Contains(sourceChannels.Channels.Count) && (counts.Contains(3) || counts.Contains(4))) {
+            var luminance = sourceChannels.Channels.Single(channel => channel.Name.FullName == "Y");
+            var expanded = new List<ChannelDescriptor> {
+                luminance with { Name = "R", Semantic = ChannelSemantic.Red },
+                luminance with { Name = "G", Semantic = ChannelSemantic.Green },
+                luminance with { Name = "B", Semantic = ChannelSemantic.Blue },
+            };
+            var mappings = new List<ChannelMapping> { new("Y", "R"), new("Y", "G"), new("Y", "B") };
+            if (sourceChannels.Channels.FirstOrDefault(channel => channel.Name.FullName == "A") is { } alpha) {
+                expanded.Add(alpha);
+                mappings.Add(new("A", "A"));
+            }
+            steps.Add(new MapChannelsStep(mappings));
+            sourceChannels = new ChannelSchema { Channels = expanded };
+            grayscale = false;
+        }
+        var canonicalOrder = grayscale ? new[] { "Y", "A" } : new[] { "R", "G", "B", "A", "Y" };
         var kept = sourceChannels.Channels
             .Where(c => canonicalOrder.Contains(c.Name.FullName))
             .OrderBy(c => Array.IndexOf(canonicalOrder, c.Name.FullName))
@@ -502,7 +530,6 @@ public static class ConversionPlanner
 
         var reordered = !kept.Select(c => c.Name.FullName).SequenceEqual(sourceChannels.Channels.Select(c => c.Name.FullName));
         var keptSchema = new ChannelSchema { Channels = kept };
-        var steps = new List<ConversionStep>();
         if (dropped.Count > 0 || reordered) {
             steps.Add(new SelectChannelsStep(kept.Select(c => c.Name).ToList()));
         }

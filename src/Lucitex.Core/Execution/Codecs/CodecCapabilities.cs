@@ -19,6 +19,10 @@ public sealed record CodecCapabilities
     // codec's Write()) must know this to interpret/produce them correctly.
     public SampleByteOrder SampleByteOrder { get; init; } = SampleByteOrder.LittleEndian;
 
+    public PlaneLayout SampleLayout { get; init; } = PlaneLayout.Interleaved;
+
+    public bool RequiresSortedChannels { get; init; }
+
     public IReadOnlyList<EncodedFormatId> SupportedEncodedFormats { get; init; } = [];
 
     public bool SupportsIndexed { get; init; }

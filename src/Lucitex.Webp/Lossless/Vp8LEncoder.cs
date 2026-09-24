@@ -30,7 +30,7 @@ internal static class Vp8LEncoder
             using var counter = new Vp8LBitWriter(Stream.Null, memory);
             WriteHeader(counter, subtractGreen, modes, modeWidth, predictorImage, image, positions.Span, candidates);
             var payloadSize = checked(5 + (int)((counter.TotalBits + image.DataBits + 7) / 8));
-            WebpContainer.WriteHeader(stream, payloadSize, width, height, alpha, metadata);
+            WebpContainer.WriteHeader(stream, payloadSize, width, height, alpha, metadata, true);
             Span<byte> header = stackalloc byte[5];
             header[0] = 0x2f;
             BinaryPrimitives.WriteUInt32LittleEndian(header[1..], (uint)(width - 1) | ((uint)(height - 1) << 14) | (alpha ? 1u << 28 : 0));

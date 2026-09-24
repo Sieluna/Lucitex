@@ -32,7 +32,7 @@ public static class ConversionExecutor
                 if (step is not (SelectPartStep or SelectChannelsStep or ConvertSampleTypeStep or PremultiplyAlphaStep or UnpremultiplyAlphaStep
                     or ApplyOrientationStep or ColorTransformStep or DropMetadataStep or PreserveMetadataStep
                     or DecodeEncodedElementsStep or EncodeEncodedElementsStep or TranscodeEncodedElementsStep or SynthesizeChannelStep or ExpandIndexedStep
-                    or ChangeSampleGridStep)) {
+                    or ChangeSampleGridStep or MapChannelsStep)) {
                     throw new NotSupportedException($"ConversionExecutor does not support {step.GetType().Name} yet.");
                 }
             }
@@ -193,6 +193,9 @@ public static class ConversionExecutor
 
             foreach (var step in partPlan.Steps) {
                 switch (step) {
+                    case MapChannelsStep mapping:
+                        floatChannels = mapping.Mappings.ToDictionary(item => item.Target, item => floatChannels[item.Source].ToArray());
+                        break;
                     case SynthesizeChannelStep synthesizeStep:
                         floatChannels[synthesizeStep.Channel] = Enumerable.Repeat((float)synthesizeStep.ConstantValue, pixelCount).ToArray();
                         break;

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Lucitex.Conversion\Lucitex.Conversion.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Dds\Lucitex.Dds.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Exr\Lucitex.Exr.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Hdr\Lucitex.Hdr.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Jpeg\Lucitex.Jpeg.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Ktx2\Lucitex.Ktx2.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Png\Lucitex.Png.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Webp\Lucitex.Webp.csproj" />
+  </ItemGroup>
+
+</Project>

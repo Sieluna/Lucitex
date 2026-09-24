@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Lucitex.Compression/Lucitex.Compression.csproj" />
     <Project Path="src/Lucitex.Conversion/Lucitex.Conversion.csproj" />
     <Project Path="src/Lucitex.Core/Lucitex.Core.csproj" />
     <Project Path="src/Lucitex.Dds/Lucitex.Dds.csproj" />
@@ -9,11 +10,11 @@
     <Project Path="src/Lucitex.Ktx2/Lucitex.Ktx2.csproj" />
     <Project Path="src/Lucitex.Png/Lucitex.Png.csproj" />
     <Project Path="src/Lucitex.Webp/Lucitex.Webp.csproj" />
-    <Project Path="src/Lucitex.Compression/Lucitex.Compression.csproj" />
   </Folder>
   <Folder Name="/examples/">
     <Project Path="examples/Lucitex.Example/Lucitex.Example.csproj" />
     <Project Path="examples/Lucitex.Example.Browser/Lucitex.Example.Browser.csproj" />
+    <Project Path="examples/Lucitex.Example.Shared/Lucitex.Example.Shared.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Lucitex.Benchmarks/Lucitex.Benchmarks.csproj" />

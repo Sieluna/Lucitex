@@ -21,5 +21,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "MSBuild failed with exit code $LASTEXITCODE."
 }
 
-$exe = Join-Path $PSScriptRoot "artifacts\Lucitex.Fuzz.Native\$Configuration\lucitex_fuzz_native.exe"
-Write-Host "Built $exe"
+$library = Join-Path $PSScriptRoot "artifacts\Lucitex.Fuzz.Native\$Configuration\lucitex_fuzz_native.dll"
+Write-Host "Built $library"

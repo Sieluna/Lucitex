@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Lucitex.Core.Execution;
 
 namespace Lucitex.Dds.Format;
@@ -6,6 +7,25 @@ internal static class DdsHeaderReader
 {
     private const uint k_Magic = 0x20534444;
     private const uint k_HeaderSize = 124;
+
+    public static async Task<DdsHeader> ReadAsync(Stream stream, int maxAllocationLength, CancellationToken cancellationToken)
+    {
+        var bytes = new byte[148];
+        await stream.ReadExactlyAsync(bytes.AsMemory(0, 4), cancellationToken).ConfigureAwait(false);
+        if (BinaryPrimitives.ReadUInt32LittleEndian(bytes) != k_Magic) {
+            throw new ImageFormatException("dds", "BadMagic", "Stream does not start with the DDS magic number.");
+        }
+        await stream.ReadExactlyAsync(bytes.AsMemory(4, 124), cancellationToken).ConfigureAwait(false);
+        var flags = (DdsPixelFormatFlags)BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(80));
+        var fourCc = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(84));
+        var length = 128;
+        if (flags.HasFlag(DdsPixelFormatFlags.FourCC) && fourCc == DdsLegacyFormats.Dx10) {
+            await stream.ReadExactlyAsync(bytes.AsMemory(128, 20), cancellationToken).ConfigureAwait(false);
+            length = 148;
+        }
+        using var header = new MemoryStream(bytes, 0, length, writable: false);
+        return Read(new DdsBinaryReader(header, maxAllocationLength));
+    }
 
     public static DdsHeader Read(DdsBinaryReader reader)
     {

@@ -1,8 +1,8 @@
 namespace Lucitex.Conversion.Kernels;
 
-internal static class ResampleKernel
+internal static partial class ResampleKernel
 {
-    private readonly record struct WeightedSample(int Index, float Weight);
+    internal readonly record struct WeightedSample(int Index, float Weight);
 
     public static (int Width, int Height) Resize(ReadOnlySpan<float> source, int sourceWidth, int sourceHeight, int targetWidth, int targetHeight, Span<float> destination)
     {
@@ -15,31 +15,36 @@ internal static class ResampleKernel
             return (targetWidth, targetHeight);
         }
 
-        ReadOnlySpan<float> widened;
-        if (targetWidth == sourceWidth) {
-            widened = source;
-        }
-        else {
-            var horizontalTaps = BuildAxisTaps(sourceWidth, targetWidth);
-            var horizontal = new float[sourceHeight * targetWidth];
-            for (var y = 0; y < sourceHeight; y++) {
-                ResizeRow(source.Slice(y * sourceWidth, sourceWidth), horizontalTaps, horizontal.AsSpan(y * targetWidth, targetWidth));
-            }
-
-            widened = horizontal;
-        }
-
+        var horizontalTaps = targetWidth == sourceWidth ? null : BuildAxisTaps(sourceWidth, targetWidth);
         if (targetHeight == sourceHeight) {
-            widened[..(targetWidth * sourceHeight)].CopyTo(destination);
+            for (var y = 0; y < sourceHeight; y++) {
+                ResizeRow(source.Slice(y * sourceWidth, sourceWidth), horizontalTaps!, destination.Slice(y * targetWidth, targetWidth));
+            }
             return (targetWidth, targetHeight);
         }
 
         var verticalTaps = BuildAxisTaps(sourceHeight, targetHeight);
+        var cachedRowCount = horizontalTaps is null ? 0 : verticalTaps.Max(taps => taps.Length);
+        var horizontal = new float[checked(cachedRowCount * targetWidth)];
+        var cachedRows = new int[cachedRowCount];
+        Array.Fill(cachedRows, -1);
         for (var ty = 0; ty < targetHeight; ty++) {
             var row = destination.Slice(ty * targetWidth, targetWidth);
             row.Clear();
             foreach (var tap in verticalTaps[ty]) {
-                var sourceRow = widened.Slice(tap.Index * targetWidth, targetWidth);
+                ReadOnlySpan<float> sourceRow;
+                if (horizontalTaps is null) {
+                    sourceRow = source.Slice(tap.Index * sourceWidth, sourceWidth);
+                }
+                else {
+                    var slot = tap.Index % cachedRowCount;
+                    var cached = horizontal.AsSpan(slot * targetWidth, targetWidth);
+                    if (cachedRows[slot] != tap.Index) {
+                        ResizeRow(source.Slice(tap.Index * sourceWidth, sourceWidth), horizontalTaps, cached);
+                        cachedRows[slot] = tap.Index;
+                    }
+                    sourceRow = cached;
+                }
                 for (var x = 0; x < targetWidth; x++) {
                     row[x] += tap.Weight * sourceRow[x];
                 }

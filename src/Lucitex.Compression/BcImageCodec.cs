@@ -23,55 +23,103 @@ internal static class BcImageCodec
     public static int EncodedByteCount(BcFormat format, int width, int height) =>
         checked(((width + 3) / 4) * ((height + 3) / 4) * BlockByteSize(format));
 
-    public static void Decode(BcFormat format, ReadOnlySpan<byte> source, int width, int height, Span<byte> destination)
-    {
-        ValidateDecode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
-
-        Span<byte> blockPixels = stackalloc byte[64];
-        for (var blockY = 0; blockY < blocksHigh; blockY++) {
-            DecodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
-        }
-    }
-
-    public static void Decode(BcFormat format, byte[] source, int width, int height, byte[] destination)
+    public static Task DecodeAsync(BcFormat format, byte[] source, int width, int height, byte[] destination,
+        int? maxDegreeOfParallelism = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
         ValidateDecode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
+        var options = new ParallelOptions {
+            MaxDegreeOfParallelism = maxDegreeOfParallelism ?? Environment.ProcessorCount,
+            CancellationToken = cancellationToken,
+            TaskScheduler = TaskScheduler.Default,
+        };
+        if (blocksWide * blocksHigh < k_ParallelBlockThreshold) options.MaxDegreeOfParallelism = 1;
+        return Parallel.ForAsync(0, blocksHigh, options, (blockY, token) => {
+            token.ThrowIfCancellationRequested();
+            Span<byte> blockPixels = stackalloc byte[64];
+            DecodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
+            return ValueTask.CompletedTask;
+        });
+    }
 
-        if (blocksWide * blocksHigh < k_ParallelBlockThreshold || Environment.ProcessorCount == 1) {
-            Decode(format, source.AsSpan(), width, height, destination.AsSpan());
+    public static void Decode(BcFormat format, ReadOnlySpan<byte> source, int width, int height, Span<byte> destination, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateDecode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
+
+        Span<byte> blockPixels = stackalloc byte[64];
+        for (var blockY = 0; blockY < blocksHigh; blockY++) {
+            cancellationToken.ThrowIfCancellationRequested();
+            DecodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
+        }
+    }
+
+    public static void Decode(BcFormat format, byte[] source, int width, int height, byte[] destination, int? maxDegreeOfParallelism = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateDecode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
+
+        var options = new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism ?? Environment.ProcessorCount, CancellationToken = cancellationToken };
+        if (blocksWide * blocksHigh < k_ParallelBlockThreshold || options.MaxDegreeOfParallelism == 1 || Environment.ProcessorCount == 1) {
+            Decode(format, source.AsSpan(), width, height, destination.AsSpan(), cancellationToken);
             return;
         }
 
-        Parallel.For(0, blocksHigh, blockY => {
+        Parallel.For(0, blocksHigh, options, blockY => {
             Span<byte> blockPixels = stackalloc byte[64];
             DecodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
         });
     }
 
-    public static void Encode(BcFormat format, ReadOnlySpan<byte> source, int width, int height, Span<byte> destination)
-    {
-        ValidateEncode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
-
-        Span<byte> blockPixels = stackalloc byte[64];
-        for (var blockY = 0; blockY < blocksHigh; blockY++) {
-            EncodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
-        }
-    }
-
-    public static void Encode(BcFormat format, byte[] source, int width, int height, byte[] destination)
+    public static Task EncodeAsync(BcFormat format, byte[] source, int width, int height, byte[] destination,
+        int? maxDegreeOfParallelism = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
         ValidateEncode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
+        var options = new ParallelOptions {
+            MaxDegreeOfParallelism = maxDegreeOfParallelism ?? Environment.ProcessorCount,
+            CancellationToken = cancellationToken,
+            TaskScheduler = TaskScheduler.Default,
+        };
+        if (blocksWide * blocksHigh < k_ParallelBlockThreshold) options.MaxDegreeOfParallelism = 1;
+        return Parallel.ForAsync(0, blocksHigh, options, (blockY, token) => {
+            token.ThrowIfCancellationRequested();
+            Span<byte> blockPixels = stackalloc byte[64];
+            EncodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
+            return ValueTask.CompletedTask;
+        });
+    }
 
-        if (blocksWide * blocksHigh < k_ParallelBlockThreshold || Environment.ProcessorCount == 1) {
-            Encode(format, source.AsSpan(), width, height, destination.AsSpan());
+    public static void Encode(BcFormat format, ReadOnlySpan<byte> source, int width, int height, Span<byte> destination, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateEncode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
+
+        Span<byte> blockPixels = stackalloc byte[64];
+        for (var blockY = 0; blockY < blocksHigh; blockY++) {
+            cancellationToken.ThrowIfCancellationRequested();
+            EncodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
+        }
+    }
+
+    public static void Encode(BcFormat format, byte[] source, int width, int height, byte[] destination, int? maxDegreeOfParallelism = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateEncode(format, source.Length, width, height, destination.Length, out var blocksWide, out var blocksHigh);
+
+        var options = new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism ?? Environment.ProcessorCount, CancellationToken = cancellationToken };
+        if (blocksWide * blocksHigh < k_ParallelBlockThreshold || options.MaxDegreeOfParallelism == 1 || Environment.ProcessorCount == 1) {
+            Encode(format, source.AsSpan(), width, height, destination.AsSpan(), cancellationToken);
             return;
         }
 
-        Parallel.For(0, blocksHigh, blockY => {
+        Parallel.For(0, blocksHigh, options, blockY => {
             Span<byte> blockPixels = stackalloc byte[64];
             EncodeBlockRow(format, source, width, height, destination, blocksWide, blockY, blockPixels);
         });

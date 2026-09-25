@@ -6,7 +6,7 @@ using Lucitex.Core.Semantic;
 
 namespace Lucitex.Dds;
 
-public sealed class DdsCodec : IImageCodec
+public sealed class DdsCodec : IAsyncImageCodec
 {
     private static ReadOnlySpan<byte> Magic => "DDS "u8;
 
@@ -51,4 +51,9 @@ public sealed class DdsCodec : IImageCodec
     public IImageReader OpenReader(Stream stream, DecodeLimits? limits = null) => new DdsReader(stream, limits ?? DecodeLimits.Default);
 
     public IImageWriter CreateWriter(Stream stream, ImageAssetDescriptor descriptor) => new DdsWriter(stream, descriptor);
+
+    public Task<IAsyncImageReader> OpenReaderAsync(Stream stream, DecodeLimits? limits = null,
+        CancellationToken cancellationToken = default) => DdsReader.OpenAsync(stream, limits ?? DecodeLimits.Default, cancellationToken);
+
+    public IAsyncImageWriter CreateAsyncWriter(Stream stream, ImageAssetDescriptor descriptor) => new DdsWriter(stream, descriptor);
 }

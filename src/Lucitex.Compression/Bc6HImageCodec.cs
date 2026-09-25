@@ -13,8 +13,9 @@ internal static class Bc6HImageCodec
         return checked(((width + 3) / 4) * ((height + 3) / 4) * 16);
     }
 
-    public static void Decode(ReadOnlySpan<byte> source, int width, int height, bool signed, Span<float> destination)
+    public static void Decode(ReadOnlySpan<byte> source, int width, int height, bool signed, Span<float> destination, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var encodedByteCount = EncodedByteCount(width, height);
         var decodedValueCount = checked(width * height * 3);
         if (source.Length < encodedByteCount || destination.Length < decodedValueCount) {
@@ -25,18 +26,16 @@ internal static class Bc6HImageCodec
         var blocksHigh = (height + 3) / 4;
         Span<float> blockPixels = stackalloc float[48];
         for (var blockY = 0; blockY < blocksHigh; blockY++) {
-            for (var blockX = 0; blockX < blocksWide; blockX++) {
-                var blockIndex = (blockY * blocksWide) + blockX;
-                Bc6HCodec.Decode(source.Slice(blockIndex * 16, 16), blockPixels, signed);
-                StoreBlock(blockPixels, destination, width, height, blockX * 4, blockY * 4);
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            DecodeBlockRow(source, width, height, signed, destination, blocksWide, blockY, blockPixels);
         }
     }
 
-    public static void Decode(byte[] source, int width, int height, bool signed, float[] destination)
+    public static void Decode(byte[] source, int width, int height, bool signed, float[] destination, int? maxDegreeOfParallelism = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
+        cancellationToken.ThrowIfCancellationRequested();
         var encodedByteCount = EncodedByteCount(width, height);
         var decodedValueCount = checked(width * height * 3);
         if (source.Length < encodedByteCount || destination.Length < decodedValueCount) {
@@ -45,19 +44,51 @@ internal static class Bc6HImageCodec
 
         var blocksWide = (width + 3) / 4;
         var blocksHigh = (height + 3) / 4;
-        if (blocksWide * blocksHigh < k_ParallelBlockThreshold || Environment.ProcessorCount == 1) {
-            Decode(source.AsSpan(), width, height, signed, destination.AsSpan());
+        var options = new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism ?? Environment.ProcessorCount, CancellationToken = cancellationToken };
+        if (blocksWide * blocksHigh < k_ParallelBlockThreshold || options.MaxDegreeOfParallelism == 1 || Environment.ProcessorCount == 1) {
+            Decode(source.AsSpan(), width, height, signed, destination.AsSpan(), cancellationToken);
             return;
         }
 
-        Parallel.For(0, blocksHigh, blockY => {
+        Parallel.For(0, blocksHigh, options, blockY => {
             Span<float> blockPixels = stackalloc float[48];
-            for (var blockX = 0; blockX < blocksWide; blockX++) {
-                var blockIndex = (blockY * blocksWide) + blockX;
-                Bc6HCodec.Decode(source.AsSpan(blockIndex * 16, 16), blockPixels, signed);
-                StoreBlock(blockPixels, destination, width, height, blockX * 4, blockY * 4);
-            }
+            DecodeBlockRow(source, width, height, signed, destination, blocksWide, blockY, blockPixels);
         });
+    }
+
+    public static Task DecodeAsync(byte[] source, int width, int height, bool signed, float[] destination,
+        int? maxDegreeOfParallelism = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        var encodedByteCount = EncodedByteCount(width, height);
+        if (source.Length < encodedByteCount || destination.Length < checked(width * height * 3)) {
+            throw new ArgumentException("BC6H buffers are too small for the image dimensions.");
+        }
+        var blocksWide = (width + 3) / 4;
+        var blocksHigh = (height + 3) / 4;
+        var options = new ParallelOptions {
+            MaxDegreeOfParallelism = maxDegreeOfParallelism ?? Environment.ProcessorCount,
+            CancellationToken = cancellationToken,
+            TaskScheduler = TaskScheduler.Default,
+        };
+        if (blocksWide * blocksHigh < k_ParallelBlockThreshold) options.MaxDegreeOfParallelism = 1;
+        return Parallel.ForAsync(0, blocksHigh, options, (blockY, token) => {
+            token.ThrowIfCancellationRequested();
+            Span<float> blockPixels = stackalloc float[48];
+            DecodeBlockRow(source, width, height, signed, destination, blocksWide, blockY, blockPixels);
+            return ValueTask.CompletedTask;
+        });
+    }
+
+    private static void DecodeBlockRow(ReadOnlySpan<byte> source, int width, int height, bool signed,
+        Span<float> destination, int blocksWide, int blockY, Span<float> blockPixels)
+    {
+        for (var blockX = 0; blockX < blocksWide; blockX++) {
+            var blockIndex = (blockY * blocksWide) + blockX;
+            Bc6HCodec.Decode(source.Slice(blockIndex * 16, 16), blockPixels, signed);
+            StoreBlock(blockPixels, destination, width, height, blockX * 4, blockY * 4);
+        }
     }
 
     private static void StoreBlock(ReadOnlySpan<float> block, Span<float> destination, int width, int height, int originX, int originY)

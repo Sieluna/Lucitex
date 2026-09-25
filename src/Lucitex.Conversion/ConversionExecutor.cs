@@ -21,14 +21,92 @@ public static class ConversionExecutor
 
     private static readonly HashSet<string> s_ColorChannelNames = ["R", "G", "B", "Y"];
 
-    public static void Execute(ConversionPlan plan, IImageReader source, SampleByteOrder sourceByteOrder, IImageWriter target, SampleByteOrder targetByteOrder)
+    public static void Execute(ConversionPlan plan, IImageReader source, SampleByteOrder sourceByteOrder, IImageWriter target, SampleByteOrder targetByteOrder) =>
+        Execute(plan, source, sourceByteOrder, target, targetByteOrder, null, default);
+
+    public static void Execute(ConversionPlan plan, IImageReader source, SampleByteOrder sourceByteOrder,
+        IImageWriter target, SampleByteOrder targetByteOrder, ImageExecutionOptions? options,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(target);
+        foreach (var work in WorkItems(plan, sourceByteOrder, targetByteOrder, options ?? ImageExecutionOptions.Default, cancellationToken)) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (work is Compute compute) {
+                compute.Run();
+                continue;
+            }
+            var transfer = (Transfer)work;
+            if (transfer.IsRead) {
+                ValidateRead(source.Read(transfer.Region, transfer.Buffer), transfer.Buffer.Length);
+            }
+            else {
+                target.Write(transfer.Region, transfer.Buffer);
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        target.Finish();
+    }
+
+    public static Task ExecuteAsync(ConversionPlan plan, IAsyncImageReader source, SampleByteOrder sourceByteOrder,
+        IAsyncImageWriter target, SampleByteOrder targetByteOrder, ImageExecutionOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(target);
+        return Task.Run(async () => {
+            foreach (var work in WorkItems(plan, sourceByteOrder, targetByteOrder, options ?? ImageExecutionOptions.Default, cancellationToken, streamRows: true)) {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (work is Compute compute) {
+                    await compute.RunAsync().ConfigureAwait(false);
+                    continue;
+                }
+                var transfer = (Transfer)work;
+                if (transfer.IsRead) {
+                    var read = await source.ReadAsync(transfer.Region, transfer.Buffer, cancellationToken).ConfigureAwait(false);
+                    ValidateRead(read, transfer.Buffer.Length);
+                }
+                else {
+                    await target.WriteAsync(transfer.Region, transfer.Buffer, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            await target.FinishAsync(cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+    }
+
+    private static void ValidateRead(int actual, int expected)
+    {
+        if (actual != expected) {
+            throw new InvalidDataException($"The reader returned {actual} bytes for a region requiring {expected} bytes.");
+        }
+    }
+
+    private abstract record Work;
+    private sealed record Transfer(WorkRegion Region, byte[] Buffer, bool IsRead) : Work;
+    private sealed record Compute(Action Run, Func<Task> RunAsync) : Work;
+
+    private static IEnumerable<Work> WorkItems(ConversionPlan plan, SampleByteOrder sourceByteOrder,
+        SampleByteOrder targetByteOrder, ImageExecutionOptions options, CancellationToken cancellationToken, bool streamRows = false)
+    {
+        Compute CpuWork(int count, int pixels, Action<int> action)
+        {
+            var degree = pixels < k_ParallelPixelThreshold ? 1 : options.MaxDegreeOfParallelism;
+            return new Compute(
+                () => ExecutionScheduler.For(0, count, action, degree, cancellationToken),
+                () => ExecutionScheduler.ForAsync(0, count, action, degree, cancellationToken));
+        }
+
         for (var i = 0; i < plan.Parts.Count; i++) {
+            cancellationToken.ThrowIfCancellationRequested();
             var partPlan = plan.Parts[i];
             var sourcePart = plan.SourceDescriptor.Parts[partPlan.SourcePartIndex];
             var targetPart = plan.TargetDescriptor.Parts[i];
 
             foreach (var step in partPlan.Steps) {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (step is not (SelectPartStep or SelectChannelsStep or ConvertSampleTypeStep or PremultiplyAlphaStep or UnpremultiplyAlphaStep
                     or ApplyOrientationStep or ResampleStep or CropStep or ColorTransformStep or DropMetadataStep or PreserveMetadataStep
                     or DecodeEncodedElementsStep or EncodeEncodedElementsStep or TranscodeEncodedElementsStep or SynthesizeChannelStep or ExpandIndexedStep
@@ -48,8 +126,87 @@ public static class ConversionExecutor
                 sourceEncoded.Format == targetEncoded.Format &&
                 partPlan.Steps.OfType<TranscodeEncodedElementsStep>().Any(step => step.SourceFormat == sourceEncoded.Format && step.TargetFormat == targetEncoded.Format)) {
                 var encoded = new byte[EncodedByteCount(sourceEncoded, sourcePart.Topology.BaseExtent)];
-                source.Read(region, encoded);
-                target.Write(region with { Subresource = region.Subresource with { Part = i } }, encoded);
+                yield return new Transfer(region, encoded, IsRead: true);
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return new Transfer(region with { Subresource = region.Subresource with { Part = i } }, encoded, IsRead: false);
+                continue;
+            }
+
+            var resizeSteps = streamRows ? partPlan.Steps.OfType<ResampleStep>().ToArray() : [];
+            if (streamRows && resizeSteps.Length == 1 &&
+                sourcePart.Representation is PlainSampleRepresentation rowSource &&
+                targetPart.Representation is PlainSampleRepresentation rowTarget &&
+                partPlan.Steps.All(step => step is SelectPartStep or SelectChannelsStep or ConvertSampleTypeStep or
+                    ResampleStep or DropMetadataStep or PreserveMetadataStep) &&
+                targetPart.Channels.Channels.All(channel => channel.Sampling.Step.X == 1 && channel.Sampling.Step.Y == 1) &&
+                targetPart.Channels.Channels.All(channel => sourcePart.Channels.Channels.Any(sourceChannel => sourceChannel.Name == channel.Name))) {
+                var resize = resizeSteps[0];
+                var sourceChannels = sourcePart.Channels.Channels.ToDictionary(channel => channel.Name);
+                var rowTargetChannels = targetPart.Channels.Channels.ToDictionary(channel => channel.Name);
+                var sourceLayout = new SampleLayout(rowSource.Planes, sourceChannels, window);
+                var targetWindow = ImageBox.FromOrigin(resize.TargetWidth, resize.TargetHeight);
+                var rowTargetLayout = new SampleLayout(rowTarget.Planes, rowTargetChannels, targetWindow);
+                var input = new byte[sourceLayout.TotalBytes];
+                yield return new Transfer(region, input, IsRead: true);
+                cancellationToken.ThrowIfCancellationRequested();
+                var output = new byte[rowTargetLayout.TotalBytes];
+                var names = rowTarget.Planes.SelectMany(plane => plane.Channels).ToArray();
+                var packedRgba = names.Length == 4 && rowSource.Planes.Count == 1 && rowTarget.Planes.Count == 1 &&
+                    rowSource.Planes[0].Layout == PlaneLayout.Interleaved && rowTarget.Planes[0].Layout == PlaneLayout.Interleaved &&
+                    rowSource.Planes[0].Channels.SequenceEqual(names) &&
+                    sourceChannels.Values.All(channel => channel.Sampling.Step.X == 1 && channel.Sampling.Step.Y == 1) &&
+                    sourceChannels.Values.All(channel => channel.SampleType == sourceChannels[names[0]].SampleType) &&
+                    rowTargetChannels.Values.All(channel => channel.SampleType == rowTargetChannels[names[0]].SampleType);
+                if (packedRgba) {
+                    var sourceType = sourceChannels[names[0]].SampleType;
+                    var targetType = rowTargetChannels[names[0]].SampleType;
+                    var inputRowBytes = checked(width * 4 * sourceLayout.BytesPerSample(names[0]));
+                    var outputRowBytes = checked(resize.TargetWidth * 4 * rowTargetLayout.BytesPerSample(names[0]));
+                    var inputRowBases = sourceLayout.BuildRowBases(names[0], height);
+                    var outputRowBases = rowTargetLayout.BuildRowBases(names[0], resize.TargetHeight);
+                    var packedFilter = new ResampleKernel.RowPlan(width, height, resize.TargetWidth, resize.TargetHeight, 4);
+                    const int packedRowsPerBatch = 32;
+                    yield return CpuWork((resize.TargetHeight + packedRowsPerBatch - 1) / packedRowsPerBatch, pixelCount, batch => {
+                        var first = batch * packedRowsPerBatch;
+                        ResampleKernel.ResizeRows(packedFilter, first, Math.Min(resize.TargetHeight, first + packedRowsPerBatch),
+                            (y, floats) => SampleTypeConversionKernel.ToFloat32(
+                                input.AsSpan(checked((int)inputRowBases[y]), inputRowBytes), sourceType, sourceByteOrder, floats),
+                            (y, floats) => SampleTypeConversionKernel.FromFloat32(floats, targetType, targetByteOrder,
+                                output.AsSpan(checked((int)outputRowBases[y]), outputRowBytes)), cancellationToken);
+                    });
+                    yield return new Transfer(region with {
+                        Subresource = region.Subresource with { Part = i },
+                        Region = targetWindow,
+                    }, output, IsRead: false);
+                    continue;
+                }
+                var sourceRows = names.Select(name => new ChannelRows(sourceLayout, name, width, height)).ToArray();
+                var targetRows = names.Select(name => new ChannelRows(rowTargetLayout, name, resize.TargetWidth, resize.TargetHeight)).ToArray();
+                var filter = new ResampleKernel.RowPlan(width, height, resize.TargetWidth, resize.TargetHeight);
+                const int rowsPerBatch = 32;
+                yield return CpuWork((resize.TargetHeight + rowsPerBatch - 1) / rowsPerBatch, pixelCount, batch => {
+                    var first = batch * rowsPerBatch;
+                    var end = Math.Min(resize.TargetHeight, first + rowsPerBatch);
+                    for (var c = 0; c < names.Length; c++) {
+                        var channel = c;
+                        var name = names[channel];
+                        var sourceBytes = new byte[width * sourceRows[channel].BytesPerSample];
+                        var targetBytes = new byte[resize.TargetWidth * targetRows[channel].BytesPerSample];
+                        ResampleKernel.ResizeRows(filter, first, end,
+                            (y, floats) => {
+                                sourceRows[channel].Gather(input, sourceBytes, y, width);
+                                SampleTypeConversionKernel.ToFloat32(sourceBytes, sourceChannels[name].SampleType, sourceByteOrder, floats);
+                            },
+                            (y, floats) => {
+                                SampleTypeConversionKernel.FromFloat32(floats, rowTargetChannels[name].SampleType, targetByteOrder, targetBytes);
+                                targetRows[channel].Scatter(targetBytes, output, y, resize.TargetWidth);
+                            }, cancellationToken);
+                    }
+                });
+                yield return new Transfer(region with {
+                    Subresource = region.Subresource with { Part = i },
+                    Region = targetWindow,
+                }, output, IsRead: false);
                 continue;
             }
 
@@ -58,12 +215,13 @@ public static class ConversionExecutor
                 var sourceChannels = sourcePart.Channels.Channels.ToDictionary(c => c.Name);
                 var sourceLayout = new SampleLayout(sourcePlain.Planes, sourceChannels, window);
                 var sourceBuffer = new byte[sourceLayout.TotalBytes];
-                source.Read(region, sourceBuffer);
+                yield return new Transfer(region, sourceBuffer, IsRead: true);
+                cancellationToken.ThrowIfCancellationRequested();
 
                 var sourceNames = sourcePlain.Planes.SelectMany(plane => plane.Channels).ToArray();
                 var decoded = new float[sourceNames.Length][];
 
-                RunPerChannel(sourceNames.Length, pixelCount, index => {
+                yield return CpuWork(sourceNames.Length, pixelCount, index => {
                     var channelName = sourceNames[index];
                     var channel = sourceChannels[channelName];
                     var bytesPerSample = sourceLayout.BytesPerSample(channelName);
@@ -83,7 +241,8 @@ public static class ConversionExecutor
             else if (sourcePart.Representation is EncodedElementRepresentation { Format.Name: nameof(EncodedFormatId.Rgbe) } &&
                 partPlan.Steps.OfType<DecodeEncodedElementsStep>().Any(step => step.Format == EncodedFormatId.Rgbe)) {
                 var encoded = new byte[checked(pixelCount * 4)];
-                source.Read(region, encoded);
+                yield return new Transfer(region, encoded, IsRead: true);
+                cancellationToken.ThrowIfCancellationRequested();
                 var red = new float[pixelCount];
                 var green = new float[pixelCount];
                 var blue = new float[pixelCount];
@@ -96,7 +255,8 @@ public static class ConversionExecutor
                 IsPackedPixelFormat(packed.Format) &&
                 partPlan.Steps.OfType<DecodeEncodedElementsStep>().Any(step => step.Format == packed.Format)) {
                 var encoded = new byte[checked(pixelCount * ((packed.BitsPerElement + 7) / 8))];
-                source.Read(region, encoded);
+                yield return new Transfer(region, encoded, IsRead: true);
+                cancellationToken.ThrowIfCancellationRequested();
                 var red = new float[pixelCount];
                 var green = new float[pixelCount];
                 var blue = new float[pixelCount];
@@ -113,9 +273,12 @@ public static class ConversionExecutor
                 bc6H.Format.Name is nameof(EncodedFormatId.Bc6H) or nameof(EncodedFormatId.Bc6HSigned) &&
                 partPlan.Steps.OfType<DecodeEncodedElementsStep>().Any(step => step.Format == bc6H.Format)) {
                 var encoded = new byte[Bc6HImageCodec.EncodedByteCount(width, height)];
-                source.Read(region, encoded);
+                yield return new Transfer(region, encoded, IsRead: true);
+                cancellationToken.ThrowIfCancellationRequested();
                 var decoded = new float[checked(pixelCount * 3)];
-                Bc6HImageCodec.Decode(encoded, width, height, bc6H.Format == EncodedFormatId.Bc6HSigned, decoded);
+                yield return new Compute(
+                    () => Bc6HImageCodec.Decode(encoded, width, height, bc6H.Format == EncodedFormatId.Bc6HSigned, decoded, options.MaxDegreeOfParallelism, cancellationToken),
+                    () => Bc6HImageCodec.DecodeAsync(encoded, width, height, bc6H.Format == EncodedFormatId.Bc6HSigned, decoded, options.MaxDegreeOfParallelism, cancellationToken));
                 for (var channelIndex = 0; channelIndex < 3; channelIndex++) {
                     var values = new float[pixelCount];
                     for (var pixel = 0; pixel < pixelCount; pixel++) {
@@ -129,12 +292,15 @@ public static class ConversionExecutor
                 TryGetBcFormat(blockCompressed.Format, out var bcFormat) &&
                 partPlan.Steps.OfType<DecodeEncodedElementsStep>().Any(step => step.Format == blockCompressed.Format)) {
                 var encoded = new byte[BcImageCodec.EncodedByteCount(bcFormat, width, height)];
-                source.Read(region, encoded);
+                yield return new Transfer(region, encoded, IsRead: true);
+                cancellationToken.ThrowIfCancellationRequested();
                 var channelCount = BcImageCodec.ChannelCount(bcFormat);
                 var decoded = new byte[checked(pixelCount * channelCount)];
-                BcImageCodec.Decode(bcFormat, encoded, width, height, decoded);
+                yield return new Compute(
+                    () => BcImageCodec.Decode(bcFormat, encoded, width, height, decoded, options.MaxDegreeOfParallelism, cancellationToken),
+                    () => BcImageCodec.DecodeAsync(bcFormat, encoded, width, height, decoded, options.MaxDegreeOfParallelism, cancellationToken));
                 var decodedChannels = new float[channelCount][];
-                RunPerChannel(channelCount, pixelCount, channelIndex => {
+                yield return CpuWork(channelCount, pixelCount, channelIndex => {
                     var raw = new byte[pixelCount];
                     SampleInterleaveKernel.Gather(decoded.AsSpan(channelIndex), raw, channelCount, 1, pixelCount);
 
@@ -151,7 +317,8 @@ public static class ConversionExecutor
                 partPlan.Steps.OfType<ExpandIndexedStep>().Any()) {
                 var indexBytesPerSample = indexed.IndexType.Bits / 8;
                 var indexBuffer = new byte[checked(pixelCount * indexBytesPerSample)];
-                source.Read(region, indexBuffer);
+                yield return new Transfer(region, indexBuffer, IsRead: true);
+                cancellationToken.ThrowIfCancellationRequested();
 
                 var indices = new int[pixelCount];
                 for (var pixel = 0; pixel < pixelCount; pixel++) {
@@ -171,7 +338,7 @@ public static class ConversionExecutor
                 var entryStride = entryChannels.Count * entryBytesPerSample;
 
                 var expandedChannels = new float[entryChannels.Count][];
-                RunPerChannel(entryChannels.Count, pixelCount, channelIndex => {
+                yield return CpuWork(entryChannels.Count, pixelCount, channelIndex => {
                     var raw = new byte[checked(pixelCount * entryBytesPerSample)];
                     for (var pixel = 0; pixel < pixelCount; pixel++) {
                         var entryOffset = (indices[pixel] * entryStride) + (channelIndex * entryBytesPerSample);
@@ -192,6 +359,7 @@ public static class ConversionExecutor
             }
 
             foreach (var step in partPlan.Steps) {
+                cancellationToken.ThrowIfCancellationRequested();
                 switch (step) {
                     case MapChannelsStep mapping:
                         floatChannels = mapping.Mappings.ToDictionary(item => item.Target, item => floatChannels[item.Source].ToArray());
@@ -205,7 +373,7 @@ public static class ConversionExecutor
                             var destinations = new float[entries.Length][];
                             var extents = new (int Width, int Height)[entries.Length];
 
-                            RunPerChannel(entries.Length, pixelCount, index => {
+                            yield return CpuWork(entries.Length, pixelCount, index => {
                                 var destination = new float[entries[index].Value.Length];
                                 extents[index] = OrientationKernel.ApplyToIdentity(entries[index].Value, width, height, orientationStep.From, destination);
                                 destinations[index] = destination;
@@ -229,7 +397,7 @@ public static class ConversionExecutor
                             var destinations = new float[entries.Length][];
                             var targetPixelCount = resampleStep.TargetWidth * resampleStep.TargetHeight;
 
-                            RunPerChannel(entries.Length, pixelCount, index => {
+                            yield return CpuWork(entries.Length, pixelCount, index => {
                                 var destination = new float[targetPixelCount];
                                 ResampleKernel.Resize(entries[index].Value, width, height, resampleStep.TargetWidth, resampleStep.TargetHeight, destination);
                                 destinations[index] = destination;
@@ -254,7 +422,7 @@ public static class ConversionExecutor
                             var destinations = new float[entries.Length][];
                             var croppedPixelCount = cropStep.Width * cropStep.Height;
 
-                            RunPerChannel(entries.Length, pixelCount, index => {
+                            yield return CpuWork(entries.Length, pixelCount, index => {
                                 var destination = new float[croppedPixelCount];
                                 var source = entries[index].Value;
                                 for (var row = 0; row < cropStep.Height; row++) {
@@ -308,7 +476,7 @@ public static class ConversionExecutor
                                 .Select(entry => entry.Value)
                                 .ToArray();
 
-                            RunPerChannel(colorValues.Length, pixelCount, index => {
+                            yield return CpuWork(colorValues.Length, pixelCount, index => {
                                 if (toSrgb) {
                                     ColorTransformKernel.LinearToSrgb(colorValues[index]);
                                 }
@@ -326,7 +494,7 @@ public static class ConversionExecutor
                 partPlan.Steps.OfType<EncodeEncodedElementsStep>().Any(step => step.Format == EncodedFormatId.Rgbe)) {
                 var encoded = new byte[checked(pixelCount * 4)];
                 RgbeConversionKernel.Encode(floatChannels["R"], floatChannels["G"], floatChannels["B"], encoded);
-                target.Write(region, encoded);
+                yield return new Transfer(region, encoded, IsRead: false);
                 continue;
             }
 
@@ -336,7 +504,7 @@ public static class ConversionExecutor
                 var encoded = new byte[checked(pixelCount * ((packedTarget.BitsPerElement + 7) / 8))];
                 var alpha = packedTarget.Format.Name is nameof(EncodedFormatId.R10G10B10A2) or nameof(EncodedFormatId.B5G5R5A1) ? floatChannels["A"] : [];
                 PackedPixelConversionKernel.Encode(packedTarget.Format, floatChannels["R"], floatChannels["G"], floatChannels["B"], alpha, encoded);
-                target.Write(region with { Subresource = region.Subresource with { Part = i } }, encoded);
+                yield return new Transfer(region with { Subresource = region.Subresource with { Part = i } }, encoded, IsRead: false);
                 continue;
             }
 
@@ -345,7 +513,7 @@ public static class ConversionExecutor
                 partPlan.Steps.OfType<EncodeEncodedElementsStep>().Any(step => step.Format == blockTarget.Format)) {
                 var channelCount = BcImageCodec.ChannelCount(targetBcFormat);
                 var interleaved = new byte[checked(pixelCount * channelCount)];
-                RunPerChannel(channelCount, pixelCount, channelIndex => {
+                yield return CpuWork(channelCount, pixelCount, channelIndex => {
                     var channel = targetPart.Channels.Channels[channelIndex];
                     var raw = new byte[pixelCount];
                     SampleTypeConversionKernel.FromFloat32(floatChannels[channel.Name], SampleType.UNorm8, SampleByteOrder.LittleEndian, raw);
@@ -353,8 +521,10 @@ public static class ConversionExecutor
                 });
 
                 var encoded = new byte[BcImageCodec.EncodedByteCount(targetBcFormat, width, height)];
-                BcImageCodec.Encode(targetBcFormat, interleaved, width, height, encoded);
-                target.Write(region with { Subresource = region.Subresource with { Part = i } }, encoded);
+                yield return new Compute(
+                    () => BcImageCodec.Encode(targetBcFormat, interleaved, width, height, encoded, options.MaxDegreeOfParallelism, cancellationToken),
+                    () => BcImageCodec.EncodeAsync(targetBcFormat, interleaved, width, height, encoded, options.MaxDegreeOfParallelism, cancellationToken));
+                yield return new Transfer(region with { Subresource = region.Subresource with { Part = i } }, encoded, IsRead: false);
                 continue;
             }
 
@@ -368,7 +538,7 @@ public static class ConversionExecutor
             var targetBuffer = new byte[targetLayout.TotalBytes];
             var targetNames = targetPlain.Planes.SelectMany(plane => plane.Channels).ToArray();
 
-            RunPerChannel(targetNames.Length, pixelCount, index => {
+            yield return CpuWork(targetNames.Length, pixelCount, index => {
                 var channelName = targetNames[index];
                 var channel = targetChannels[channelName];
                 var bytesPerSample = targetLayout.BytesPerSample(channelName);
@@ -378,25 +548,8 @@ public static class ConversionExecutor
                 ScatterChannel(raw, targetLayout, channelName, width, height, targetBuffer);
             });
 
-            target.Write(region, targetBuffer);
+            yield return new Transfer(region, targetBuffer, IsRead: false);
         }
-
-        target.Finish();
-    }
-
-    // Channels decode, transform and re-encode independently of one another, so they only need to be
-    // sequenced once the image is big enough for the per-channel work to outweigh dispatching it.
-    private static void RunPerChannel(int channelCount, int pixelCount, Action<int> action)
-    {
-        if (pixelCount < k_ParallelPixelThreshold) {
-            for (var index = 0; index < channelCount; index++) {
-                action(index);
-            }
-
-            return;
-        }
-
-        ExecutionScheduler.For(0, channelCount, action);
     }
 
     private static void GatherChannel(
@@ -465,6 +618,51 @@ public static class ConversionExecutor
             for (var x = 0; x < width; x++) {
                 source.Slice((y * rowBytes) + (x * bytesPerSample), bytesPerSample)
                     .CopyTo(destination.Slice(checked((int)(rowBase + columnOffsets[x])), bytesPerSample));
+            }
+        }
+    }
+
+    private sealed class ChannelRows
+    {
+        public int BytesPerSample { get; }
+        private readonly long[] _rowBases;
+        private readonly int _stride;
+        private readonly int[]? _columnOffsets;
+
+        public ChannelRows(SampleLayout layout, ChannelPath channel, int width, int height)
+        {
+            BytesPerSample = layout.BytesPerSample(channel);
+            _rowBases = layout.BuildRowBases(channel, height);
+            if (!layout.TryGetColumnStride(channel, out _stride)) {
+                _columnOffsets = layout.BuildColumnOffsets(channel, width);
+            }
+        }
+
+        public void Gather(ReadOnlySpan<byte> source, Span<byte> destination, int row, int width)
+        {
+            var rowBase = checked((int)_rowBases[row]);
+            if (_columnOffsets is null) {
+                SampleInterleaveKernel.Gather(source[rowBase..], destination, _stride, BytesPerSample, width);
+            }
+            else {
+                for (var x = 0; x < width; x++) {
+                    source.Slice(checked(rowBase + _columnOffsets[x]), BytesPerSample)
+                        .CopyTo(destination.Slice(x * BytesPerSample, BytesPerSample));
+                }
+            }
+        }
+
+        public void Scatter(ReadOnlySpan<byte> source, Span<byte> destination, int row, int width)
+        {
+            var rowBase = checked((int)_rowBases[row]);
+            if (_columnOffsets is null) {
+                SampleInterleaveKernel.Scatter(source, destination[rowBase..], _stride, BytesPerSample, width);
+            }
+            else {
+                for (var x = 0; x < width; x++) {
+                    source.Slice(x * BytesPerSample, BytesPerSample)
+                        .CopyTo(destination.Slice(checked(rowBase + _columnOffsets[x]), BytesPerSample));
+                }
             }
         }
     }

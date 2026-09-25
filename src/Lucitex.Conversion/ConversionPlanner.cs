@@ -12,8 +12,22 @@ public static class ConversionPlanner
         ImageAssetDescriptor source,
         CodecCapabilities targetCapabilities,
         ConversionPolicy policy,
-        EncodedFormatId? targetEncodedFormat = null)
+        EncodedFormatId? targetEncodedFormat = null,
+        (int Width, int Height)? targetExtent = null,
+        (int X, int Y, int Width, int Height)? cropRegion = null)
     {
+        if (targetExtent is { Width: <= 0 } or { Height: <= 0 }) {
+            return ConversionPlanResult.Failure([
+                new LossDiagnostic { Category = LossCategory.Topology, Message = "Target resize dimensions must be positive." },
+            ]);
+        }
+
+        if (cropRegion is { } requestedCrop && (requestedCrop.Width <= 0 || requestedCrop.Height <= 0 || requestedCrop.X < 0 || requestedCrop.Y < 0)) {
+            return ConversionPlanResult.Failure([
+                new LossDiagnostic { Category = LossCategory.Topology, Message = "Crop region must have a positive width/height and non-negative origin." },
+            ]);
+        }
+
         if (targetEncodedFormat is { } requestedFormat && !targetCapabilities.SupportsEncodedFormat(requestedFormat)) {
             return ConversionPlanResult.Failure([
                 new LossDiagnostic {
@@ -58,7 +72,7 @@ public static class ConversionPlanner
                 plain = sourcePlain;
                 sourceChannels = sourcePart.Channels;
             }
-            else if (sourcePart.Representation is EncodedElementRepresentation encoded &&
+            else if (targetExtent is null && cropRegion is null && sourcePart.Representation is EncodedElementRepresentation encoded &&
                 targetCapabilities.SupportsEncodedFormat(encoded.Format) &&
                 (targetEncodedFormat is null || targetEncodedFormat.Value == encoded.Format) &&
                 (targetCapabilities.SupportsOrientationMetadata || sourcePart.Spatial.Orientation == Lucitex.Core.Spatial.LogicalOrientation.Identity)) {
@@ -193,6 +207,41 @@ public static class ConversionPlanner
             steps.AddRange(alphaSteps);
             diagnostics.AddRange(alphaDiagnostics);
 
+            var partWidth = checked((int)sourcePart.Topology.BaseExtent.Width);
+            var partHeight = checked((int)sourcePart.Topology.BaseExtent.Height);
+            if (cropRegion is { } crop) {
+                if (crop.X + crop.Width > partWidth || crop.Y + crop.Height > partHeight) {
+                    return ConversionPlanResult.Failure([
+                        new LossDiagnostic {
+                            Category = LossCategory.Topology,
+                            Message = $"Crop region ({crop.X},{crop.Y},{crop.Width}x{crop.Height}) exceeds part {partIndex}'s {partWidth}x{partHeight} bounds.",
+                        },
+                    ]);
+                }
+
+                if (crop.X != 0 || crop.Y != 0 || crop.Width != partWidth || crop.Height != partHeight) {
+                    steps.Add(new CropStep(crop.X, crop.Y, crop.Width, crop.Height));
+                    diagnostics.Add(new LossDiagnostic {
+                        Category = LossCategory.Topology,
+                        IsSemanticLoss = false,
+                        Message = $"Cropped to ({crop.X},{crop.Y}) {crop.Width}x{crop.Height}; pixels outside the crop region are discarded.",
+                    });
+                    partWidth = crop.Width;
+                    partHeight = crop.Height;
+                }
+            }
+
+            if (targetExtent is { } resize && (resize.Width != partWidth || resize.Height != partHeight)) {
+                steps.Add(new ResampleStep(resize.Width, resize.Height));
+                diagnostics.Add(new LossDiagnostic {
+                    Category = LossCategory.Topology,
+                    IsSemanticLoss = false,
+                    Message = $"Resampled from {partWidth}x{partHeight} to {resize.Width}x{resize.Height}.",
+                });
+                partWidth = resize.Width;
+                partHeight = resize.Height;
+            }
+
             var (orientationSteps, orientationDiagnostics) = PlanOrientation(sourcePart.Spatial.Orientation, targetCapabilities);
             if (orientationDiagnostics.Count > 0 && !AllowsLoss(policy, orientationDiagnostics)) {
                 return ConversionPlanResult.Failure(orientationDiagnostics);
@@ -227,16 +276,30 @@ public static class ConversionPlanner
                 targetRepresentation = new PlainSampleRepresentation {
                     Planes = [new() {
                         Channels = layoutChannels.ToArray(),
-                        Extent = sourcePart.Topology.BaseExtent,
+                        Extent = new Lucitex.Core.Spatial.Extent3L(partWidth, partHeight, 1),
                         Layout = targetCapabilities.SampleLayout,
                     }],
                 };
             }
 
+            var targetTopology = partWidth == sourcePart.Topology.BaseExtent.Width && partHeight == sourcePart.Topology.BaseExtent.Height
+                ? sourcePart.Topology
+                : sourcePart.Topology with {
+                    BaseExtent = new Lucitex.Core.Spatial.Extent3L(partWidth, partHeight, 1),
+                    Levels = [new Lucitex.Core.Topology.ResolutionLevel { Key = Lucitex.Core.Topology.LevelKey.Base, Extent = new Lucitex.Core.Spatial.Extent3L(partWidth, partHeight, 1) }],
+                };
+            var targetSpatial = partWidth == sourcePart.Topology.BaseExtent.Width && partHeight == sourcePart.Topology.BaseExtent.Height
+                ? sourcePart.Spatial
+                : sourcePart.Spatial with {
+                    DataWindow = Lucitex.Core.Spatial.ImageBox.FromOrigin(partWidth, partHeight),
+                    DisplayWindow = Lucitex.Core.Spatial.ImageBox.FromOrigin(partWidth, partHeight),
+                };
+
             targetParts.Add(sourcePart with {
                 Channels = resultChannelSchema,
                 Representation = targetRepresentation,
-                Spatial = sourcePart.Spatial with { Orientation = targetCapabilities.SupportsOrientationMetadata ? sourcePart.Spatial.Orientation : Lucitex.Core.Spatial.LogicalOrientation.Identity },
+                Topology = targetTopology,
+                Spatial = targetSpatial with { Orientation = targetCapabilities.SupportsOrientationMetadata ? sourcePart.Spatial.Orientation : Lucitex.Core.Spatial.LogicalOrientation.Identity },
                 Metadata = Lucitex.Core.Metadata.MetadataCollection.Empty,
             });
             parts.Add(new PartConversionPlan { SourcePartIndex = partIndex, Steps = steps.ToArray() });

@@ -1,64 +1,98 @@
 <!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Lucitex image conversion</title>
-    <style>
-        :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-        body { max-width: 760px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.5; }
-        h1 { margin-bottom: .5rem; }
-        label { display: block; font-weight: 600; margin-bottom: .4rem; }
-        input, select, button { font: inherit; }
-        select, input[type="number"], button { padding: .55rem .7rem; border: 1px solid GrayText; border-radius: .4rem; }
-        select { width: 100%; }
-        input[type="file"] { max-width: 100%; }
-        input[type="range"] { width: 100%; min-width: 0; }
-        input[type="number"] { width: 5rem; }
-        input[type="checkbox"] { width: 1.1rem; height: 1.1rem; }
-        button { cursor: pointer; }
-        button:disabled { cursor: wait; opacity: .6; }
-        fieldset { min-width: 0; margin: 1.5rem 0; padding: 1.25rem; border: 1px solid GrayText; border-radius: .6rem; }
-        legend { padding: 0 .4rem; font-weight: 600; }
-        .file-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem; }
-        .option + .option { margin-top: 1.3rem; }
-        .numeric-option { display: flex; align-items: center; gap: 1rem; }
-        .toggle { display: grid; grid-template-columns: 1fr auto; gap: 0 1rem; }
-        .toggle .hint { grid-column: 1 / -1; }
-        .hint { color: GrayText; font-size: .9rem; margin: .4rem 0 0; }
-        #reset { margin-top: 1.25rem; font-size: .9rem; }
-        #convert { font-weight: 600; }
-        #download { display: inline-block; margin-left: 1rem; overflow-wrap: anywhere; }
-        #download[hidden] { display: none; }
-        #log { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 1.5rem; padding: 1rem; border: 1px solid GrayText; border-radius: .6rem; min-height: 4rem; }
-        @media (max-width: 560px) { .file-fields { grid-template-columns: 1fr; } body { margin-top: 1.5rem; } }
-    </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lucitex image conversion</title>
+<style>
+  body { max-width: 640px; margin: 2rem auto; padding: 0 1rem; font-family: sans-serif; line-height: 1.4; }
+  img { max-width: 100%; }
+  #dropzone.drag { background: #eee; }
+  #log { white-space: pre-wrap; border: 1px solid; padding: .5rem; }
+  #canvas { display: block; max-width: 100%; touch-action: none; }
+  .ratio-btn[aria-pressed="true"] { font-weight: bold; }
+</style>
 </head>
 <body>
-    <h1>Lucitex image conversion</h1>
-    <p>Convert images locally in your browser. Configure the target encoder to balance size, speed and quality.</p>
-    <form id="conversion" aria-busy="true">
-        <div class="file-fields">
-            <div>
-                <label for="source">Source image</label>
-                <input id="source" type="file" required disabled />
-            </div>
-            <div>
-                <label for="target">Target format</label>
-                <select id="target" disabled></select>
-            </div>
-        </div>
-        <fieldset id="options" disabled>
-            <legend>Encoder settings</legend>
-            <div id="option-fields"><p class="hint">Loading available settings…</p></div>
-            <button id="reset" type="button">Reset to defaults</button>
-        </fieldset>
-        <button id="convert" type="submit" disabled>Convert and download</button>
-        <a id="download" hidden>Download result</a>
-    </form>
-    <p class="hint">File size depends on image content. Output / input compares encoded file sizes; it is not a quality score.</p>
-    <div id="log" role="status" aria-live="polite">Loading the .NET runtime…</div>
-    <noscript>This example requires JavaScript and WebAssembly.</noscript>
-    <script type="module" src="main.js"></script>
+
+<h1>Lucitex image conversion</h1>
+<p>Convert images locally in your browser.</p>
+
+<form id="conversion">
+  <fieldset id="dropzone">
+    <legend>Source image</legend>
+    <input id="source" type="file" required disabled />
+    <p>or drag and drop an image here</p>
+  </fieldset>
+
+  <fieldset id="editor" disabled hidden>
+    <legend>Crop</legend>
+    <p>Drag the box or its corners. It starts at full size, meaning no crop.</p>
+    <canvas id="canvas"></canvas>
+    <p>
+      <label>Aspect ratio</label><br />
+      <button type="button" class="ratio-btn" data-ratio="0" aria-pressed="true">Free</button>
+      <button type="button" class="ratio-btn" data-ratio="1:1">1:1</button>
+      <button type="button" class="ratio-btn" data-ratio="4:3">4:3</button>
+      <button type="button" class="ratio-btn" data-ratio="3:4">3:4</button>
+      <button type="button" class="ratio-btn" data-ratio="16:9">16:9</button>
+      <button type="button" class="ratio-btn" data-ratio="9:16">9:16</button>
+    </p>
+    <p>
+      X <input id="crop-x" type="number" min="0" step="1" size="5" />
+      Y <input id="crop-y" type="number" min="0" step="1" size="5" />
+      W <input id="crop-w" type="number" min="1" step="1" size="5" />
+      H <input id="crop-h" type="number" min="1" step="1" size="5" />
+      <button id="reset-crop" type="button">Reset crop</button>
+    </p>
+    <p><small id="crop-readout"></small></p>
+  </fieldset>
+
+  <p>
+    <label for="target">Target format</label><br />
+    <select id="target" disabled></select>
+  </p>
+
+  <fieldset id="resize-fieldset" disabled>
+    <legend>Resize &amp; target size (optional)</legend>
+    <p>
+      <label for="resize-width">Resize to</label><br />
+      <input id="resize-width" type="number" min="1" step="1" placeholder="width" size="6" /> ×
+      <input id="resize-height" type="number" min="1" step="1" placeholder="height" size="6" />
+    </p>
+    <p>
+      <label for="target-size">Target file size</label><br />
+      <input id="target-size" type="text" placeholder="e.g. 10K or 2MB" /><br />
+      <small>Searches quality to fit this budget. Only works for JPEG or lossy WebP.</small>
+    </p>
+  </fieldset>
+
+  <fieldset id="options" disabled>
+    <legend>Encoder settings</legend>
+    <div id="option-fields"><p>Loading available settings…</p></div>
+    <button id="reset" type="button">Reset to defaults</button>
+  </fieldset>
+
+  <p>
+    <button id="convert" type="submit" disabled>Convert and download</button>
+    <a id="download" hidden>Download result</a>
+  </p>
+</form>
+
+<table id="result-table" border="1" cellpadding="8" hidden>
+  <tr><th>Result</th></tr>
+  <tr>
+    <td>
+      <img id="preview-after" alt="Converted image" hidden />
+      <span id="after-placeholder">Not converted yet</span>
+      <p id="after-meta"></p>
+    </td>
+  </tr>
+</table>
+
+<p><small>File size depends on image content. Output / input compares encoded file sizes; it is not a quality score.</small></p>
+<pre id="log" role="status" aria-live="polite">Loading the .NET runtime…</pre>
+<noscript>This example requires JavaScript and WebAssembly.</noscript>
+<script type="module" src="main.js"></script>
 </body>
 </html>

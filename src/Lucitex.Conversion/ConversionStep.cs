@@ -34,6 +34,10 @@ public sealed record ChangeSampleGridStep(ChannelPath Channel, SampleGrid From, 
 
 public sealed record ApplyOrientationStep(LogicalOrientation From, LogicalOrientation To) : ConversionStep;
 
+public sealed record ResampleStep(int TargetWidth, int TargetHeight) : ConversionStep;
+
+public sealed record CropStep(int X, int Y, int Width, int Height) : ConversionStep;
+
 public sealed record MapWindowStep(ImageBox From, ImageBox To) : ConversionStep;
 
 public sealed record PremultiplyAlphaStep : ConversionStep;

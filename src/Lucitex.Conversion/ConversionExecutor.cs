@@ -30,7 +30,7 @@ public static class ConversionExecutor
 
             foreach (var step in partPlan.Steps) {
                 if (step is not (SelectPartStep or SelectChannelsStep or ConvertSampleTypeStep or PremultiplyAlphaStep or UnpremultiplyAlphaStep
-                    or ApplyOrientationStep or ColorTransformStep or DropMetadataStep or PreserveMetadataStep
+                    or ApplyOrientationStep or ResampleStep or CropStep or ColorTransformStep or DropMetadataStep or PreserveMetadataStep
                     or DecodeEncodedElementsStep or EncodeEncodedElementsStep or TranscodeEncodedElementsStep or SynthesizeChannelStep or ExpandIndexedStep
                     or ChangeSampleGridStep or MapChannelsStep)) {
                     throw new NotSupportedException($"ConversionExecutor does not support {step.GetType().Name} yet.");
@@ -220,6 +220,61 @@ public static class ConversionExecutor
                             (width, height) = extents[0];
                             pixelCount = width * height;
                             region = region with { Region = ImageBox.FromOrigin(width, height) };
+                            window = region.Region;
+                            break;
+                        }
+
+                    case ResampleStep resampleStep: {
+                            var entries = floatChannels.ToArray();
+                            var destinations = new float[entries.Length][];
+                            var targetPixelCount = resampleStep.TargetWidth * resampleStep.TargetHeight;
+
+                            RunPerChannel(entries.Length, pixelCount, index => {
+                                var destination = new float[targetPixelCount];
+                                ResampleKernel.Resize(entries[index].Value, width, height, resampleStep.TargetWidth, resampleStep.TargetHeight, destination);
+                                destinations[index] = destination;
+                            });
+
+                            var resampled = new Dictionary<ChannelPath, float[]>();
+                            for (var index = 0; index < entries.Length; index++) {
+                                resampled[entries[index].Key] = destinations[index];
+                            }
+
+                            floatChannels = resampled;
+                            width = resampleStep.TargetWidth;
+                            height = resampleStep.TargetHeight;
+                            pixelCount = targetPixelCount;
+                            region = region with { Region = ImageBox.FromOrigin(width, height) };
+                            window = region.Region;
+                            break;
+                        }
+
+                    case CropStep cropStep: {
+                            var entries = floatChannels.ToArray();
+                            var destinations = new float[entries.Length][];
+                            var croppedPixelCount = cropStep.Width * cropStep.Height;
+
+                            RunPerChannel(entries.Length, pixelCount, index => {
+                                var destination = new float[croppedPixelCount];
+                                var source = entries[index].Value;
+                                for (var row = 0; row < cropStep.Height; row++) {
+                                    source.AsSpan(((cropStep.Y + row) * width) + cropStep.X, cropStep.Width)
+                                        .CopyTo(destination.AsSpan(row * cropStep.Width, cropStep.Width));
+                                }
+                                destinations[index] = destination;
+                            });
+
+                            var cropped = new Dictionary<ChannelPath, float[]>();
+                            for (var index = 0; index < entries.Length; index++) {
+                                cropped[entries[index].Key] = destinations[index];
+                            }
+
+                            floatChannels = cropped;
+                            width = cropStep.Width;
+                            height = cropStep.Height;
+                            pixelCount = croppedPixelCount;
+                            region = region with { Region = ImageBox.FromOrigin(width, height) };
+                            window = region.Region;
                             break;
                         }
 

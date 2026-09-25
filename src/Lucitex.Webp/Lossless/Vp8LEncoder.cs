@@ -18,17 +18,17 @@ internal static class Vp8LEncoder
             if (subtractGreen) {
                 Vp8LTransforms.SubtractGreen(pixels);
             }
-            using var modes = options.Effort == WebpCompressionEffort.Balanced ? ChoosePredictors(pixels, width, height, memory) : null;
+            using var modes = ChoosePredictors(pixels, width, height, memory, fast: options.Effort == WebpCompressionEffort.Fast);
             if (modes is not null) {
                 ApplyPredictors(pixels, width, height, modes.Span);
             }
             var candidates = options.Effort == WebpCompressionEffort.Fast ? 1 : 4;
             using var positions = memory.Rent<int>(Vp8LMatchFinder.TableSize(pixels.Length, candidates));
-            var image = new Vp8LEntropyEncoder(pixels, width, positions.Span, candidates);
+            using var image = new Vp8LEntropyEncoder(pixels, width, positions.Span, candidates, memory);
             var modeWidth = Vp8LTransforms.Subsample(width, k_PredictorBits);
-            var predictorImage = modes is null ? null : new Vp8LEntropyEncoder(modes.Span, modeWidth, positions.Span, candidates);
+            using var predictorImage = modes is null ? null : new Vp8LEntropyEncoder(modes.Span, modeWidth, positions.Span, candidates, memory);
             using var counter = new Vp8LBitWriter(Stream.Null, memory);
-            WriteHeader(counter, subtractGreen, modes, modeWidth, predictorImage, image, positions.Span, candidates);
+            WriteHeader(counter, subtractGreen, modes, predictorImage, image);
             var payloadSize = checked(5 + (int)((counter.TotalBits + image.DataBits + 7) / 8));
             WebpContainer.WriteHeader(stream, payloadSize, width, height, alpha, metadata, true);
             Span<byte> header = stackalloc byte[5];
@@ -36,8 +36,8 @@ internal static class Vp8LEncoder
             BinaryPrimitives.WriteUInt32LittleEndian(header[1..], (uint)(width - 1) | ((uint)(height - 1) << 14) | (alpha ? 1u << 28 : 0));
             stream.Write(header);
             using var writer = new Vp8LBitWriter(stream, memory);
-            WriteHeader(writer, subtractGreen, modes, modeWidth, predictorImage, image, positions.Span, candidates);
-            image.WritePixels(writer, pixels, width, positions.Span, candidates);
+            WriteHeader(writer, subtractGreen, modes, predictorImage, image);
+            image.WritePixels(writer, pixels);
             writer.Finish();
             if ((payloadSize & 1) != 0) {
                 stream.WriteByte(0);
@@ -49,7 +49,7 @@ internal static class Vp8LEncoder
         }
     }
 
-    private static void WriteHeader(Vp8LBitWriter writer, bool subtractGreen, WebpBuffer<uint>? modes, int modeWidth, Vp8LEntropyEncoder? predictorImage, Vp8LEntropyEncoder image, Span<int> positions, int candidates)
+    private static void WriteHeader(Vp8LBitWriter writer, bool subtractGreen, WebpBuffer<uint>? modes, Vp8LEntropyEncoder? predictorImage, Vp8LEntropyEncoder image)
     {
         if (subtractGreen) {
             writer.Write(1, 1);
@@ -60,7 +60,7 @@ internal static class Vp8LEncoder
             writer.Write(0, 2);
             writer.Write(k_PredictorBits - 2, 3);
             predictorImage!.WriteHeader(writer, false);
-            predictorImage.WritePixels(writer, modes.Span, modeWidth, positions, candidates);
+            predictorImage.WritePixels(writer, modes.Span);
         }
         writer.Write(0, 1);
         image.WriteHeader(writer, true);
@@ -92,22 +92,23 @@ internal static class Vp8LEncoder
         return transformed > original + 8;
     }
 
-    private static WebpBuffer<uint>? ChoosePredictors(ReadOnlySpan<uint> pixels, int width, int height, WebpMemory memory)
+    private static WebpBuffer<uint>? ChoosePredictors(ReadOnlySpan<uint> pixels, int width, int height, WebpMemory memory, bool fast)
     {
         var modeWidth = Vp8LTransforms.Subsample(width, k_PredictorBits);
         var modeHeight = Vp8LTransforms.Subsample(height, k_PredictorBits);
         var modes = memory.Rent<uint>(modeWidth * modeHeight);
         long originalScore = 0;
         long predictedScore = 0;
-        ReadOnlySpan<int> choices = [1, 2, 7, 12];
-        Span<long> scores = stackalloc long[4];
+        ReadOnlySpan<int> choices = fast ? [2, 7] : [1, 2, 7, 12];
+        var sampleStep = fast ? 4 : 2;
+        Span<long> scores = stackalloc long[choices.Length];
         for (var by = 0; by < modeHeight; by++) {
             for (var bx = 0; bx < modeWidth; bx++) {
                 scores.Clear();
                 var endY = Math.Min(height, (by + 1) << k_PredictorBits);
                 var endX = Math.Min(width, (bx + 1) << k_PredictorBits);
-                for (var y = by << k_PredictorBits; y < endY; y += 2) {
-                    for (var x = bx << k_PredictorBits; x < endX; x += 2) {
+                for (var y = by << k_PredictorBits; y < endY; y += sampleStep) {
+                    for (var x = bx << k_PredictorBits; x < endX; x += sampleStep) {
                         var index = (y * width) + x;
                         originalScore += Score(pixels[index]);
                         for (var c = 0; c < choices.Length; c++) {

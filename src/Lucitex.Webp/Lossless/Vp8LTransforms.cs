@@ -94,6 +94,14 @@ internal static class Vp8LTransforms
                 var blockX = x >> blockBits;
                 var mode = (int)((modes[((y >> blockBits) * modeWidth) + blockX] >> 8) & 15);
                 var blockEnd = Math.Min(width, (blockX + 1) << blockBits);
+
+                if (mode == 1 && Vector128.IsHardwareAccelerated) {
+                    pixels[row + x] = Add(pixels[row + x], pixels[row + x - 1]);
+                    InverseLeftChainRow(pixels.Slice(row + x, blockEnd - x));
+                    x = blockEnd;
+                    continue;
+                }
+
                 var simdEnd = Math.Min(blockEnd, width - 1);
                 if (IsLeftIndependent(mode) && Vector128.IsHardwareAccelerated) {
                     for (; x + 4 <= simdEnd; x += 4) {
@@ -123,7 +131,7 @@ internal static class Vp8LTransforms
     {
         var bytes = MemoryMarshal.AsBytes(row);
         var i = 0;
-        if (Sse2.IsSupported) {
+        if (Ssse3.IsSupported) {
             var carryMask = Vector128.Create((byte)12, 13, 14, 15, 12, 13, 14, 15, 12, 13, 14, 15, 12, 13, 14, 15);
             var carry = Vector128<byte>.Zero;
             for (; i <= bytes.Length - 16; i += 16) {

@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: Comma-separated suites (all/convert/jpeg/png/exr/ktx2/webp/kernels; "all" wins if present)
+        description: Comma-separated suites (all/core/convert/jpeg/png/exr/ktx2/webp/kernels; "all" wins if present)
         type: string
         default: all
       comparable:
-        description: Filter suite to formats/routes with 2+ supporting libraries (never affects kernels)
+        description: Filter suite to formats/routes with 2+ supporting libraries (not kernels or core)
         type: boolean
         default: false
       cases:
         description: Comma-separated procedural cases
         type: string
-        default: ramp@128x128,checker@129x97
+        default: ramp@128x128,checker@129x97,noise@2048x2048
       profiles:
         description: Comma-separated profiles, or all
         type: string

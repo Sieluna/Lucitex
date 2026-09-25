@@ -10,6 +10,7 @@ internal enum Suite
     Webp = 1 << 4,
     Convert = 1 << 5,
     Kernels = 1 << 6,
+    Core = 1 << 7,
     Formats = Jpeg | Png | Exr | Ktx2 | Webp,
-    All = Formats | Convert | Kernels,
+    All = Formats | Convert | Kernels | Core,
 }

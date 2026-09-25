@@ -5,7 +5,7 @@ namespace Lucitex.Benchmarks;
 
 internal sealed record RunOptions
 {
-    public string[] Cases { get; init; } = ["ramp@128x128", "checker@129x97"];
+    public string[] Cases { get; init; } = ["ramp@128x128", "checker@129x97", "noise@2048x2048"];
     public string[] Profiles { get; init; } = ["jpeg-default420", "png-default", "exr-half-zip", "ktx2-rgba8-none", "webp-lossless"];
     public string[] Libraries { get; init; } = ["Lucitex", "ImageSharp", "SkiaSharp", "NetVips", "MagickNet"];
     public Suite Suites { get; init; } = Suite.All;
@@ -80,7 +80,7 @@ internal sealed record RunOptions
             return Enum.Parse<Suite>(value, ignoreCase: true);
         }
         catch (Exception exception) when (exception is ArgumentException or OverflowException) {
-            throw new ArgumentException("Suites: comma-separated all/convert/jpeg/png/exr/ktx2/webp/kernels.", exception);
+            throw new ArgumentException("Suites: comma-separated all/core/convert/jpeg/png/exr/ktx2/webp/kernels.", exception);
         }
     }
 }

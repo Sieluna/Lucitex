@@ -51,6 +51,9 @@ internal static class FormatCatalog
             yield return typeof(Crc32Benchmarks);
             yield return typeof(PngFilterBenchmarks);
         }
+        if (options.Suites.HasFlag(Suite.Core)) {
+            yield return typeof(CoreExecutionBenchmarks);
+        }
     }
 
     public static IEnumerable<ComparisonCase> SelectCases(RunOptions options)

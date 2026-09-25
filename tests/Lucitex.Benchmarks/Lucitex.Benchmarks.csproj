@@ -25,6 +25,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Lucitex.Compression\Lucitex.Compression.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Conversion\Lucitex.Conversion.csproj" />
+    <ProjectReference Include="..\..\src\Lucitex.Dds\Lucitex.Dds.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Exr\Lucitex.Exr.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Jpeg\Lucitex.Jpeg.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Ktx2\Lucitex.Ktx2.csproj" />

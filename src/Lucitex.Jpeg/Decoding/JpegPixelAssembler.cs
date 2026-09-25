@@ -61,8 +61,7 @@ internal static class JpegPixelAssembler
 
         if (interpolateChroma && useColorTransform &&
             decoder.Components[0].Component.HSampling == hMax && decoder.Components[0].Component.VSampling == vMax &&
-            decoder.Components.Skip(1).All(c => c.Component.HSampling * 2 == hMax &&
-                (c.Component.VSampling == vMax || c.Component.VSampling * 2 == vMax))) {
+            IsChromaHalfSampled(decoder, hMax, vMax)) {
             ReconstructInterpolated(decoder, planes, output);
             return;
         }
@@ -123,6 +122,18 @@ internal static class JpegPixelAssembler
             }
         });
 
+    }
+
+    private static bool IsChromaHalfSampled(JpegDecoder decoder, int hMax, int vMax)
+    {
+        for (var c = 1; c < decoder.Components.Count; c++) {
+            var component = decoder.Components[c].Component;
+            if (component.HSampling * 2 != hMax || (component.VSampling != vMax && component.VSampling * 2 != vMax)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static int[] BuildAxisMap(int outputExtent, int componentSampling, int maxSampling, int samplesPerAxis)

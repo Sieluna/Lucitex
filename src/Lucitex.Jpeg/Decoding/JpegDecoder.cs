@@ -307,15 +307,20 @@ internal sealed class JpegDecoder
         }
 
         var (buffer, length, segmentStarts) = ReadRestartSegments();
-        var restartInterval = _restartInterval;
-        ExecutionScheduler.For(0, segmentStarts.Count, segmentIndex => {
-            var start = segmentIndex * restartInterval;
-            var end = Math.Min(start + restartInterval, totalUnits);
-            var offset = segmentStarts[segmentIndex];
-            using var stream = new MemoryStream(buffer, offset, length - offset, writable: false);
-            var reader = new JpegBitReader(new JpegByteCursor(stream));
-            DecodeBaselineRange(reader, active, tables, unitsPerLine, start, end);
-        });
+        try {
+            var restartInterval = _restartInterval;
+            ExecutionScheduler.For(0, segmentStarts.Count, segmentIndex => {
+                var start = segmentIndex * restartInterval;
+                var end = Math.Min(start + restartInterval, totalUnits);
+                var offset = segmentStarts[segmentIndex];
+                using var stream = new MemoryStream(buffer, offset, length - offset, writable: false);
+                var reader = new JpegBitReader(new JpegByteCursor(stream));
+                DecodeBaselineRange(reader, active, tables, unitsPerLine, start, end);
+            });
+        }
+        finally {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     private static void DecodeBaselineRange(
@@ -366,7 +371,7 @@ internal sealed class JpegDecoder
 
     private (byte[] Buffer, int Length, List<int> SegmentStarts) ReadRestartSegments()
     {
-        var buffer = new byte[8192];
+        var buffer = ArrayPool<byte>.Shared.Rent(8192);
         var length = 0;
         var searched = 0;
         var segmentStarts = new List<int> { 0 };
@@ -401,14 +406,14 @@ internal sealed class JpegDecoder
 
                 var paddedLength = ffIndex + k_SegmentRefillPadding;
                 if (buffer.Length < paddedLength) {
-                    Array.Resize(ref buffer, paddedLength);
+                    Grow(ref buffer, paddedLength, length);
                 }
 
                 return (buffer, paddedLength, segmentStarts);
             }
 
             if (length == buffer.Length) {
-                Array.Resize(ref buffer, buffer.Length * 2);
+                Grow(ref buffer, buffer.Length * 2, length);
             }
 
             var read = _cursor.ReadBulk(buffer.AsSpan(length));
@@ -418,6 +423,14 @@ internal sealed class JpegDecoder
 
             length += read;
         }
+    }
+
+    private static void Grow(ref byte[] buffer, int minimumLength, int usedLength)
+    {
+        var grown = ArrayPool<byte>.Shared.Rent(minimumLength);
+        buffer.AsSpan(0, usedLength).CopyTo(grown);
+        ArrayPool<byte>.Shared.Return(buffer);
+        buffer = grown;
     }
 
     private void DecodeProgressiveInterleavedScan(JpegBitReader reader, (JpegComponentState Component, JpegScanComponent Scan)[] active, JpegScanHeader scan, ref int eobRun)

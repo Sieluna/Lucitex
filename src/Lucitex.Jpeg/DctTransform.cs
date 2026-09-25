@@ -50,16 +50,24 @@ internal static class DctTransform
         var x7 = rows[7];
         var a = (x0 + x4) * 0.353553391f;
         var b = (x0 - x4) * 0.353553391f;
-        var c = x2 * 0.461939766f + x6 * 0.191341716f;
-        var d = x2 * 0.191341716f - x6 * 0.461939766f;
+        var c = Vector256.FusedMultiplyAdd(x6, Vector256.Create(0.191341716f), x2 * 0.461939766f);
+        var d = Vector256.FusedMultiplyAdd(x6, Vector256.Create(-0.461939766f), x2 * 0.191341716f);
         var e0 = a + c;
         var e1 = b + d;
         var e2 = b - d;
         var e3 = a - c;
-        var o0 = x1 * 0.490392640f + x3 * 0.415734806f + x5 * 0.277785117f + x7 * 0.097545161f;
-        var o1 = x1 * 0.415734806f - x3 * 0.097545161f - x5 * 0.490392640f - x7 * 0.277785117f;
-        var o2 = x1 * 0.277785117f - x3 * 0.490392640f + x5 * 0.097545161f + x7 * 0.415734806f;
-        var o3 = x1 * 0.097545161f - x3 * 0.277785117f + x5 * 0.415734806f - x7 * 0.490392640f;
+        var o0 = Vector256.FusedMultiplyAdd(x7, Vector256.Create(0.097545161f),
+            Vector256.FusedMultiplyAdd(x5, Vector256.Create(0.277785117f),
+            Vector256.FusedMultiplyAdd(x3, Vector256.Create(0.415734806f), x1 * 0.490392640f)));
+        var o1 = Vector256.FusedMultiplyAdd(x7, Vector256.Create(-0.277785117f),
+            Vector256.FusedMultiplyAdd(x5, Vector256.Create(-0.490392640f),
+            Vector256.FusedMultiplyAdd(x3, Vector256.Create(-0.097545161f), x1 * 0.415734806f)));
+        var o2 = Vector256.FusedMultiplyAdd(x7, Vector256.Create(0.415734806f),
+            Vector256.FusedMultiplyAdd(x5, Vector256.Create(0.097545161f),
+            Vector256.FusedMultiplyAdd(x3, Vector256.Create(-0.490392640f), x1 * 0.277785117f)));
+        var o3 = Vector256.FusedMultiplyAdd(x7, Vector256.Create(-0.490392640f),
+            Vector256.FusedMultiplyAdd(x5, Vector256.Create(0.415734806f),
+            Vector256.FusedMultiplyAdd(x3, Vector256.Create(-0.277785117f), x1 * 0.097545161f)));
         rows[0] = e0 + o0;
         rows[1] = e1 + o1;
         rows[2] = e2 + o2;
@@ -82,12 +90,20 @@ internal static class DctTransform
         var d3 = rows[3] - rows[4];
         rows[0] = (s0 + s1 + s2 + s3) * 0.353553391f;
         rows[4] = (s0 - s1 - s2 + s3) * 0.353553391f;
-        rows[2] = (s0 - s3) * 0.461939766f + (s1 - s2) * 0.191341716f;
-        rows[6] = (s0 - s3) * 0.191341716f - (s1 - s2) * 0.461939766f;
-        rows[1] = d0 * 0.490392640f + d1 * 0.415734806f + d2 * 0.277785117f + d3 * 0.097545161f;
-        rows[3] = d0 * 0.415734806f - d1 * 0.097545161f - d2 * 0.490392640f - d3 * 0.277785117f;
-        rows[5] = d0 * 0.277785117f - d1 * 0.490392640f + d2 * 0.097545161f + d3 * 0.415734806f;
-        rows[7] = d0 * 0.097545161f - d1 * 0.277785117f + d2 * 0.415734806f - d3 * 0.490392640f;
+        rows[2] = Vector256.FusedMultiplyAdd(s1 - s2, Vector256.Create(0.191341716f), (s0 - s3) * 0.461939766f);
+        rows[6] = Vector256.FusedMultiplyAdd(s1 - s2, Vector256.Create(-0.461939766f), (s0 - s3) * 0.191341716f);
+        rows[1] = Vector256.FusedMultiplyAdd(d3, Vector256.Create(0.097545161f),
+            Vector256.FusedMultiplyAdd(d2, Vector256.Create(0.277785117f),
+            Vector256.FusedMultiplyAdd(d1, Vector256.Create(0.415734806f), d0 * 0.490392640f)));
+        rows[3] = Vector256.FusedMultiplyAdd(d3, Vector256.Create(-0.277785117f),
+            Vector256.FusedMultiplyAdd(d2, Vector256.Create(-0.490392640f),
+            Vector256.FusedMultiplyAdd(d1, Vector256.Create(-0.097545161f), d0 * 0.415734806f)));
+        rows[5] = Vector256.FusedMultiplyAdd(d3, Vector256.Create(0.415734806f),
+            Vector256.FusedMultiplyAdd(d2, Vector256.Create(0.097545161f),
+            Vector256.FusedMultiplyAdd(d1, Vector256.Create(-0.490392640f), d0 * 0.277785117f)));
+        rows[7] = Vector256.FusedMultiplyAdd(d3, Vector256.Create(-0.490392640f),
+            Vector256.FusedMultiplyAdd(d2, Vector256.Create(0.415734806f),
+            Vector256.FusedMultiplyAdd(d1, Vector256.Create(-0.277785117f), d0 * 0.097545161f)));
     }
 
     private static void Transpose(Span<Vector256<float>> rows)

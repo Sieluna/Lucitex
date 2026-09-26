@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Lucitex.Core.Execution;
 using Lucitex.Core.Metadata;
 using Lucitex.Core.Spatial;
@@ -45,6 +46,30 @@ public class PngCodecEndToEndTests
         return destination;
     }
 
+    private static byte[] Encode(Lucitex.Core.Semantic.ImageAssetDescriptor asset, byte[] source)
+    {
+        var part = asset.Parts[0];
+        using var stream = new MemoryStream();
+        using var writer = new PngCodec().CreateWriter(stream, asset);
+        writer.Write(FullRegion(part.Topology.BaseExtent.Width, part.Topology.BaseExtent.Height), source);
+        writer.Finish();
+        return stream.ToArray();
+    }
+
+    private static int FirstIdatDeflateBlockType(ReadOnlySpan<byte> png)
+    {
+        var offset = 8;
+        while (offset <= png.Length - 12) {
+            var length = checked((int)BinaryPrimitives.ReadUInt32BigEndian(png[offset..]));
+            var type = png.Slice(offset + 4, 4);
+            if (type.SequenceEqual("IDAT"u8)) {
+                return (png[offset + 10] >> 1) & 0b11;
+            }
+            offset = checked(offset + length + 12);
+        }
+        throw new InvalidDataException("PNG has no IDAT chunk.");
+    }
+
     [Fact]
     public void RoundTrip_Rgba8_PreservesPixelsAndDescriptor()
     {
@@ -54,6 +79,43 @@ public class PngCodecEndToEndTests
         var destination = RoundTrip(asset, source);
 
         Assert.Equal(source, destination);
+    }
+
+    [Fact]
+    public void DefaultCompression_UsesStoredDeflateForHighEntropyAndCompressesFlatImages()
+    {
+        var asset = PngFixtures.Rgba8(256, 256);
+        var noise = RandomRowBytes(asset.Parts[0], 21);
+        var flat = new byte[noise.Length];
+        for (var offset = 0; offset < flat.Length; offset += 4) {
+            flat[offset] = 127;
+            flat[offset + 1] = 127;
+            flat[offset + 2] = 127;
+            flat[offset + 3] = 255;
+        }
+
+        var noisePng = Encode(asset, noise);
+        var flatPng = Encode(asset, flat);
+
+        Assert.Equal(0, FirstIdatDeflateBlockType(noisePng));
+        Assert.NotEqual(0, FirstIdatDeflateBlockType(flatPng));
+        Assert.Equal(noise, RoundTrip(asset, noise));
+        Assert.Equal(flat, RoundTrip(asset, flat));
+    }
+
+    [Fact]
+    public void StoredDeflate_WritesToExactlySizedFixedCapacityStream()
+    {
+        var asset = PngFixtures.Rgba8(256, 256);
+        var source = RandomRowBytes(asset.Parts[0], 29);
+        var expected = Encode(asset, source);
+        var destination = new byte[expected.Length];
+        using var stream = new MemoryStream(destination, writable: true);
+        using var writer = new PngCodec().CreateWriter(stream, asset);
+        writer.Write(FullRegion(256, 256), source);
+        writer.Finish();
+        Assert.Equal(expected.Length, stream.Position);
+        Assert.Equal(expected, destination);
     }
 
     [Fact]

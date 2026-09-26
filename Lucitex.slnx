@@ -19,6 +19,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Lucitex.Benchmarks/Lucitex.Benchmarks.csproj" />
     <Project Path="tests/Lucitex.Fuzz/Lucitex.Fuzz.csproj" />
+    <Project Path="tests/Lucitex.Fuzz.Native/Lucitex.Fuzz.Native.vcxproj" />
     <Project Path="tests/Lucitex.Tests/Lucitex.Tests.csproj" />
   </Folder>
 </Solution>

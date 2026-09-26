@@ -12,7 +12,7 @@ internal sealed class ArtifactStore(string directory)
     };
 
     public string Save(SeedInput seed, int randomSeed, int iteration, MutationInput mutation,
-        DecodeOutcome managed, DecodeOutcome? native, ComparisonKind comparison, FuzzOptions? options = null)
+        DecodeOutcome managed, DecodeOutcome? native, ComparisonKind comparison, FuzzOptions options)
     {
         Directory.CreateDirectory(directory);
         var hash = Convert.ToHexStringLower(SHA256.HashData(mutation.Bytes));

@@ -7,7 +7,6 @@ internal enum DecodeStatus
     Unsupported,
     ResourceLimit,
     Crash,
-    Timeout,
     InfrastructureFailure,
 }
 
@@ -15,5 +14,5 @@ internal sealed record DecodeOutcome(DecodeStatus Status, string? Detail = null,
 {
     public bool Accepted => Status == DecodeStatus.Accepted;
 
-    public bool IsFailure => Status is DecodeStatus.Crash or DecodeStatus.Timeout or DecodeStatus.InfrastructureFailure;
+    public bool IsFailure => Status is DecodeStatus.Crash or DecodeStatus.InfrastructureFailure;
 }

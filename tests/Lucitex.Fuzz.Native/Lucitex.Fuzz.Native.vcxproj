@@ -41,8 +41,7 @@
     <VcpkgEnableManifest>true</VcpkgEnableManifest>
     <VcpkgUseStatic>true</VcpkgUseStatic>
     <VcpkgTriplet>x64-windows-static</VcpkgTriplet>
-    <!-- Prefer a developer-provided vcpkg checkout (VCPKG_ROOT) since it can update its own
-         registry baseline; fall back to the read-only copy bundled with Visual Studio. -->
+    <!-- Prefer VCPKG_ROOT, then use the copy bundled with Visual Studio. -->
     <VcpkgRoot Condition="'$(VcpkgRoot)'=='' and '$(VCPKG_ROOT)'!=''">$(VCPKG_ROOT)</VcpkgRoot>
     <VcpkgRoot Condition="'$(VcpkgRoot)'==''">$(VCInstallDir)vcpkg\</VcpkgRoot>
   </PropertyGroup>
@@ -50,8 +49,8 @@
 
   <PropertyGroup Label="OutputSettings">
     <TargetName>lucitex_fuzz_native</TargetName>
-    <OutDir>$(SolutionDir)artifacts\Lucitex.Fuzz.Native\$(Configuration)\</OutDir>
-    <IntDir>$(SolutionDir)artifacts\Lucitex.Fuzz.Native\obj\$(Configuration)\</IntDir>
+    <OutDir>$(MSBuildThisFileDirectory)artifacts\Lucitex.Fuzz.Native\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)artifacts\Lucitex.Fuzz.Native\obj\$(Configuration)\</IntDir>
   </PropertyGroup>
 
   <ItemDefinitionGroup>
@@ -60,12 +59,9 @@
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <!-- OpenEXR's headers include Imath's headers unqualified (e.g. <ImathBox.h>), which is
-           how OpenEXR's own CMake package exposes Imath's include dir; vcpkg's raw MSBuild
-           integration only adds the top-level include dir, so add Imath's subfolder by hand. -->
-      <AdditionalIncludeDirectories>vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\include\Imath;vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\include\OpenEXR;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <!-- ktx.h defaults its exported symbols to dllimport on Windows unless KHRONOS_STATIC is
-           defined, which only makes sense when linking the static ktx.lib built by this triplet. -->
+      <!-- OpenEXR includes Imath headers by name; add both package include directories. -->
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\include\Imath;vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\include\OpenEXR;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- The selected vcpkg triplet links KTX statically. -->
       <PreprocessorDefinitions>LUCITEX_ORACLE_BUILD;KHRONOS_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
@@ -73,8 +69,7 @@
     <ClCompile>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <!-- The x64-windows-static vcpkg triplet builds its libraries against the static CRT;
-           match it here or the linker rejects every vcpkg .lib with LNK2038. -->
+      <!-- Match the static CRT used by the vcpkg triplet. -->
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
   </ItemDefinitionGroup>
@@ -92,14 +87,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="OracleApi.cpp" />
-    <ClCompile Include="PngOracle.cpp" />
-    <ClCompile Include="ExrOracle.cpp" />
-    <ClCompile Include="Ktx2Oracle.cpp" />
-    <ClCompile Include="JpegOracle.cpp" />
-    <ClCompile Include="WebpOracle.cpp" />
-    <ClInclude Include="NativeChecks.h" />
-    <ClInclude Include="OracleApi.h" />
+    <ClCompile Include="src\OracleApi.cpp" />
+    <ClCompile Include="src\PngOracle.cpp" />
+    <ClCompile Include="src\ExrOracle.cpp" />
+    <ClCompile Include="src\Ktx2Oracle.cpp" />
+    <ClCompile Include="src\JpegOracle.cpp" />
+    <ClCompile Include="src\WebpOracle.cpp" />
+    <ClInclude Include="src\NativeChecks.h" />
+    <ClInclude Include="include\Lucitex.Fuzz.Native\OracleApi.h" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{6A1A9F2E-6E0B-4F6A-9B7A-6F1D1E9A4C3B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{6A1A9F2E-6E0B-4F6A-9B7A-6F1D1E9A4C3C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Public API">
+      <UniqueIdentifier>{6A1A9F2E-6E0B-4F6A-9B7A-6F1D1E9A4C3D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Internal">
+      <UniqueIdentifier>{6A1A9F2E-6E0B-4F6A-9B7A-6F1D1E9A4C3E}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\OracleApi.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\PngOracle.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ExrOracle.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Ktx2Oracle.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\JpegOracle.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\WebpOracle.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\NativeChecks.h">
+      <Filter>Header Files\Internal</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Lucitex.Fuzz.Native\OracleApi.h">
+      <Filter>Header Files\Public API</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>

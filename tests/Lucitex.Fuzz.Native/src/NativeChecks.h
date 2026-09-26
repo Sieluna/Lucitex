@@ -1,9 +1,7 @@
 #pragma once
 
-#include "OracleApi.h"
-#include <cstddef>
+#include <Lucitex.Fuzz.Native/OracleApi.h>
 #include <cstdint>
-#include <exception>
 #include <string>
 
 namespace oracle

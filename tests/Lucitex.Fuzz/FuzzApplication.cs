@@ -44,18 +44,13 @@ internal static class FuzzApplication
 
     private static int Replay(string[] args)
     {
-        if (args.Length < 2 || !ImageFormatExtensions.TryParse(args[0], out var format)) {
+        if (args.Length is not (2 or 4) || !ImageFormatExtensions.TryParse(args[0], out var format)) {
             return UsageError("replay requires: <png|exr|hdr|ktx2|jpg|webp> <path> [--oracle LIBRARY].");
         }
-        for (var i = 2; i < args.Length; i += 2) {
-            if (args[i] != "--oracle") {
-                return UsageError($"Unknown replay option '{args[i]}'.");
-            }
-        }
-        var options = RunOptionsParser.Parse(args[2..]);
+        var oraclePath = ParseOracleOption(args.AsSpan(2));
         var bytes = CorpusLoader.ReadInput(args[1]);
         var managed = ManagedDecoder.Decode(format, bytes);
-        using var oracle = options.Oracle is null ? null : new FfiOracle(options.Oracle);
+        using var oracle = oraclePath is null ? null : new FfiOracle(oraclePath);
         var native = oracle?.Decode(format, bytes);
         var comparison = DifferentialComparison.Compare(managed, native);
         Console.WriteLine($"managed={managed.Status}: {managed.Detail}");
@@ -86,10 +81,8 @@ internal static class FuzzApplication
             !int.TryParse(args[2], out var iterations) || iterations <= 0) {
             return UsageError("bench requires: <png|exr|hdr|ktx2|jpg|webp> <path> <iterations> [--oracle LIBRARY].");
         }
-        if (args.Length == 5 && args[3] != "--oracle") {
-            return UsageError($"Unknown benchmark option '{args[3]}'.");
-        }
-        using var oracle = args.Length == 5 ? new FfiOracle(args[4]) : null;
+        var oraclePath = args.Length == 5 ? ParseOracleOption(args.AsSpan(3)) : null;
+        using var oracle = oraclePath is null ? null : new FfiOracle(oraclePath);
         var data = File.ReadAllBytes(args[1]);
         var limits = DecodeLimits.Default with { MaxDecodedBytes = 512 * 1024 * 1024, MaxWorkingSet = 512 * 1024 * 1024 };
         DecodeOutcome Decode() => oracle is null ? ManagedDecoder.Decode(format, data, DecodeLimits.Default) : oracle.Decode(format, data, limits);
@@ -143,6 +136,17 @@ internal static class FuzzApplication
         return 2;
     }
 
+    private static string? ParseOracleOption(ReadOnlySpan<string> args)
+    {
+        if (args.IsEmpty) {
+            return null;
+        }
+        if (args.Length == 2 && args[0] == "--oracle" && !string.IsNullOrWhiteSpace(args[1])) {
+            return args[1];
+        }
+        throw new ArgumentException("Expected [--oracle LIBRARY].");
+    }
+
     private static void PrintUsage()
     {
         Console.WriteLine("Lucitex.Fuzz run [--iterations N] [--seed N] [--oracle LIBRARY] [--artifacts DIR] [--corpus DIR] [--mutation mixed|raw|structured]");
@@ -151,6 +155,4 @@ internal static class FuzzApplication
         Console.WriteLine("Lucitex.Fuzz generate-bench <directory> <width> <height>");
         Console.WriteLine("Lucitex.Fuzz bench <png|exr|hdr|ktx2|jpg|webp> <path> <iterations> [--oracle LIBRARY]");
     }
-
-
 }

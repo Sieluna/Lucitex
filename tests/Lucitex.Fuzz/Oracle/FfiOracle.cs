@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Text;
 using Lucitex.Core.Execution;
 
@@ -7,29 +6,26 @@ namespace Lucitex.Fuzz;
 internal sealed unsafe class FfiOracle : IDecodeOracle
 {
     private readonly object _sync = new();
-    private readonly NativeLibraryHandle? _library;
     private readonly string? _loadError;
-    private readonly delegate* unmanaged[Cdecl]<NativeRequest*, NativeLimits*, NativeResult*, uint> _execute;
-    private readonly delegate* unmanaged[Cdecl]<NativeResult*, void> _release;
     private bool _disposed;
 
     public FfiOracle(string libraryPath)
     {
         try {
-            _library = new NativeLibraryHandle(libraryPath);
-            var handle = _library.DangerousGetHandle();
-            var version = (delegate* unmanaged[Cdecl]<uint>)NativeLibrary.GetExport(handle, "lucitex_oracle_abi_version");
-            var size = (delegate* unmanaged[Cdecl]<uint, uint>)NativeLibrary.GetExport(handle, "lucitex_oracle_struct_size");
-            if (version() != 1 || size(1) != sizeof(NativeRequest) || size(2) != sizeof(NativeLimits) || size(3) != sizeof(NativeResult)) {
+            NativeOracleImports.ConfigureLibrary(libraryPath);
+            var version = NativeOracleImports.AbiVersion();
+            var requestSize = NativeOracleImports.StructSize(NativeStructKind.Request);
+            var limitsSize = NativeOracleImports.StructSize(NativeStructKind.Limits);
+            var resultSize = NativeOracleImports.StructSize(NativeStructKind.Result);
+            NativeOracleImports.ValidateExports();
+            if (version != NativeAbi.Version || requestSize != sizeof(NativeRequest) || limitsSize != sizeof(NativeLimits) || resultSize != sizeof(NativeResult)) {
                 throw new BadImageFormatException("Native oracle ABI version or struct layout does not match this harness.");
             }
-            _execute = (delegate* unmanaged[Cdecl]<NativeRequest*, NativeLimits*, NativeResult*, uint>)NativeLibrary.GetExport(handle, "lucitex_oracle_execute");
-            _release = (delegate* unmanaged[Cdecl]<NativeResult*, void>)NativeLibrary.GetExport(handle, "lucitex_oracle_release");
-            GC.KeepAlive(_library);
         }
-        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException) {
-            _loadError = exception.Message;
-            _library?.Dispose();
+        catch (Exception exception) when (
+            exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or
+                InvalidOperationException or TypeInitializationException) {
+            _loadError = exception.GetBaseException().Message;
         }
     }
 
@@ -74,28 +70,21 @@ internal sealed unsafe class FfiOracle : IDecodeOracle
                     var request = new NativeRequest {
                         StructSize = (uint)sizeof(NativeRequest),
                         Operation = operation,
-                        Format = format switch {
-                            ImageFormat.Png => 1,
-                            ImageFormat.Exr => 2,
-                            ImageFormat.Ktx2 => 3,
-                            ImageFormat.Jpeg => 4,
-                            ImageFormat.Webp => 5,
-                            _ => 0,
-                        },
+                        Format = ToNativeFormat(format),
                         Width = width,
                         Height = height,
                         Quality = quality,
                         InputLength = (ulong)data.Length,
                         Input = input,
                     };
-                    var code = _execute(&request, &nativeLimits, &result);
-                    var status = code switch {
-                        0 => DecodeStatus.Accepted,
-                        1 => DecodeStatus.Rejected,
-                        3 => DecodeStatus.ResourceLimit,
-                        4 => DecodeStatus.Unsupported,
-                        64 => DecodeStatus.InfrastructureFailure,
-                        70 => DecodeStatus.Crash,
+                    var code = NativeOracleImports.Execute(&request, &nativeLimits, &result);
+                    var status = ((NativeStatus)code) switch {
+                        NativeStatus.Accepted => DecodeStatus.Accepted,
+                        NativeStatus.Rejected => DecodeStatus.Rejected,
+                        NativeStatus.ResourceLimit => DecodeStatus.ResourceLimit,
+                        NativeStatus.Unsupported => DecodeStatus.Unsupported,
+                        NativeStatus.InvalidRequest => DecodeStatus.InfrastructureFailure,
+                        NativeStatus.InternalError => DecodeStatus.Crash,
                         _ => DecodeStatus.InfrastructureFailure,
                     };
                     if (result.StructSize != sizeof(NativeResult) || result.OutputLength > int.MaxValue ||
@@ -113,8 +102,7 @@ internal sealed unsafe class FfiOracle : IDecodeOracle
                 }
             }
             finally {
-                _release(&result);
-                GC.KeepAlive(_library);
+                NativeOracleImports.Release(&result);
             }
         }
     }
@@ -124,8 +112,16 @@ internal sealed unsafe class FfiOracle : IDecodeOracle
         lock (_sync) {
             if (!_disposed) {
                 _disposed = true;
-                _library?.Dispose();
             }
         }
     }
+
+    private static NativeFormat ToNativeFormat(ImageFormat format) => format switch {
+        ImageFormat.Png => NativeFormat.Png,
+        ImageFormat.Exr => NativeFormat.Exr,
+        ImageFormat.Ktx2 => NativeFormat.Ktx2,
+        ImageFormat.Jpeg => NativeFormat.Jpeg,
+        ImageFormat.Webp => NativeFormat.Webp,
+        _ => throw new ArgumentOutOfRangeException(nameof(format)),
+    };
 }

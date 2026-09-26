@@ -11,12 +11,16 @@ find_package(OpenEXR 3.3 CONFIG REQUIRED)
 find_package(Ktx CONFIG REQUIRED)
 
 add_library(lucitex_fuzz_native SHARED
-    OracleApi.cpp
-    PngOracle.cpp
-    ExrOracle.cpp
-    Ktx2Oracle.cpp
-    JpegOracle.cpp
-    WebpOracle.cpp
+    src/OracleApi.cpp
+    src/PngOracle.cpp
+    src/ExrOracle.cpp
+    src/Ktx2Oracle.cpp
+    src/JpegOracle.cpp
+    src/WebpOracle.cpp
+)
+target_include_directories(lucitex_fuzz_native
+    PUBLIC include
+    PRIVATE src
 )
 target_compile_features(lucitex_fuzz_native PRIVATE cxx_std_17)
 target_compile_definitions(lucitex_fuzz_native PRIVATE LUCITEX_ORACLE_BUILD)
@@ -27,4 +31,4 @@ set_target_properties(lucitex_fuzz_native PROPERTIES
 )
 
 install(TARGETS lucitex_fuzz_native RUNTIME DESTINATION bin LIBRARY DESTINATION lib ARCHIVE DESTINATION lib)
-install(FILES OracleApi.h DESTINATION include)
+install(FILES include/Lucitex.Fuzz.Native/OracleApi.h DESTINATION include/Lucitex.Fuzz.Native)

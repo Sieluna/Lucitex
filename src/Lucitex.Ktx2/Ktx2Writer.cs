@@ -19,6 +19,7 @@ internal sealed class Ktx2Writer : IImageWriter
     private readonly byte[][] _itemBuffers;
     private readonly long[] _levelExtentDepth;
     private bool _finished;
+    private bool _disposed;
 
     public Ktx2Writer(Stream stream, ImageAssetDescriptor descriptor, Ktx2SupercompressionScheme scheme)
     {
@@ -58,6 +59,7 @@ internal sealed class Ktx2Writer : IImageWriter
 
     public void Write(WorkRegion region, ReadOnlySpan<byte> data)
     {
+        ObjectDisposedException.ThrowIf(_disposed || _finished, this);
         var subresource = region.Subresource;
         var mip = subresource.Level.X;
         var levelCount = _part.Topology.Levels.Count;
@@ -72,6 +74,7 @@ internal sealed class Ktx2Writer : IImageWriter
 
     public void Finish()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_finished) {
             return;
         }
@@ -80,12 +83,17 @@ internal sealed class Ktx2Writer : IImageWriter
         var levelBlobs = new byte[levelCount][];
 
         for (var mip = 0; mip < levelCount; mip++) {
-            using var buffer = new MemoryStream();
-            for (var item = 0; item < _itemCount; item++) {
-                buffer.Write(_itemBuffers[(item * levelCount) + mip]);
+            if (_itemCount == 1) {
+                levelBlobs[mip] = _itemBuffers[mip];
+                continue;
             }
 
-            levelBlobs[mip] = buffer.ToArray();
+            var itemLength = _itemBuffers[mip].Length;
+            var level = new byte[checked(itemLength * _itemCount)];
+            for (var item = 0; item < _itemCount; item++) {
+                _itemBuffers[(item * levelCount) + mip].CopyTo(level, item * itemLength);
+            }
+            levelBlobs[mip] = level;
         }
 
         var packedLevels = levelBlobs.Select(PackLevel).ToArray();
@@ -152,6 +160,16 @@ internal sealed class Ktx2Writer : IImageWriter
         }
 
         _finished = true;
+        Array.Clear(_itemBuffers);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) {
+            return;
+        }
+        _disposed = true;
+        Array.Clear(_itemBuffers);
     }
 
     private (byte[] Packed, long UncompressedLength) PackLevel(byte[] raw)

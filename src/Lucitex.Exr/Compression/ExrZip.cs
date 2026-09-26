@@ -8,12 +8,15 @@ internal static class ExrZip
     public static byte[] Compress(ReadOnlySpan<byte> input)
     {
         var rented = ArrayPool<byte>.Shared.Rent(input.Length);
+        byte[]? compressed = null;
         try {
             var reordered = rented.AsSpan(0, input.Length);
             ByteReorder.Split(input, reordered);
             BytePredictor.Apply(reordered);
 
-            using var output = new MemoryStream(input.Length);
+            compressed = ArrayPool<byte>.Shared.Rent(checked(input.Length + (input.Length / 8) + 64));
+            using var output = new MemoryStream(compressed, 0, compressed.Length, writable: true, publiclyVisible: true);
+            output.SetLength(0);
             using (var zlib = new ZLibStream(output, CompressionLevel.Optimal, leaveOpen: true)) {
                 zlib.Write(reordered);
             }
@@ -22,6 +25,9 @@ internal static class ExrZip
         }
         finally {
             ArrayPool<byte>.Shared.Return(rented);
+            if (compressed is not null) {
+                ArrayPool<byte>.Shared.Return(compressed);
+            }
         }
     }
 

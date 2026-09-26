@@ -7,15 +7,17 @@ internal sealed class Vp8LHuffman : IDisposable
     private const int k_RootBits = 8;
     private readonly WebpBuffer<int>? _table;
     private readonly int _singleSymbol;
+    private readonly int _maximumBits;
 
     internal static ReadOnlySpan<byte> CodeLengthOrder => [17, 18, 0, 1, 2, 3, 4, 5, 16, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
     private Vp8LHuffman(int singleSymbol) => _singleSymbol = singleSymbol;
 
-    private Vp8LHuffman(WebpBuffer<int> table)
+    private Vp8LHuffman(WebpBuffer<int> table, int maximumBits)
     {
         _table = table;
         _singleSymbol = -1;
+        _maximumBits = maximumBits;
     }
 
     public static Vp8LHuffman Read(ref Vp8LBitReader reader, int alphabetSize, WebpMemory memory)
@@ -152,7 +154,11 @@ internal sealed class Vp8LHuffman : IDisposable
                 }
             }
         }
-        return new Vp8LHuffman(storage);
+        var maximumBits = 15;
+        while (counts[maximumBits] == 0) {
+            maximumBits--;
+        }
+        return new Vp8LHuffman(storage, maximumBits);
     }
 
     internal static void BuildCodes(ReadOnlySpan<byte> lengths, Span<ushort> codes)
@@ -184,20 +190,47 @@ internal sealed class Vp8LHuffman : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public int Decode(ref Vp8LBitReader reader)
+    public int Decode(ref Vp8LBitReader reader) => GetDecoder().Decode(ref reader);
+
+    public Decoder GetDecoder() => new(_table is null ? ReadOnlySpan<int>.Empty : _table.Span, _singleSymbol, _maximumBits);
+
+    internal readonly ref struct Decoder(ReadOnlySpan<int> table, int singleSymbol, int maximumBits)
     {
-        if (_singleSymbol >= 0) {
-            return _singleSymbol;
+        private readonly ReadOnlySpan<int> _entries = table;
+        public int MaximumBits { get; } = maximumBits;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int DecodeWindow(ref ulong window, ref int consumed)
+        {
+            if (singleSymbol >= 0) {
+                return singleSymbol;
+            }
+            var entry = _entries[(int)window & 255];
+            if (entry < 0) {
+                var link = -entry;
+                entry = _entries[(link >> 4) + ((int)(window >> k_RootBits) & ((1 << (link & 15)) - 1))];
+            }
+            var bits = entry & 15;
+            window >>= bits;
+            consumed += bits;
+            return entry >> 4;
         }
-        var table = _table!.Span;
-        var entry = table[(int)reader.Peek(k_RootBits)];
-        if (entry < 0) {
-            var link = -entry;
-            var suffix = (int)(reader.Peek(k_RootBits + (link & 15)) >> k_RootBits);
-            entry = table[(link >> 4) + suffix];
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int Decode(ref Vp8LBitReader reader)
+        {
+            if (singleSymbol >= 0) {
+                return singleSymbol;
+            }
+            var entry = _entries[(int)reader.Peek(k_RootBits)];
+            if (entry < 0) {
+                var link = -entry;
+                var suffix = (int)(reader.Peek(k_RootBits + (link & 15)) >> k_RootBits);
+                entry = _entries[(link >> 4) + suffix];
+            }
+            reader.Skip(entry & 15);
+            return entry >> 4;
         }
-        reader.Skip(entry & 15);
-        return entry >> 4;
     }
 
     public void Dispose() => _table?.Dispose();

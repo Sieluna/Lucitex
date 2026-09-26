@@ -11,7 +11,10 @@ internal ref struct Vp8LBitReader(ReadOnlySpan<byte> data)
     private int _available;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public uint Peek(int count)
+    public uint Peek(int count) => (uint)PeekWindow(count) & ((1u << count) - 1);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ulong PeekWindow(int count)
     {
         if (_available < count) {
             if (_data.Length - _offset >= 8) {
@@ -27,7 +30,7 @@ internal ref struct Vp8LBitReader(ReadOnlySpan<byte> data)
                 }
             }
         }
-        return (uint)_bits & ((1u << count) - 1);
+        return _bits;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

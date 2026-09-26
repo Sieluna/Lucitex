@@ -39,6 +39,7 @@ internal sealed class ExrWriter : IImageWriter
     private readonly List<PartState> _parts;
     private readonly bool _isMultiPart;
     private bool _finished;
+    private bool _disposed;
 
     public ExrWriter(Stream stream, ImageAssetDescriptor descriptor, ExrCompressionId compression, ExrTileDesc? tiles)
     {
@@ -71,6 +72,7 @@ internal sealed class ExrWriter : IImageWriter
 
     public void Write(WorkRegion region, ReadOnlySpan<byte> data)
     {
+        ObjectDisposedException.ThrowIf(_disposed || _finished, this);
         var part = _parts[region.Subresource.Part];
 
         if (!part.LevelIndices.TryGetValue(region.Subresource.Level, out var levelIndex)) {
@@ -97,6 +99,7 @@ internal sealed class ExrWriter : IImageWriter
 
     public void Finish()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_finished) {
             return;
         }
@@ -116,7 +119,11 @@ internal sealed class ExrWriter : IImageWriter
 
         var headerBytes = headerBuffer.ToArray();
 
-        var perPartChunks = _parts.Select(BuildChunksForPart).ToList();
+        var perPartChunks = new ExrChunk[_parts.Count][];
+        for (var partIndex = 0; partIndex < _parts.Count; partIndex++) {
+            perPartChunks[partIndex] = BuildChunksForPart(_parts[partIndex]);
+            Array.Clear(_parts[partIndex].LevelBuffers);
+        }
 
         var chunkDataStart = headerBytes.Length + perPartChunks.Sum(chunks => (long)chunks.Length * 8);
         var running = chunkDataStart;
@@ -133,6 +140,11 @@ internal sealed class ExrWriter : IImageWriter
             }
 
             offsetTables[partIndex] = offsets;
+        }
+
+        if (_stream is MemoryStream memoryStream && memoryStream.Capacity < memoryStream.Position + running
+            && memoryStream.Position + running <= int.MaxValue) {
+            memoryStream.Capacity = (int)(memoryStream.Position + running);
         }
 
         _stream.Write(headerBytes);
@@ -168,6 +180,17 @@ internal sealed class ExrWriter : IImageWriter
         }
 
         _finished = true;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) {
+            return;
+        }
+        _disposed = true;
+        foreach (var part in _parts) {
+            Array.Clear(part.LevelBuffers);
+        }
     }
 
     private static PartState BuildPartState(

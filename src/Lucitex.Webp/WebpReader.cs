@@ -1,3 +1,6 @@
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using Lucitex.Core.Execution;
 using Lucitex.Core.Execution.Codecs;
 using Lucitex.Core.Semantic;
@@ -8,6 +11,9 @@ namespace Lucitex.Webp;
 
 internal sealed class WebpReader : IImageReader
 {
+    private static readonly Vector128<byte> s_LosslessRgbaShuffle = Vector128.Create(
+        (byte)2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15);
+
     private readonly WebpDocument _document;
     private readonly ImageAssetDescriptor _descriptor;
     private readonly WebpMemory _memory;
@@ -64,12 +70,21 @@ internal sealed class WebpReader : IImageReader
         }
 
         var pixels = _pixels!.Span.Slice(startRow * _document.Width, count / 4);
-        for (var i = 0; i < pixels.Length; i++) {
-            var pixel = pixels[i];
-            destination[i * 4] = (byte)(pixel >> 16);
-            destination[(i * 4) + 1] = (byte)(pixel >> 8);
-            destination[(i * 4) + 2] = (byte)pixel;
-            destination[(i * 4) + 3] = (byte)(pixel >> 24);
+        var sourceBytes = MemoryMarshal.AsBytes(pixels);
+        var targetBytes = destination[..count];
+        var i = 0;
+        if (BitConverter.IsLittleEndian && Ssse3.IsSupported) {
+            for (; i <= sourceBytes.Length - 16; i += 16) {
+                Ssse3.Shuffle(Vector128.Create(sourceBytes.Slice(i, 16)), s_LosslessRgbaShuffle)
+                    .CopyTo(targetBytes.Slice(i, 16));
+            }
+        }
+        for (var pixel = i / 4; pixel < pixels.Length; pixel++) {
+            var packed = pixels[pixel];
+            targetBytes[pixel * 4] = (byte)(packed >> 16);
+            targetBytes[(pixel * 4) + 1] = (byte)(packed >> 8);
+            targetBytes[(pixel * 4) + 2] = (byte)packed;
+            targetBytes[(pixel * 4) + 3] = (byte)(packed >> 24);
         }
         return count;
     }

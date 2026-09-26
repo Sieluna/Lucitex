@@ -26,7 +26,7 @@ internal sealed class LucitexAdapter : CodecAdapter
                 ChromaSubsampling = comparison.Is444 ? JpegChromaSubsampling.Ratio444 : JpegChromaSubsampling.Ratio420,
             }),
             "png" => new PngCodec().CreateWriter(stream, descriptor, new PngEncoderOptions {
-                CompressionLevel = CompressionLevel.Optimal,
+                CompressionLevel = CompressionLevel.Fastest,
                 Filter = comparison.Profile switch { "png-none" => PngFilterType.None, "png-paeth" => PngFilterType.Paeth, _ => null },
             }),
             "exr" => new ExrCodec(comparison.Profile switch {

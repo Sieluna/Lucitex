@@ -134,46 +134,68 @@ internal static class Vp8LDecoder
             var position = 0;
             var groupMap = entropyImage is null ? ReadOnlySpan<uint>.Empty : entropyImage.Span;
             while (position < output.Length) {
-                var group = groupMap.IsEmpty ? 0 : (int)((groupMap[((position / width >> groupBits) * groupWidth) + ((position % width) >> groupBits)] >> 8) & 65535);
-                var tree = group * 5;
-                var symbol = trees[tree]!.Decode(ref reader);
-                var start = position;
-                if (symbol < 256) {
-                    var red = trees[tree + 1]!.Decode(ref reader);
-                    var blue = trees[tree + 2]!.Decode(ref reader);
-                    var alpha = trees[tree + 3]!.Decode(ref reader);
-                    output[position++] = ((uint)alpha << 24) | ((uint)red << 16) | ((uint)symbol << 8) | (uint)blue;
+                var group = 0;
+                var end = output.Length;
+                if (!groupMap.IsEmpty) {
+                    var y = Math.DivRem(position, width, out var x);
+                    group = (int)((groupMap[((y >> groupBits) * groupWidth) + (x >> groupBits)] >> 8) & 65535);
+                    end = position + Math.Min(width - x, (1 << groupBits) - (x & ((1 << groupBits) - 1)));
                 }
-                else if (symbol < 280) {
-                    var length = reader.ReadPrefix(symbol - 256);
-                    var distanceCode = reader.ReadPrefix(trees[tree + 4]!.Decode(ref reader));
-                    var distance = distanceCode > 120 ? distanceCode - 120 : Math.Max(1, DistanceOffsets[(distanceCode - 1) * 2] + (DistanceOffsets[((distanceCode - 1) * 2) + 1] * width));
-                    if (distance > position || length > output.Length - position) {
-                        throw new InvalidDataException("VP8L backward reference exceeds the image bounds.");
+                var tree = group * 5;
+                var greenTree = trees[tree]!.GetDecoder();
+                var redTree = trees[tree + 1]!.GetDecoder();
+                var blueTree = trees[tree + 2]!.GetDecoder();
+                var alphaTree = trees[tree + 3]!.GetDecoder();
+                var distanceTree = trees[tree + 4]!.GetDecoder();
+                var literalBits = greenTree.MaximumBits + redTree.MaximumBits + blueTree.MaximumBits + alphaTree.MaximumBits;
+                do {
+                    var window = literalBits <= 56 ? reader.PeekWindow(literalBits) : 0;
+                    var consumed = 0;
+                    var symbol = literalBits <= 56 ? greenTree.DecodeWindow(ref window, ref consumed) : greenTree.Decode(ref reader);
+                    var start = position;
+                    if (symbol < 256) {
+                        var red = literalBits <= 56 ? redTree.DecodeWindow(ref window, ref consumed) : redTree.Decode(ref reader);
+                        var blue = literalBits <= 56 ? blueTree.DecodeWindow(ref window, ref consumed) : blueTree.Decode(ref reader);
+                        var alpha = literalBits <= 56 ? alphaTree.DecodeWindow(ref window, ref consumed) : alphaTree.Decode(ref reader);
+                        reader.Skip(consumed);
+                        output[position++] = ((uint)alpha << 24) | ((uint)red << 16) | ((uint)symbol << 8) | (uint)blue;
                     }
-                    var target = output.Slice(position, length);
-                    if (distance == 1) {
-                        target.Fill(output[position - 1]);
-                    }
-                    else if (distance >= length) {
-                        output.Slice(position - distance, length).CopyTo(target);
+                    else if (symbol < 280) {
+                        reader.Skip(consumed);
+                        var length = reader.ReadPrefix(symbol - 256);
+                        var distanceCode = reader.ReadPrefix(distanceTree.Decode(ref reader));
+                        var distance = distanceCode > 120 ? distanceCode - 120 : Math.Max(1, DistanceOffsets[(distanceCode - 1) * 2] + (DistanceOffsets[((distanceCode - 1) * 2) + 1] * width));
+                        if (distance > position || length > output.Length - position) {
+                            throw new InvalidDataException("VP8L backward reference exceeds the image bounds.");
+                        }
+                        var target = output.Slice(position, length);
+                        if (distance == 1) {
+                            target.Fill(output[position - 1]);
+                        }
+                        else if (distance >= length) {
+                            output.Slice(position - distance, length).CopyTo(target);
+                        }
+                        else {
+                            output.Slice(position - distance, distance).CopyTo(target);
+                            for (var copied = distance; copied < length;) {
+                                var count = Math.Min(copied, length - copied);
+                                target[..count].CopyTo(target.Slice(copied, count));
+                                copied += count;
+                            }
+                        }
+                        position += length;
                     }
                     else {
-                        for (var i = 0; i < length; i++) {
-                            output[position + i] = output[position + i - distance];
+                        reader.Skip(consumed);
+                        output[position++] = cache[symbol - 280];
+                    }
+                    if (cacheBits != 0) {
+                        for (var i = start; i < position; i++) {
+                            var pixel = output[i];
+                            cache[(int)(unchecked(pixel * 0x1e35a7bd) >> (32 - cacheBits))] = pixel;
                         }
                     }
-                    position += length;
-                }
-                else {
-                    output[position++] = cache[symbol - 280];
-                }
-                if (cacheBits != 0) {
-                    for (var i = start; i < position; i++) {
-                        var pixel = output[i];
-                        cache[(int)(unchecked(pixel * 0x1e35a7bd) >> (32 - cacheBits))] = pixel;
-                    }
-                }
+                } while (position < end);
             }
         }
         finally {

@@ -40,8 +40,15 @@ internal static class Vp8LTransforms
             _ => throw new InvalidDataException("Invalid VP8L predictor mode."),
         };
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static uint Select(uint left, uint top, uint topLeft)
     {
+        if (Sse2.IsSupported) {
+            var corner = Vector128.CreateScalar(topLeft).AsByte();
+            var leftError = Sse2.SumAbsoluteDifferences(Vector128.CreateScalar(top).AsByte(), corner).AsUInt64().ToScalar();
+            var topError = Sse2.SumAbsoluteDifferences(Vector128.CreateScalar(left).AsByte(), corner).AsUInt64().ToScalar();
+            return leftError < topError ? left : top;
+        }
         var leftDistance = 0;
         var topDistance = 0;
         for (var shift = 0; shift < 32; shift += 8) {
@@ -54,6 +61,9 @@ internal static class Vp8LTransforms
 
     private static uint Clamp(uint a, uint b, uint c, bool half)
     {
+        if (Sse2.IsSupported) {
+            return ClampBytes(a, b, c, half).AsUInt32().ToScalar();
+        }
         uint result = 0;
         for (var shift = 0; shift < 32; shift += 8) {
             var av = (int)((a >> shift) & 255);
@@ -65,16 +75,30 @@ internal static class Vp8LTransforms
         return result;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<byte> ClampBytes(uint a, uint b, uint c, bool half)
+    {
+        var av = Vector128.WidenLower(Vector128.CreateScalar(a).AsByte()).AsInt16();
+        var cv = Vector128.WidenLower(Vector128.CreateScalar(c).AsByte()).AsInt16();
+        Vector128<short> value;
+        if (half) {
+            var difference = av - cv;
+            value = av + ((difference + (difference >>> 15)) >> 1);
+        }
+        else {
+            var bv = Vector128.WidenLower(Vector128.CreateScalar(b).AsByte()).AsInt16();
+            value = av + bv - cv;
+        }
+        return Sse2.PackUnsignedSaturate(value, Vector128<short>.Zero);
+    }
+
     private static bool IsLeftIndependent(int mode) => mode is 0 or 2 or 3 or 4 or 8 or 9;
 
-    private static readonly Vector128<uint> s_AddLowMask = Vector128.Create(0x00ff00ffu);
-    private static readonly Vector128<uint> s_AddHighMask = Vector128.Create(0xff00ff00u);
     private static readonly Vector128<uint> s_AverageMask = Vector128.Create(0xfefefefeu);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector128<uint> AddVec(Vector128<uint> a, Vector128<uint> b)
-        => (((a & s_AddLowMask) + (b & s_AddLowMask)) & s_AddLowMask) |
-           (((a & s_AddHighMask) + (b & s_AddHighMask)) & s_AddHighMask);
+        => (a.AsByte() + b.AsByte()).AsUInt32();
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector128<uint> AverageVec(Vector128<uint> a, Vector128<uint> b)
@@ -99,6 +123,21 @@ internal static class Vp8LTransforms
                     pixels[row + x] = Add(pixels[row + x], pixels[row + x - 1]);
                     InverseLeftChainRow(pixels.Slice(row + x, blockEnd - x));
                     x = blockEnd;
+                    continue;
+                }
+
+                if (Sse2.IsSupported && mode is >= 11 and <= 13) {
+                    var left = pixels[row + x - 1];
+                    for (; x < blockEnd; x++) {
+                        var index = row + x;
+                        var top = pixels[index - width];
+                        var corner = pixels[index - width - 1];
+                        var prediction = mode == 11
+                            ? Vector128.CreateScalar(Select(left, top, corner)).AsByte()
+                            : ClampBytes(mode == 13 ? Average(left, top) : left, mode == 13 ? 0 : top, corner, mode == 13);
+                        left = (Vector128.CreateScalar(pixels[index]).AsByte() + prediction).AsUInt32().ToScalar();
+                        pixels[index] = left;
+                    }
                     continue;
                 }
 
@@ -249,6 +288,10 @@ internal static class Vp8LTransforms
 
     public static void ExpandPalette(Span<uint> pixels, int width, int height, ReadOnlySpan<uint> palette, int widthBits)
     {
+        if (widthBits != 0 && width >= 8 && pixels.Length >= 4096) {
+            ExpandPackedPalette(pixels, width, height, palette, widthBits);
+            return;
+        }
         var packedWidth = Subsample(width, widthBits);
         var indexBits = 8 >> widthBits;
         var indexMask = (1 << indexBits) - 1;
@@ -258,6 +301,29 @@ internal static class Vp8LTransforms
                 var packed = pixels[(y * packedWidth) + (x >> widthBits)] >> 8;
                 var index = (int)(packed >> ((x & pixelMask) * indexBits)) & indexMask;
                 pixels[(y * width) + x] = index < palette.Length ? palette[index] : 0;
+            }
+        }
+    }
+
+    private static void ExpandPackedPalette(Span<uint> pixels, int width, int height, ReadOnlySpan<uint> palette, int widthBits)
+    {
+        var count = 1 << widthBits;
+        var indexBits = 8 >> widthBits;
+        var indexMask = (1 << indexBits) - 1;
+        Span<uint> table = stackalloc uint[256 * count];
+        for (var packed = 0; packed < 256; packed++) {
+            for (var i = 0; i < count; i++) {
+                var index = (packed >> (i * indexBits)) & indexMask;
+                table[packed * count + i] = index < palette.Length ? palette[index] : 0;
+            }
+        }
+        var packedWidth = Subsample(width, widthBits);
+        for (var y = height - 1; y >= 0; y--) {
+            for (var group = packedWidth - 1; group >= 0; group--) {
+                var packed = (int)((pixels[y * packedWidth + group] >> 8) & 255);
+                var x = group * count;
+                var length = Math.Min(count, width - x);
+                table.Slice(packed * count, length).CopyTo(pixels.Slice(y * width + x, length));
             }
         }
     }

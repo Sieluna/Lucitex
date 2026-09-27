@@ -18,6 +18,7 @@ internal static class Vp8Encoder
         using var header = new Vp8BoolEncoder(memory);
         using var tokens = new Vp8BoolEncoder(memory);
         var quantizer = (127 * (100 - options.Quality) + 50) / 100;
+        var modeCount = WebpEffortSettings.For(options.Effort).LossyModes;
         WriteHeader(header, quantizer);
         var frame = new Vp8FrameHeader();
         frame.Quant.YacQi = quantizer;
@@ -31,8 +32,8 @@ internal static class Vp8Encoder
             left.Clear();
             for (var mx = 0; mx < columns; mx++) {
                 LoadMacroblock(pixels, width, height, mx, my, source);
-                var yMode = Predict(source[..256], yBuffer.Span, yStride, mx * 16, my * 16, 16, options.Effort);
-                var uvMode = PredictChroma(source[256..], uBuffer.Span, vBuffer.Span, uvStride, mx * 8, my * 8, options.Effort);
+                var yMode = Predict(source[..256], yBuffer.Span, yStride, mx * 16, my * 16, 16, modeCount);
+                var uvMode = PredictChroma(source[256..], uBuffer.Span, vBuffer.Span, uvStride, mx * 8, my * 8, modeCount);
                 WriteModes(header, yMode, uvMode);
                 Transform(source[..256], 16, yBuffer.Span, yStride, mx * 16, my * 16, coefficients[..256]);
                 for (var block = 0; block < 16; block++) {
@@ -138,11 +139,10 @@ internal static class Vp8Encoder
         }
     }
 
-    private static int Predict(ReadOnlySpan<byte> source, Span<byte> plane, int stride, int x, int y, int size, WebpCompressionEffort effort)
+    private static int Predict(ReadOnlySpan<byte> source, Span<byte> plane, int stride, int x, int y, int size, int modeCount)
     {
         var bestMode = 0;
         var bestScore = long.MaxValue;
-        var modeCount = effort == WebpCompressionEffort.Fast ? 1 : 4;
         for (var mode = 0; mode < modeCount; mode++) {
             Vp8Predict.PredictBlock(plane, stride, y, x, size, mode);
             var score = Score(source, plane, stride, x, y, size);
@@ -155,11 +155,10 @@ internal static class Vp8Encoder
         return bestMode;
     }
 
-    private static int PredictChroma(ReadOnlySpan<byte> source, Span<byte> u, Span<byte> v, int stride, int x, int y, WebpCompressionEffort effort)
+    private static int PredictChroma(ReadOnlySpan<byte> source, Span<byte> u, Span<byte> v, int stride, int x, int y, int modeCount)
     {
         var bestMode = 0;
         var bestScore = long.MaxValue;
-        var modeCount = effort == WebpCompressionEffort.Fast ? 1 : 4;
         for (var mode = 0; mode < modeCount; mode++) {
             Vp8Predict.PredictBlock(u, stride, y, x, 8, mode);
             Vp8Predict.PredictBlock(v, stride, y, x, 8, mode);

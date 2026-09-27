@@ -9,6 +9,7 @@ internal sealed class WebpMemory(long limit)
 {
     private const long k_LargeBufferThreshold = 1024 * 1024;
     private long _used;
+    internal long PeakBytes { get; private set; }
 
     public void Reserve(long bytes)
     {
@@ -16,6 +17,7 @@ internal sealed class WebpMemory(long limit)
             throw new ImageFormatException("webp", "LimitExceeded", "WebP working memory exceeds the configured limit.");
         }
         _used += bytes;
+        PeakBytes = Math.Max(PeakBytes, _used);
     }
 
     public void Release(long bytes) => _used -= bytes;

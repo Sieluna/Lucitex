@@ -21,6 +21,7 @@ internal static class Vp8LTransforms
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static uint Average(uint a, uint b) => (a & b) + (((a ^ b) & 0xfefefefe) >> 1);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint Predict(int mode, uint left, uint top, uint topLeft, uint topRight)
         => mode switch {
             0 => 0xff000000,

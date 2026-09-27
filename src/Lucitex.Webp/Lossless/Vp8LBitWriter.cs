@@ -2,14 +2,24 @@ using System.Buffers.Binary;
 
 namespace Lucitex.Webp.Lossless;
 
-internal sealed class Vp8LBitWriter(Stream stream, WebpMemory memory) : IDisposable
+internal sealed class Vp8LBitWriter(Stream? stream, WebpMemory memory, int bufferSize = 8192) : IDisposable
 {
-    private readonly WebpBuffer<byte> _buffer = memory.Rent<byte>(8192);
+    private readonly WebpBuffer<byte> _buffer = memory.Rent<byte>(bufferSize);
     private ulong _bits;
     private int _pending;
     private int _position;
 
     public long TotalBits { get; private set; }
+
+    public ReadOnlySpan<byte> WrittenSpan => _buffer.Span[..checked((int)((TotalBits + 7) / 8))];
+
+    public void Reset()
+    {
+        _bits = 0;
+        _pending = 0;
+        _position = 0;
+        TotalBits = 0;
+    }
 
     public void Write(uint value, int count)
     {
@@ -43,8 +53,10 @@ internal sealed class Vp8LBitWriter(Stream stream, WebpMemory memory) : IDisposa
 
     private void FlushBuffer()
     {
-        stream.Write(_buffer.Span[.._position]);
-        _position = 0;
+        if (stream is not null) {
+            stream.Write(_buffer.Span[.._position]);
+            _position = 0;
+        }
     }
 
     public void Dispose() => _buffer.Dispose();

@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace Lucitex.Webp.Lossless;
 
@@ -80,12 +81,22 @@ internal ref struct Vp8LMatchFinder
         return (int)(hash ^ (hash >> 16)) & _mask;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private readonly void Consider(int candidate, int limit, ref int length, ref int distance)
     {
         if (candidate < 0 || candidate >= _position || _position - candidate > 1048456 ||
             _pixels[candidate] != _pixels[_position] || _pixels[candidate + length] != _pixels[_position + length]) {
             return;
         }
+        var matched = MatchLength(candidate, limit);
+        if (matched > length) {
+            length = matched;
+            distance = _position - candidate;
+        }
+    }
+
+    private readonly int MatchLength(int candidate, int limit)
+    {
         var matched = 1;
         if (Vector.IsHardwareAccelerated) {
             var lanes = Vector<uint>.Count;
@@ -96,9 +107,6 @@ internal ref struct Vp8LMatchFinder
         while (matched < limit && _pixels[candidate + matched] == _pixels[_position + matched]) {
             matched++;
         }
-        if (matched > length) {
-            length = matched;
-            distance = _position - candidate;
-        }
+        return matched;
     }
 }

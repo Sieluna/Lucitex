@@ -44,11 +44,13 @@ internal static partial class SeedCorpus
             new("rgb9e5.ktx2", ImageFormat.Ktx2, WriteKtx2Packed(EncodedFormatId.Rgb9E5, 13, 7, 13)),
         };
         seeds.AddRange(CreateTopologySeeds());
-        foreach (var effort in Enum.GetValues<WebpCompressionEffort>()) {
-            foreach (var quality in new[] { 0, 75, 100 }) {
-                var options = new WebpEncoderOptions { Lossless = false, Quality = quality, Effort = effort };
-                seeds.Add(new($"managed-lossy-{quality}-{effort}.webp", ImageFormat.Webp,
-                    WriteWebpRgba8(quality == 0 ? 1 : 17, quality == 100 ? 1 : 19, 17, options)));
+        foreach (var lossless in new[] { false, true }) {
+            foreach (var effort in Enum.GetValues<WebpCompressionEffort>()) {
+                foreach (var quality in new[] { 0, 25, 50, 75, 90, 100 }) {
+                    var options = new WebpEncoderOptions { Lossless = lossless, Quality = quality, Effort = effort };
+                    seeds.Add(new($"managed-{(lossless ? "lossless" : "lossy")}-{effort}-{quality}.webp", ImageFormat.Webp,
+                        WriteWebpRgba8(quality == 0 ? 1 : 17, quality == 100 ? 1 : 19, 17, options)));
+                }
             }
         }
         return seeds;

@@ -36,25 +36,28 @@ public class LosslessEncodingTests
         return pixels;
     }
 
-    private static byte[] EncodeLossless(int width, int height, byte[] pixels, WebpCompressionEffort effort)
+    private static byte[] EncodeLossless(int width, int height, byte[] pixels, int quality = 75, WebpCompressionEffort effort = WebpCompressionEffort.Balanced)
     {
         using var stream = new MemoryStream();
         var codec = new WebpCodec();
-        var writer = codec.CreateWriter(stream, PngFixtures.Rgba8(width, height), new WebpEncoderOptions { Lossless = true, Effort = effort });
+        using var writer = codec.CreateWriter(stream, PngFixtures.Rgba8(width, height), new WebpEncoderOptions {
+            Lossless = true, Quality = quality, Effort = effort,
+        });
         writer.Write(FullRegion(width, height), pixels);
         writer.Finish();
         return stream.ToArray();
     }
 
     [Theory]
-    [InlineData(WebpCompressionEffort.Fast)]
-    [InlineData(WebpCompressionEffort.Balanced)]
-    public void RoundTrip_Ramp_IsLossless(WebpCompressionEffort effort)
+    [InlineData(0)]
+    [InlineData(75)]
+    [InlineData(100)]
+    public void RoundTrip_Ramp_IsLossless(int quality)
     {
         const int width = 128, height = 128;
         var pixels = RampRgba(width, height);
 
-        var encoded = EncodeLossless(width, height, pixels, effort);
+        var encoded = EncodeLossless(width, height, pixels, quality);
 
         using var stream = new MemoryStream(encoded);
         var reader = new WebpCodec().OpenReader(stream, new DecodeLimits { MaxCompressionRatio = double.MaxValue });
@@ -67,14 +70,13 @@ public class LosslessEncodingTests
     [Fact]
     public void FastEffort_OnRampContent_StillCompressesWellBelowRawSize()
     {
-        // Fast now runs a cheap real predictor search instead of skipping prediction outright, since
-        // gradient content specifically loses a lot of size when left unpredicted.
+        // The lowest search tier still evaluates a predictor for gradient content.
         const int width = 128, height = 128;
         var pixels = RampRgba(width, height);
 
-        var encoded = EncodeLossless(width, height, pixels, WebpCompressionEffort.Fast);
+        var encoded = EncodeLossless(width, height, pixels, effort: WebpCompressionEffort.Fast);
 
         Assert.True(encoded.Length < pixels.Length / 2,
-            $"Expected Fast-effort lossless encoding of ramp content to compress below half the raw size ({pixels.Length} bytes), got {encoded.Length} bytes.");
+            $"Expected Fast lossless encoding of ramp content to compress below half the raw size ({pixels.Length} bytes), got {encoded.Length} bytes.");
     }
 }

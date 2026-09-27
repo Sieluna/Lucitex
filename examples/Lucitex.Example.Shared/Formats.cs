@@ -34,16 +34,18 @@ public static class Formats
         Field<JpegEncoderOptions>.Boolean("optimize-huffman", "Optimize Huffman tables",
             "Adapt entropy tables to the image without further quality loss.", o => o.OptimizeHuffmanTables, (o, value) => o with { OptimizeHuffmanTables = value }));
 
-    public static Format<WebpEncoderOptions> Webp { get; } = new(s_Webp, new() { Lossless = false, Effort = WebpCompressionEffort.Fast }, s_Webp.CreateWriter,
+    public static Format<WebpEncoderOptions> Webp { get; } = new(s_Webp, new() { Lossless = false }, s_Webp.CreateWriter,
         Field<WebpEncoderOptions>.Boolean("lossless", "Lossless encoding",
             "Preserve pixels exactly with VP8L. Disable for VP8 lossy compression with adjustable quality.", o => o.Lossless, (o, value) => o with { Lossless = value }),
         Field<WebpEncoderOptions>.Integer("quality", "Quality",
-            "Higher values preserve more detail. Applies to lossy encoding; even 100 uses chroma subsampling and is not lossless.", 0, 100,
-            o => o.Quality, (o, value) => o with { Quality = value }).When("lossless", "false"),
+            "Lossy image fidelity only; even 100 is lossy. Ignored when lossless is enabled.", 0, 100,
+            o => o.Quality, (o, value) => o with { Quality = value }),
         Field<WebpEncoderOptions>.Select("effort", "Compression effort",
-            "Balanced evaluates more predictions; Fast reduces encoding work.",
+            "Independent search budget. All presets preserve the same format features. More effort can cost time and memory; lossless output never grows with effort.",
             o => o.Effort, (o, value) => o with { Effort = value },
-            ("fast", "Fast", WebpCompressionEffort.Fast), ("balanced", "Balanced", WebpCompressionEffort.Balanced)));
+            ("fast", "Fast — prioritize encoding speed", WebpCompressionEffort.Fast),
+            ("balanced", "Balanced — default compression search", WebpCompressionEffort.Balanced),
+            ("best", "Best — most thorough search", WebpCompressionEffort.Best)));
 
     public static Format<PngEncoderOptions> Png { get; } = new(s_Png, new(), s_Png.CreateWriter,
         Field<PngEncoderOptions>.Select("compression", "Compression effort",

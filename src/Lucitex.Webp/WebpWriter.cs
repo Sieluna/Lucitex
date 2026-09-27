@@ -30,7 +30,7 @@ internal sealed class WebpWriter : IImageWriter
         if (!stream.CanWrite) {
             throw new ArgumentException("Output stream must be writable.", nameof(stream));
         }
-        if (!Enum.IsDefined(options.Effort) || options.Quality is < 0 or > 100 || options.MaxWorkingSet <= 0) {
+        if (options.Quality is < 0 or > 100 || !Enum.IsDefined(options.Effort) || options.MaxWorkingSet <= 0) {
             throw new ArgumentOutOfRangeException(nameof(options));
         }
         (_width, _height, _channels, _metadata) = WebpDescriptorMapper.Validate(descriptor);
@@ -56,6 +56,7 @@ internal sealed class WebpWriter : IImageWriter
     }
 
     public WriterExecutionContract Contract { get; }
+    internal long TrackedPeakBytes => _memory.PeakBytes;
 
     public void Write(WorkRegion region, ReadOnlySpan<byte> data)
     {

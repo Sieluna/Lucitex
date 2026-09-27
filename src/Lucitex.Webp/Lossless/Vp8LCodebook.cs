@@ -105,38 +105,56 @@ internal sealed class Vp8LCodebook
             }
             return;
         }
-        Span<int> frequencies = stackalloc int[19];
-        frequencies.Clear();
-        for (var i = 0; i < _lengths.Length;) {
-            var length = _lengths[i];
-            var run = 1;
-            while (i + run < _lengths.Length && _lengths[i + run] == length) {
-                run++;
-            }
-            i += run;
-            CountLengthRun(frequencies, length, run);
-        }
-        var lengthBook = new Vp8LCodebook(frequencies, 7);
+        var plan = PlanHeader(_lengths.Length, false);
+        var trimmed = PlanHeader(_lastSymbol + 1, true);
+        if (trimmed.Symbols >= 2 && trimmed.Bits < plan.Bits) plan = trimmed;
+        var lengthBook = plan.Book;
         writer.Write(0, 1);
-        var count = 19;
-        while (count > 4 && lengthBook._lengths[Vp8LHuffman.CodeLengthOrder[count - 1]] == 0) {
-            count--;
-        }
-        writer.Write((uint)(count - 4), 4);
-        for (var i = 0; i < count; i++) {
+        writer.Write((uint)(plan.Count - 4), 4);
+        for (var i = 0; i < plan.Count; i++) {
             writer.Write(lengthBook._lengths[Vp8LHuffman.CodeLengthOrder[i]], 3);
         }
-        writer.Write(0, 1);
-        for (var i = 0; i < _lengths.Length;) {
+        writer.Write(plan.Trimmed ? 1u : 0u, 1);
+        if (plan.Trimmed) {
+            writer.Write((uint)((plan.SymbolBits - 2) / 2), 3);
+            writer.Write((uint)(plan.Symbols - 2), plan.SymbolBits);
+        }
+        for (var i = 0; i < plan.End;) {
             var length = _lengths[i];
             var run = 1;
-            while (i + run < _lengths.Length && _lengths[i + run] == length) {
+            while (i + run < plan.End && _lengths[i + run] == length) {
                 run++;
             }
             i += run;
             WriteLengthRun(writer, lengthBook, length, run);
         }
     }
+
+    private HeaderPlan PlanHeader(int end, bool trimmed)
+    {
+        Span<int> frequencies = stackalloc int[19];
+        frequencies.Clear();
+        for (var i = 0; i < end;) {
+            var length = _lengths[i];
+            var run = 1;
+            while (i + run < end && _lengths[i + run] == length) run++;
+            i += run;
+            CountLengthRun(frequencies, length, run);
+        }
+        var book = new Vp8LCodebook(frequencies, 7);
+        var count = 19;
+        while (count > 4 && book._lengths[Vp8LHuffman.CodeLengthOrder[count - 1]] == 0) count--;
+        var symbols = 0;
+        foreach (var frequency in frequencies) symbols += frequency;
+        var symbolBits = 2;
+        while (symbols - 2 >= 1 << symbolBits) symbolBits += 2;
+        var bits = 6 + count * 3L + book.Measure(frequencies)
+            + frequencies[16] * 2L + frequencies[17] * 3L + frequencies[18] * 7L
+            + (trimmed ? 3 + symbolBits : 0);
+        return new HeaderPlan(book, count, end, symbols, symbolBits, trimmed, bits);
+    }
+
+    private sealed record HeaderPlan(Vp8LCodebook Book, int Count, int End, int Symbols, int SymbolBits, bool Trimmed, long Bits);
 
     private static void CountLengthRun(Span<int> frequencies, int length, int run)
     {

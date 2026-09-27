@@ -15,11 +15,10 @@ public class LossyEncodingTests
     public static IEnumerable<object[]> Cases()
     {
         foreach (var (width, height) in new[] { (1, 1), (1, 17), (19, 1), (17, 19), (64, 48) }) {
-            foreach (var quality in new[] { 0, 25, 75, 100 }) {
-                foreach (var effort in Enum.GetValues<WebpCompressionEffort>()) {
-                    foreach (var alpha in new[] { false, true }) {
-                        yield return [width, height, quality, effort, alpha];
-                    }
+            foreach (var quality in new[] { 0, 24, 25, 49, 50, 74, 75, 100 }) {
+                foreach (var alpha in new[] { false, true }) {
+                    foreach (var effort in Enum.GetValues<WebpCompressionEffort>())
+                        yield return [width, height, quality, alpha, effort];
                 }
             }
         }
@@ -27,7 +26,7 @@ public class LossyEncodingTests
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void Lossy_RoundTrip_PreservesDimensionsAndAlpha(int width, int height, int quality, WebpCompressionEffort effort, bool alpha)
+    public void Lossy_RoundTrip_PreservesDimensionsAndAlpha(int width, int height, int quality, bool alpha, WebpCompressionEffort effort)
     {
         var pixels = Pixels(width, height, alpha);
         var encoded = Encode(width, height, pixels, new() { Lossless = false, Quality = quality, Effort = effort });
@@ -124,9 +123,13 @@ public class LossyEncodingTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Encoding_PreservesMetadataAndAcceptsNonSeekableOutput(bool lossless)
+    [InlineData(false, WebpCompressionEffort.Fast)]
+    [InlineData(false, WebpCompressionEffort.Balanced)]
+    [InlineData(false, WebpCompressionEffort.Best)]
+    [InlineData(true, WebpCompressionEffort.Fast)]
+    [InlineData(true, WebpCompressionEffort.Balanced)]
+    [InlineData(true, WebpCompressionEffort.Best)]
+    public void Encoding_PreservesMetadataAndAcceptsNonSeekableOutput(bool lossless, WebpCompressionEffort effort)
     {
         var original = PngFixtures.Rgba8(17, 19);
         var part = original.Parts[0];
@@ -141,7 +144,7 @@ public class LossyEncodingTests
             ] },
         }] };
         using var stream = new NonSeekableOutput();
-        using (var writer = new WebpCodec().CreateWriter(stream, asset, new() { Lossless = lossless })) {
+        using (var writer = new WebpCodec().CreateWriter(stream, asset, new() { Lossless = lossless, Effort = effort })) {
             writer.Write(Region(17, 19), Pixels(17, 19, true));
             writer.Finish();
             writer.Finish();

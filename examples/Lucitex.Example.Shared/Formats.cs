@@ -39,7 +39,7 @@ public static class Formats
             "Preserve pixels exactly with VP8L. Disable for VP8 lossy compression with adjustable quality.", o => o.Lossless, (o, value) => o with { Lossless = value }),
         Field<WebpEncoderOptions>.Integer("quality", "Quality",
             "Lossy image fidelity only; even 100 is lossy. Ignored when lossless is enabled.", 0, 100,
-            o => o.Quality, (o, value) => o with { Quality = value }),
+            o => o.Quality, (o, value) => o with { Quality = value }).When("lossless", "false"),
         Field<WebpEncoderOptions>.Select("effort", "Compression effort",
             "Independent search budget. All presets preserve the same format features. More effort can cost time and memory; lossless output never grows with effort.",
             o => o.Effort, (o, value) => o with { Effort = value },

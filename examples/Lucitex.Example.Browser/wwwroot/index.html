@@ -1,17 +1,19 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Lucitex image conversion</title>
-<style>
-  body { max-width: 640px; margin: 2rem auto; padding: 0 1rem; font-family: sans-serif; line-height: 1.4; }
-  img { max-width: 100%; }
-  #dropzone.drag { background: #eee; }
-  #log { white-space: pre-wrap; border: 1px solid; padding: .5rem; }
-  #canvas { display: block; max-width: 100%; touch-action: none; }
-  .ratio-btn[aria-pressed="true"] { font-weight: bold; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lucitex image conversion</title>
+  <script type="importmap"></script>
+  <script src="threads#[.{fingerprint}].js"></script>
+  <style>
+    body { max-width: 640px; margin: 2rem auto; padding: 0 1rem; font-family: sans-serif; line-height: 1.4; }
+    img { max-width: 100%; }
+    #dropzone.drag { background: #eee; }
+    #log { white-space: pre-wrap; border: 1px solid; padding: .5rem; }
+    #canvas { display: block; max-width: 100%; touch-action: none; }
+    .ratio-btn[aria-pressed="true"] { font-weight: bold; }
+  </style>
 </head>
 <body>
 
@@ -93,6 +95,5 @@
 <p><small>File size depends on image content. Output / input compares encoded file sizes; it is not a quality score.</small></p>
 <pre id="log" role="status" aria-live="polite">Loading the .NET runtime…</pre>
 <noscript>This example requires JavaScript and WebAssembly.</noscript>
-<script type="module" src="main.js"></script>
 </body>
 </html>

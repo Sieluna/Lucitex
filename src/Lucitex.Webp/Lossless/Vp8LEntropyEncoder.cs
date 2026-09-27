@@ -1,6 +1,6 @@
 namespace Lucitex.Webp.Lossless;
 
-internal readonly record struct Vp8LToken(int Position, int Length, int Distance);
+internal readonly record struct Vp8LToken(int Length, int Distance);
 
 internal sealed class Vp8LEntropyEncoder : IDisposable
 {
@@ -20,7 +20,7 @@ internal sealed class Vp8LEntropyEncoder : IDisposable
         var tokens = _tokens.Span;
         long extraBits = 0;
         while (finder.Next(out var position, out var length, out var distance)) {
-            tokens[_tokenCount++] = new Vp8LToken(position, length, distance);
+            tokens[_tokenCount++] = new Vp8LToken(length, distance);
             if (distance == 0) {
                 var pixel = pixels[position];
                 frequencies[0][(pixel >> 8) & 255]++;
@@ -57,9 +57,10 @@ internal sealed class Vp8LEntropyEncoder : IDisposable
 
     public void WritePixels(Vp8LBitWriter writer, ReadOnlySpan<uint> pixels)
     {
+        var position = 0;
         foreach (var token in _tokens.Span[.._tokenCount]) {
             if (token.Distance == 0) {
-                var pixel = pixels[token.Position];
+                var pixel = pixels[position];
                 _books[0].WriteSymbol(writer, (int)((pixel >> 8) & 255));
                 _books[1].WriteSymbol(writer, (int)((pixel >> 16) & 255));
                 _books[2].WriteSymbol(writer, (int)(pixel & 255));
@@ -73,6 +74,7 @@ internal sealed class Vp8LEntropyEncoder : IDisposable
                 _books[4].WriteSymbol(writer, distancePrefix.Symbol);
                 writer.Write(distancePrefix.ExtraValue, distancePrefix.ExtraBits);
             }
+            position += token.Length;
         }
     }
 

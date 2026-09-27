@@ -6,12 +6,20 @@
     <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>Lucitex.Example.Browser</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <WasmEnableSIMD>true</WasmEnableSIMD>
     <PublishTrimmed>false</PublishTrimmed>
     <IsPackable>false</IsPackable>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <WasmBuildNative>true</WasmBuildNative>
+    <WasmEnableSIMD>true</WasmEnableSIMD>
+    <WasmEnableWebcil>false</WasmEnableWebcil>
+    <WasmEnableThreads>true</WasmEnableThreads>
+    <EmccExtraLDFlags>-sALLOW_MEMORY_GROWTH</EmccExtraLDFlags>
   </PropertyGroup>
+
+  <ItemGroup>
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Lucitex.Example.Shared\Lucitex.Example.Shared.csproj" />

@@ -1,3 +1,5 @@
+import { dotnet } from './_framework/dotnet.js';
+
 const form = document.getElementById('conversion');
 const log = document.getElementById('log');
 const dropzone = document.getElementById('dropzone');
@@ -45,25 +47,28 @@ function mimeFor(extension) {
     return 'image/png';
 }
 
-function parseTargetSize(text) {
-    const trimmed = text.trim();
-    if (!trimmed) return 0;
-    const match = /^(\d+(?:\.\d+)?)\s*(K|KB|M|MB|B)?$/i.exec(trimmed);
-    if (!match) throw new Error(`'${text}' must look like '10K', '2MB' or a raw byte count.`);
-    const amount = Number(match[1]);
-    const unit = (match[2] ?? '').toUpperCase();
-    const multiplier = unit === 'K' || unit === 'KB' ? 1024 : unit === 'M' || unit === 'MB' ? 1024 * 1024 : 1;
-    const bytes = Math.round(amount * multiplier);
-    if (bytes <= 0) throw new Error(`'${text}' must be a positive size.`);
-    return bytes;
-}
-
 const settings = new Map();
 let formats = [];
 let ready = false;
-let pending = null;
 let downloadUrl = null;
 let previewRequestId = 0;
+const queuedEvents = [];
+const eventWaiters = [];
+
+function emit(eventName) {
+    const waiter = eventWaiters.shift();
+    if (waiter) waiter(eventName);
+    else queuedEvents.push(eventName);
+}
+
+export function waitForEvent() {
+    if (queuedEvents.length) return Promise.resolve(queuedEvents.shift());
+    return new Promise(resolve => eventWaiters.push(resolve));
+}
+
+export function setStatus(message) {
+    log.textContent = message;
+}
 
 let previewBitmap = null;
 let naturalWidth = 0;
@@ -181,36 +186,33 @@ function applyManualCrop() {
     setCrop(clampCrop({ x, y, width, height }));
 }
 
-async function loadPreview(file) {
+function loadPreview(file) {
     editor.hidden = true;
     crop = null;
     previewBitmap?.close();
     previewBitmap = null;
-    const extension = extensionOf(file.name);
     const requestId = ++previewRequestId;
-    const bytes = await file.arrayBuffer();
-    worker.postMessage({ type: 'preview', bytes, sourceExtension: extension, requestId }, [bytes]);
+    if (file) emit('source-change');
+}
 
-    return new Promise(resolve => {
-        const onMessage = ({ data }) => {
-            if (data.type !== 'preview-result' || data.requestId !== requestId) return;
-            worker.removeEventListener('message', onMessage);
-            const mime = RENDERABLE_EXTENSIONS.has(extension) ? mimeFor(extension) : 'image/png';
-            createImageBitmap(new Blob([data.bytes], { type: mime })).then(bitmap => {
-                if (requestId !== previewRequestId) { bitmap.close(); return; } // a newer file was picked meanwhile
-                previewBitmap = bitmap;
-                naturalWidth = bitmap.width;
-                naturalHeight = bitmap.height;
-                canvasScale = Math.min(1, MAX_CANVAS_WIDTH / naturalWidth, MAX_CANVAS_HEIGHT / naturalHeight);
-                canvas.width = Math.round(naturalWidth * canvasScale);
-                canvas.height = Math.round(naturalHeight * canvasScale);
-                resetCrop();
-                editor.hidden = false;
-                resolve();
-            }).catch(() => resolve()); // non-image or undecodable source: skip the crop tool silently
-        };
-        worker.addEventListener('message', onMessage);
-    });
+export function showSourcePreview(bytesBase64, requestId) {
+    if (requestId !== previewRequestId) return;
+    const file = sourceInput.files?.[0];
+    if (!file) return;
+    const binary = atob(bytesBase64);
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    const mime = RENDERABLE_EXTENSIONS.has(extensionOf(file.name)) ? mimeFor(extensionOf(file.name)) : 'image/png';
+    createImageBitmap(new Blob([bytes], { type: mime })).then(bitmap => {
+        if (requestId !== previewRequestId) { bitmap.close(); return; }
+        previewBitmap = bitmap;
+        naturalWidth = bitmap.width;
+        naturalHeight = bitmap.height;
+        canvasScale = Math.min(1, MAX_CANVAS_WIDTH / naturalWidth, MAX_CANVAS_HEIGHT / naturalHeight);
+        canvas.width = Math.round(naturalWidth * canvasScale);
+        canvas.height = Math.round(naturalHeight * canvasScale);
+        resetCrop();
+        editor.hidden = false;
+    }).catch(() => {});
 }
 
 function bufferPointFromEvent(event) {
@@ -293,68 +295,98 @@ for (const input of [cropXInput, cropYInput, cropWInput, cropHInput]) {
     input.addEventListener('change', () => { if (crop) applyManualCrop(); });
 }
 
-const worker = new Worker(new URL('./conversion-worker.js', import.meta.url), { type: 'module' });
-worker.addEventListener('message', ({ data }) => {
-    if (data.type === 'ready') {
-        try {
-            formats = data.formats;
-            targetSelect.replaceChildren();
-            for (const format of formats) targetSelect.add(new Option(format.id.toUpperCase(), format.id));
-            sourceInput.accept = [...new Set(formats.flatMap(format => format.extensions))].join(',');
-            renderOptions();
-            ready = true;
-            setBusy(false);
-            log.textContent = 'Ready. Pick a source image and configure the target encoder.';
-        } catch (error) {
-            log.textContent = String(error);
-        }
-    } else if (data.type === 'result' && pending) {
-        const result = new Uint8Array(data.bytes);
-        downloadUrl = URL.createObjectURL(new Blob([result], { type: 'application/octet-stream' }));
-        download.href = downloadUrl;
-        download.download = pending.name;
-        download.textContent = `Download ${pending.name} (${formatBytes(result.length)})`;
-        download.hidden = false;
-
-        resultTable.hidden = false;
-        if (RENDERABLE_EXTENSIONS.has(extensionOf(pending.name))) {
-            previewAfter.src = downloadUrl;
-            previewAfter.hidden = false;
-            afterPlaceholder.hidden = true;
-        } else {
-            previewAfter.hidden = true;
-            afterPlaceholder.hidden = false;
-            afterPlaceholder.textContent = 'Preview not available for this format';
-        }
-        afterMeta.textContent = formatBytes(result.length);
-
-        const ratio = pending.size > 0 ? `${(result.length / pending.size * 100).toFixed(1)}%` : 'n/a';
-        const applied = Object.entries(pending.options).map(([key, value]) => `${key}=${value}`).join(', ');
-        const extras = [];
-        if (pending.cropWidth > 0) extras.push(`cropped to ${pending.cropWidth}×${pending.cropHeight} at (${pending.cropX}, ${pending.cropY})`);
-        if (pending.resizeWidth > 0 && pending.resizeHeight > 0) extras.push(`resized to ${pending.resizeWidth}×${pending.resizeHeight}`);
-        if (pending.targetSizeBytes > 0) extras.push(`target size ${formatBytes(pending.targetSizeBytes)}`);
-        log.textContent = `${pending.sourceName} -> ${pending.name}\n` +
-            `Input: ${pending.size.toLocaleString()} bytes · Output: ${result.length.toLocaleString()} bytes\n` +
-            `Output / input: ${ratio} · Conversion: ${Math.round(data.elapsedMs).toLocaleString()} ms` +
-            (extras.length ? `\n${extras.join(' · ')}` : '') +
-            (applied ? `\nSettings: ${applied}` : '');
-        pending = null;
-        setBusy(false);
-        download.click();
-    } else if (data.type === 'error') {
-        log.textContent = data.message;
-        pending = null;
-        if (data.fatal) ready = false;
-        setBusy(false);
-    }
-});
-worker.addEventListener('error', event => {
-    log.textContent = `Conversion worker failed: ${event.message}. Reload the page to retry.`;
-    ready = false;
-    pending = null;
+export function initialize(formatsJson) {
+    formats = JSON.parse(formatsJson);
+    targetSelect.replaceChildren();
+    for (const format of formats) targetSelect.add(new Option(format.id.toUpperCase(), format.id));
+    sourceInput.accept = [...new Set(formats.flatMap(format => format.extensions))].join(',');
+    renderOptions();
+    ready = true;
     setBusy(false);
-});
+}
+
+export async function readSource() {
+    const file = sourceInput.files?.[0];
+    if (!file) return JSON.stringify({ requestId: previewRequestId, extension: '', bytesBase64: '' });
+    return JSON.stringify({
+        requestId: previewRequestId,
+        extension: extensionOf(file.name),
+        bytesBase64: await fileToBase64(file),
+    });
+}
+
+export async function readConversionInput() {
+    const file = sourceInput.files?.[0];
+    if (!file) throw new Error('Choose a source image first.');
+    const format = formats.find(item => item.id === targetSelect.value);
+    if (!format) throw new Error('Choose a target format.');
+    const cropped = crop && (crop.x !== 0 || crop.y !== 0 || crop.width !== naturalWidth || crop.height !== naturalHeight);
+    return JSON.stringify({
+        sourceName: file.name,
+        sourceSize: file.size,
+        sourceExtension: extensionOf(file.name),
+        bytesBase64: await fileToBase64(file),
+        targetFormat: format.id,
+        options: Object.fromEntries(format.parameters
+            .filter(option => !option.condition || settings.get(format.id)[option.condition.id] === option.condition.value)
+            .map(option => [option.id, settings.get(format.id)[option.id]])),
+        cropX: cropped ? crop.x : 0,
+        cropY: cropped ? crop.y : 0,
+        cropWidth: cropped ? crop.width : 0,
+        cropHeight: cropped ? crop.height : 0,
+        naturalWidth,
+        naturalHeight,
+        resizeWidth: resizeWidthInput.value ? Number(resizeWidthInput.value) : 0,
+        resizeHeight: resizeHeightInput.value ? Number(resizeHeightInput.value) : 0,
+        targetSize: targetSizeInput.value,
+    });
+}
+
+export function showResult(bytesBase64, metadataJson) {
+    const metadata = JSON.parse(metadataJson);
+    const binary = atob(bytesBase64);
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    downloadUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+    download.href = downloadUrl;
+    download.download = metadata.name;
+    download.textContent = `Download ${metadata.name} (${formatBytes(metadata.outputSize)})`;
+    download.hidden = false;
+
+    resultTable.hidden = false;
+    if (RENDERABLE_EXTENSIONS.has(extensionOf(metadata.name))) {
+        previewAfter.src = downloadUrl;
+        previewAfter.hidden = false;
+        afterPlaceholder.hidden = true;
+    } else {
+        previewAfter.hidden = true;
+        afterPlaceholder.hidden = false;
+        afterPlaceholder.textContent = 'Preview not available for this format';
+    }
+    afterMeta.textContent = formatBytes(metadata.outputSize);
+
+    const ratio = metadata.inputSize > 0 ? `${(metadata.outputSize / metadata.inputSize * 100).toFixed(1)}%` : 'n/a';
+    const applied = Object.entries(metadata.options).map(([key, value]) => `${key}=${value}`).join(', ');
+    const extras = [];
+    if (metadata.cropWidth > 0) extras.push(`cropped to ${metadata.cropWidth}×${metadata.cropHeight} at (${metadata.cropX}, ${metadata.cropY})`);
+    if (metadata.resizeWidth > 0 && metadata.resizeHeight > 0) extras.push(`resized to ${metadata.resizeWidth}×${metadata.resizeHeight}`);
+    if (metadata.targetSizeBytes > 0) extras.push(`target size ${formatBytes(metadata.targetSizeBytes)}`);
+    setStatus(`${metadata.sourceName} -> ${metadata.name}\n` +
+        `Input: ${metadata.inputSize.toLocaleString()} bytes · Output: ${metadata.outputSize.toLocaleString()} bytes\n` +
+        `Output / input: ${ratio} · Conversion: ${metadata.elapsedMs.toLocaleString()} ms` +
+        (extras.length ? `\n${extras.join(' · ')}` : '') +
+        (applied ? `\nSettings: ${applied}` : ''));
+    download.click();
+}
+
+async function fileToBase64(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    return btoa(binary);
+}
 
 function renderOptions(reset = false) {
     const format = formats.find(item => item.id === targetSelect.value);
@@ -455,56 +487,36 @@ dropzone.addEventListener('drop', event => {
 
 form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (!ready || pending || !form.reportValidity()) return;
-    const file = sourceInput.files?.[0];
-    if (!file) return;
-    const format = formats.find(item => item.id === targetSelect.value);
-    const dot = file.name.lastIndexOf('.');
-    if (dot < 0) {
-        log.textContent = 'The source filename must include its image extension.';
-        return;
-    }
-    const resizeWidth = resizeWidthInput.value ? Number(resizeWidthInput.value) : 0;
-    const resizeHeight = resizeHeightInput.value ? Number(resizeHeightInput.value) : 0;
-    if ((resizeWidth > 0) !== (resizeHeight > 0)) {
-        log.textContent = 'Set both resize width and height, or leave both blank.';
-        return;
-    }
-    let targetSizeBytes = 0;
-    try {
-        targetSizeBytes = parseTargetSize(targetSizeInput.value);
-    } catch (error) {
-        log.textContent = String(error.message ?? error);
-        return;
-    }
-    const cropped = crop && (crop.x !== 0 || crop.y !== 0 || crop.width !== naturalWidth || crop.height !== naturalHeight);
-    pending = {
-        name: file.name.slice(0, dot) + format.extension,
-        sourceName: file.name,
-        size: file.size,
-        options: Object.fromEntries(format.parameters
-            .filter(option => !option.condition || settings.get(format.id)[option.condition.id] === option.condition.value)
-            .map(option => [option.id, settings.get(format.id)[option.id]])),
-        cropX: cropped ? crop.x : 0, cropY: cropped ? crop.y : 0,
-        cropWidth: cropped ? crop.width : 0, cropHeight: cropped ? crop.height : 0,
-        resizeWidth, resizeHeight, targetSizeBytes,
-    };
+    if (!ready || form.getAttribute('aria-busy') === 'true' || !form.reportValidity()) return;
     clearResult();
     setBusy(true);
-    log.textContent = 'Converting with the selected encoder settings…';
-    try {
-        const bytes = await file.arrayBuffer();
-        worker.postMessage({ type: 'convert', bytes, sourceExtension: file.name.slice(dot),
-            targetExtension: format.extension, options: pending.options,
-            cropX: pending.cropX, cropY: pending.cropY, cropWidth: pending.cropWidth, cropHeight: pending.cropHeight,
-            resizeWidth, resizeHeight, targetSizeBytes }, [bytes]);
-    } catch (error) {
-        log.textContent = String(error);
-        pending = null;
-        setBusy(false);
-    }
+    setStatus('Converting with the selected encoder settings…');
+    emit('convert');
 });
 window.addEventListener('pagehide', () => {
     clearResult();
     previewBitmap?.close();
 });
+
+try {
+    const { setModuleImports, runMain } = await dotnet.create();
+    setModuleImports('main.js', {
+        initialize,
+        setBusy,
+        setStatus,
+        clearResult,
+        showSourcePreview,
+        showResult,
+        waitForEvent,
+        readSource,
+        readConversionInput,
+    });
+    await runMain();
+} catch (error) {
+    const detail = error instanceof Error
+        ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`
+        : String(error);
+    setStatus(`The C# browser application could not start: ${detail}`);
+    setBusy(false);
+    console.error('The C# browser application could not start.', error);
+}

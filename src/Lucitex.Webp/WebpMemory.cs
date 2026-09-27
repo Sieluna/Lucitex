@@ -7,6 +7,7 @@ namespace Lucitex.Webp;
 
 internal sealed class WebpMemory(long limit)
 {
+    private const long k_LargeBufferThreshold = 1024 * 1024;
     private long _used;
 
     public void Reserve(long bytes)
@@ -22,6 +23,19 @@ internal sealed class WebpMemory(long limit)
     public WebpBuffer<T> Rent<T>(int length) where T : unmanaged
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(length);
+        var requestedBytes = checked((long)length * Unsafe.SizeOf<T>());
+        if (requestedBytes >= k_LargeBufferThreshold) {
+            Reserve(requestedBytes);
+            try {
+                var exactArray = GC.AllocateUninitializedArray<T>(length);
+                return new WebpBuffer<T>(this, exactArray, length, pooled: false);
+            }
+            catch {
+                Release(requestedBytes);
+                throw;
+            }
+        }
+
         var estimated = (long)BitOperations.RoundUpToPowerOf2((uint)Math.Max(16, length)) * Unsafe.SizeOf<T>();
         Reserve(estimated);
         T[] array;
@@ -41,11 +55,11 @@ internal sealed class WebpMemory(long limit)
             ArrayPool<T>.Shared.Return(array);
             throw;
         }
-        return new WebpBuffer<T>(this, array, length);
+        return new WebpBuffer<T>(this, array, length, pooled: true);
     }
 }
 
-internal sealed class WebpBuffer<T>(WebpMemory memory, T[] array, int length) : IDisposable where T : unmanaged
+internal sealed class WebpBuffer<T>(WebpMemory memory, T[] array, int length, bool pooled) : IDisposable where T : unmanaged
 {
     private T[]? _array = array;
 
@@ -60,6 +74,8 @@ internal sealed class WebpBuffer<T>(WebpMemory memory, T[] array, int length) : 
         }
         _array = null;
         memory.Release((long)buffer.Length * Unsafe.SizeOf<T>());
-        ArrayPool<T>.Shared.Return(buffer);
+        if (pooled) {
+            ArrayPool<T>.Shared.Return(buffer);
+        }
     }
 }

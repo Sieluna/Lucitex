@@ -110,7 +110,7 @@ internal static class BrowserApplication
             targetSizeBytes);
         BrowserInterop.ShowResult(
             System.Convert.ToBase64String(result),
-            JsonSerializer.Serialize(metadata));
+            JsonSerializer.Serialize(metadata, s_JsonOptions));
         BrowserInterop.SetBusy(false);
     }
 

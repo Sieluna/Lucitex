@@ -15,7 +15,9 @@ internal sealed class Vp8LEntropyEncoder : IDisposable
     {
         _width = width;
         var frequencies = new[] { new int[280], new int[256], new int[256], new int[256], new int[40] };
-        var finder = new Vp8LMatchFinder(pixels, positions, width, candidates);
+        using var heads = candidates == 1 ? null : memory.Rent<byte>(positions.Length / candidates);
+        var headPositions = heads is null ? Span<byte>.Empty : heads.Span;
+        var finder = new Vp8LMatchFinder(pixels, positions, headPositions, width, candidates);
         _tokens = memory.Rent<Vp8LToken>(Math.Max(1, pixels.Length));
         var tokens = _tokens.Span;
         long extraBits = 0;

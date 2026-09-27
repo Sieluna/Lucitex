@@ -7,11 +7,6 @@ namespace Lucitex.Example.Browser;
 
 internal static class BrowserApplication
 {
-    private static readonly JsonSerializerOptions s_JsonOptions = new() {
-        PropertyNameCaseInsensitive = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     public static async Task RunAsync()
     {
         BrowserInterop.Initialize(ImageConversion.GetFormats());
@@ -40,7 +35,7 @@ internal static class BrowserApplication
     private static async Task LoadPreviewAsync()
     {
         var sourceJson = await BrowserInterop.ReadSourceAsync();
-        var source = JsonSerializer.Deserialize<SourceInput>(sourceJson, s_JsonOptions);
+        var source = JsonSerializer.Deserialize(sourceJson, BrowserJsonContext.Default.SourceInput);
         if (source is null || source.BytesBase64.Length == 0) {
             return;
         }
@@ -56,7 +51,7 @@ internal static class BrowserApplication
     private static async Task ConvertAsync()
     {
         var inputJson = await BrowserInterop.ReadConversionInputAsync();
-        var input = JsonSerializer.Deserialize<ConversionInput>(inputJson, s_JsonOptions)
+        var input = JsonSerializer.Deserialize(inputJson, BrowserJsonContext.Default.ConversionInput)
             ?? throw new InvalidOperationException("The conversion request was empty.");
 
         var dot = input.SourceName.LastIndexOf('.');
@@ -69,7 +64,7 @@ internal static class BrowserApplication
 
         var targetSizeBytes = ParseTargetSize(input.TargetSize);
         var target = Formats.Resolve(input.TargetFormat);
-        var optionsJson = JsonSerializer.Serialize(input.Options);
+        var optionsJson = JsonSerializer.Serialize(input.Options, BrowserJsonContext.Default.StringMap);
         var sourceBytes = System.Convert.FromBase64String(input.BytesBase64);
 
         BrowserInterop.ClearResult();
@@ -110,7 +105,7 @@ internal static class BrowserApplication
             targetSizeBytes);
         BrowserInterop.ShowResult(
             System.Convert.ToBase64String(result),
-            JsonSerializer.Serialize(metadata, s_JsonOptions));
+            JsonSerializer.Serialize(metadata, BrowserJsonContext.Default.ConversionResult));
         BrowserInterop.SetBusy(false);
     }
 
@@ -142,45 +137,46 @@ internal static class BrowserApplication
         return (int)bytes;
     }
 
-    private sealed record SourceInput(
-        int RequestId,
-        string Extension,
-        string BytesBase64);
-
-    private sealed record ConversionInput(
-        string SourceName,
-        long SourceSize,
-        string SourceExtension,
-        string BytesBase64,
-        string TargetFormat,
-        Dictionary<string, string> Options,
-        int CropX,
-        int CropY,
-        int CropWidth,
-        int CropHeight,
-        int NaturalWidth,
-        int NaturalHeight,
-        int ResizeWidth,
-        int ResizeHeight,
-        string TargetSize);
-
-    private sealed record ConversionResult(
-        string SourceName,
-        string Name,
-        long InputSize,
-        int OutputSize,
-        long ElapsedMs,
-        Dictionary<string, string> Options,
-        int CropX,
-        int CropY,
-        int CropWidth,
-        int CropHeight,
-        int NaturalWidth,
-        int NaturalHeight,
-        int ResizeWidth,
-        int ResizeHeight,
-        int TargetSizeBytes);
 }
+
+internal sealed record SourceInput(
+    int RequestId,
+    string Extension,
+    string BytesBase64);
+
+internal sealed record ConversionInput(
+    string SourceName,
+    long SourceSize,
+    string SourceExtension,
+    string BytesBase64,
+    string TargetFormat,
+    Dictionary<string, string> Options,
+    int CropX,
+    int CropY,
+    int CropWidth,
+    int CropHeight,
+    int NaturalWidth,
+    int NaturalHeight,
+    int ResizeWidth,
+    int ResizeHeight,
+    string TargetSize);
+
+internal sealed record ConversionResult(
+    string SourceName,
+    string Name,
+    long InputSize,
+    int OutputSize,
+    long ElapsedMs,
+    Dictionary<string, string> Options,
+    int CropX,
+    int CropY,
+    int CropWidth,
+    int CropHeight,
+    int NaturalWidth,
+    int NaturalHeight,
+    int ResizeWidth,
+    int ResizeHeight,
+    int TargetSizeBytes);
 
 internal static partial class BrowserInterop
 {

@@ -72,6 +72,10 @@ public static partial class ImageConversion
     }
 }
 
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UseStringEnumConverter = true, GenerationMode = JsonSourceGenerationMode.Serialization)]
+[JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UseStringEnumConverter = true)]
 [JsonSerializable(typeof(IReadOnlyList<Format>))]
+[JsonSerializable(typeof(SourceInput))]
+[JsonSerializable(typeof(ConversionInput))]
+[JsonSerializable(typeof(ConversionResult))]
+[JsonSerializable(typeof(Dictionary<string, string>), TypeInfoPropertyName = "StringMap")]
 internal partial class BrowserJsonContext : JsonSerializerContext;

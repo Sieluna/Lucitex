@@ -5,7 +5,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>Lucitex.Example</RootNamespace>
+    <PublishTrimmed>true</PublishTrimmed>
+    <RunAOTCompilation>true</RunAOTCompilation>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

@@ -100,7 +100,7 @@ internal static class Vp8LEncoder
         long originalScore = 0;
         long predictedScore = 0;
         ReadOnlySpan<int> choices = fast ? [2, 7] : [1, 2, 7, 12];
-        var sampleStep = fast ? 4 : 2;
+        const int sampleStep = 4;
         Span<long> scores = stackalloc long[choices.Length];
         for (var by = 0; by < modeHeight; by++) {
             for (var bx = 0; bx < modeWidth; bx++) {

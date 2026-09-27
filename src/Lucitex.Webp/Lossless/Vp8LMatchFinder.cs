@@ -6,19 +6,22 @@ internal ref struct Vp8LMatchFinder
 {
     private readonly ReadOnlySpan<uint> _pixels;
     private readonly Span<int> _positions;
+    private readonly Span<byte> _heads;
     private readonly int _width;
     private readonly int _candidates;
     private readonly int _mask;
     private int _position;
 
-    public Vp8LMatchFinder(ReadOnlySpan<uint> pixels, Span<int> positions, int width, int candidates)
+    public Vp8LMatchFinder(ReadOnlySpan<uint> pixels, Span<int> positions, Span<byte> heads, int width, int candidates)
     {
         _pixels = pixels;
         _positions = positions;
+        _heads = heads;
         _width = width;
         _candidates = candidates;
         _mask = (positions.Length / candidates) - 1;
         positions.Fill(-1);
+        heads.Clear();
     }
 
     public static int TableSize(int pixels, int candidates)
@@ -39,8 +42,15 @@ internal ref struct Vp8LMatchFinder
                 Consider(position - _width, limit, ref length, ref distance);
             }
             var bucket = Hash(position) * _candidates;
-            for (var i = 0; i < _candidates && length < limit; i++) {
-                Consider(_positions[bucket + i], limit, ref length, ref distance);
+            if (_candidates == 1 && length < limit) {
+                Consider(_positions[bucket], limit, ref length, ref distance);
+            }
+            else if (_candidates > 1) {
+                var head = _heads[bucket / _candidates];
+                for (var i = 0; i < _candidates && length < limit; i++) {
+                    var slot = (head - 1 - i) & (_candidates - 1);
+                    Consider(_positions[bucket + slot], limit, ref length, ref distance);
+                }
             }
             if (length < 3) {
                 length = 1;
@@ -49,11 +59,16 @@ internal ref struct Vp8LMatchFinder
         }
         var end = position + length;
         for (var i = position; i < end && i + 2 < _pixels.Length; i++) {
-            var bucket = Hash(i) * _candidates;
-            for (var slot = _candidates - 1; slot > 0; slot--) {
-                _positions[bucket + slot] = _positions[bucket + slot - 1];
+            var hash = Hash(i);
+            var bucket = hash * _candidates;
+            if (_candidates == 1) {
+                _positions[bucket] = i;
             }
-            _positions[bucket] = i;
+            else {
+                var head = _heads[hash];
+                _positions[bucket + head] = i;
+                _heads[hash] = (byte)((head + 1) & (_candidates - 1));
+            }
         }
         _position = end;
         return true;

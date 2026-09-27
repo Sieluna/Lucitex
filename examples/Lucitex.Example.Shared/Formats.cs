@@ -34,7 +34,7 @@ public static class Formats
         Field<JpegEncoderOptions>.Boolean("optimize-huffman", "Optimize Huffman tables",
             "Adapt entropy tables to the image without further quality loss.", o => o.OptimizeHuffmanTables, (o, value) => o with { OptimizeHuffmanTables = value }));
 
-    public static Format<WebpEncoderOptions> Webp { get; } = new(s_Webp, new() { Lossless = false }, s_Webp.CreateWriter,
+    public static Format<WebpEncoderOptions> Webp { get; } = new(s_Webp, new() { Lossless = false, Effort = WebpCompressionEffort.Fast }, s_Webp.CreateWriter,
         Field<WebpEncoderOptions>.Boolean("lossless", "Lossless encoding",
             "Preserve pixels exactly with VP8L. Disable for VP8 lossy compression with adjustable quality.", o => o.Lossless, (o, value) => o with { Lossless = value }),
         Field<WebpEncoderOptions>.Integer("quality", "Quality",

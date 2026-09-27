@@ -7,13 +7,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <PublishTrimmed>false</PublishTrimmed>
+    <PublishTrimmed>true</PublishTrimmed>
     <IsPackable>false</IsPackable>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
     <WasmBuildNative>true</WasmBuildNative>
     <WasmEnableSIMD>true</WasmEnableSIMD>
     <WasmEnableWebcil>false</WasmEnableWebcil>
     <WasmEnableThreads>true</WasmEnableThreads>
+    <RunAOTCompilation>true</RunAOTCompilation>
     <EmccExtraLDFlags>-sALLOW_MEMORY_GROWTH</EmccExtraLDFlags>
   </PropertyGroup>
 

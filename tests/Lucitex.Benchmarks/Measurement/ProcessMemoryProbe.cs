@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Lucitex.Benchmarks.Codecs;
+using Lucitex.Benchmarks.Validation;
 
 namespace Lucitex.Benchmarks.Measurement;
 
@@ -75,7 +76,8 @@ internal static class ProcessMemoryProbe
     public static void RunWorker(string serialized)
     {
         var comparison = JsonSerializer.Deserialize<ComparisonCase>(Encoding.UTF8.GetString(Convert.FromBase64String(serialized)))!;
-        var session = new CodecSession(comparison);
+        var session = new CodecSession(comparison, frozenInputs: true);
+        ValidationStore.CheckWorker(session);
         for (var i = 0; i < 3; i++) {
             GC.KeepAlive(session.Run());
         }

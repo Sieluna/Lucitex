@@ -4,8 +4,16 @@ using Lucitex.Benchmarks.Data;
 
 namespace Lucitex.Benchmarks.Codecs;
 
-internal sealed class MagickNetAdapter(bool fancyUpsampling = true) : CodecAdapter
+internal sealed class MagickNetAdapter : CodecAdapter
 {
+    private readonly bool _fancyUpsampling;
+
+    public MagickNetAdapter(bool fancyUpsampling = true)
+    {
+        _fancyUpsampling = fancyUpsampling;
+        ResourceLimits.Thread = (ulong)RunOptions.Current.CodecThreads;
+    }
+
     public override byte[] Encode(TestImage source, ComparisonCase comparison)
     {
         using var image = new MagickImage();
@@ -41,7 +49,7 @@ internal sealed class MagickNetAdapter(bool fancyUpsampling = true) : CodecAdapt
     }
 
     private MagickImage Load(byte[] encoded) => new(encoded, new MagickReadSettings {
-        Defines = new JpegReadDefines { FancyUpsampling = fancyUpsampling, DctMethod = JpegDctMethod.Slow },
+        Defines = new JpegReadDefines { FancyUpsampling = _fancyUpsampling, DctMethod = JpegDctMethod.Slow },
     });
 
     private static byte[] Save(MagickImage image, ComparisonCase comparison)
@@ -65,13 +73,12 @@ internal sealed class MagickNetAdapter(bool fancyUpsampling = true) : CodecAdapt
             return image.ToByteArray(MagickFormat.Exr);
         }
         if (comparison.Format == "jpeg") {
-            image.Quality = ComparisonCase.Quality;
+            image.Quality = (uint)comparison.EncoderQuality;
             image.ColorType = ColorType.TrueColor;
             image.Settings.ColorType = ColorType.TrueColor;
-            image.Settings.Interlace = comparison.Progressive ? Interlace.Plane : Interlace.NoInterlace;
+            image.Settings.Interlace = Interlace.NoInterlace;
             image.Settings.SetDefines(new JpegWriteDefines {
-                SamplingFactor = comparison.Is444 ? JpegSamplingFactor.Ratio444 : JpegSamplingFactor.Ratio420,
-                OptimizeCoding = comparison.Profile == "jpeg-default420" ? null : comparison.OptimizeHuffman, DctMethod = JpegDctMethod.Slow,
+                SamplingFactor = JpegSamplingFactor.Ratio420, DctMethod = JpegDctMethod.Slow,
             });
             return image.ToByteArray(MagickFormat.Jpeg);
         }

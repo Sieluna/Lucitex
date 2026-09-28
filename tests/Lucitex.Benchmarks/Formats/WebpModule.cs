@@ -11,7 +11,7 @@ internal sealed class WebpModule : IFormatModule
     public int Channels => 4;
     public bool Lossless => true;
     public string DefaultProfile => "webp-lossless";
-    public IReadOnlyList<string> Profiles { get; } = ["webp-lossless"];
+    public IReadOnlyList<string> Profiles { get; } = ["webp-lossless-fast", "webp-lossless", "webp-lossless-best"];
     public IReadOnlyList<Type> BenchmarkTypes { get; } = [typeof(WebpEncodeBenchmarks), typeof(WebpDecodeBenchmarks)];
     public IReadOnlyList<Library> IndependentDecoders => [Library.ImageSharp, Library.SkiaSharp, Library.NetVips, Library.MagickNet];
 
@@ -55,7 +55,7 @@ internal sealed class WebpModule : IFormatModule
         return new {
             Bitstream = "VP8L", ExactRgba = true,
             Effort = comparison.Operation == Operation.Decode ? "Shared ImageSharp fixture: method 4, quality 100"
-                : comparison.Library == Library.Lucitex ? "Balanced" : comparison.Library == Library.SkiaSharp ? "Lossless quality 100" : "Method 4, quality 100",
+                : comparison.Library == Library.Lucitex ? comparison.WebpEffort.ToString() : comparison.Library == Library.SkiaSharp ? "Lossless quality 100" : "Method 4, quality 100",
             Fairness = "Effort settings are library-specific. RGBA including hidden RGB must match exactly; speed, memory and size are measured separately."
         };
     }

@@ -13,7 +13,6 @@
 
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.4" />
-    <PackageReference Include="BenchmarkDotNet.Diagnostics.Windows" Version="0.15.4" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.12" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
     <PackageReference Include="SkiaSharp" Version="3.119.1" />

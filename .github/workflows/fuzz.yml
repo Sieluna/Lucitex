@@ -9,7 +9,7 @@ on:
       iterations:
         description: Number of mutations per platform (1-1000000)
         type: number
-        default: 256
+        default: 1000
       seed:
         description: Reproducible random seed (signed 32-bit integer)
         type: number
@@ -152,9 +152,26 @@ jobs:
             --oracle $library --artifacts artifacts/fuzz/cases 2>&1 |
             Tee-Object -FilePath artifacts/fuzz/run.log
           $fuzzExitCode = $LASTEXITCODE
-          "| Fuzz exit code | Requested mutations | Seed |" >> $env:GITHUB_STEP_SUMMARY
-          "|---:|---:|---:|" >> $env:GITHUB_STEP_SUMMARY
-          "| $fuzzExitCode | $env:FUZZ_ITERATIONS | $env:FUZZ_SEED |" >> $env:GITHUB_STEP_SUMMARY
+          $runLog = Get-Content -LiteralPath artifacts/fuzz/run.log
+          $completed = $runLog | Select-String '^iterations=(\d+) seed=(-?\d+) elapsed_ms=(\d+)$' | Select-Object -Last 1
+          if ($completed) {
+            $run = $completed.Matches[0].Groups
+            "| Mutations executed / requested | Seed | Mutation time (ms) |" >> $env:GITHUB_STEP_SUMMARY
+            "|---:|---:|---:|" >> $env:GITHUB_STEP_SUMMARY
+            "| $($run[1].Value) / $env:FUZZ_ITERATIONS | $($run[2].Value) | $($run[3].Value) |" >> $env:GITHUB_STEP_SUMMARY
+            "" >> $env:GITHUB_STEP_SUMMARY
+            $counts = @{}
+            foreach ($line in $runLog) {
+              if ($line -match '^comparison\.(\w+)=(\d+)$') { $counts[$Matches[1]] = [int]$Matches[2] }
+            }
+            "| Decoder agreement | Acceptance mismatch | Inconclusive | Decoder / infrastructure errors | Not compared |" >> $env:GITHUB_STEP_SUMMARY
+            "|---:|---:|---:|---:|---:|" >> $env:GITHUB_STEP_SUMMARY
+            "| $([int]$counts['Agreement']) | $([int]$counts['AcceptanceMismatch']) | $([int]$counts['Inconclusive']) | $([int]$counts['Failure']) | $([int]$counts['NotCompared']) |" >> $env:GITHUB_STEP_SUMMARY
+          }
+          else {
+            "| Mutation coverage | Run stopped before mutation statistics; see run.log |" >> $env:GITHUB_STEP_SUMMARY
+            "|:---|:---|" >> $env:GITHUB_STEP_SUMMARY
+          }
           "" >> $env:GITHUB_STEP_SUMMARY
           $qualitySummary = 'artifacts/fuzz/cases/quality/summary.md'
           if (Test-Path -LiteralPath $qualitySummary) {

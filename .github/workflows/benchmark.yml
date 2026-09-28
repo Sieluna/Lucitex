@@ -8,19 +8,19 @@ on:
         type: string
         default: all
       comparable:
-        description: Filter suite to formats/routes with 2+ supporting libraries (not kernels or core)
+        description: Filter suite to formats/routes with 2+ selected supporting libraries (not kernels or core)
         type: boolean
         default: false
       cases:
         description: Comma-separated procedural cases
         type: string
-        default: ramp@128x128,checker@129x97,noise@2048x2048
+        default: ramp@128x128,alpha@128x128,noise@128x128,ramp@512x512,alpha@512x512,noise@512x512,checker@513x385,ramp@2048x2048,alpha@2048x2048,noise@2048x2048
       profiles:
         description: Comma-separated profiles, or all
         type: string
-        default: jpeg-default420,png-default,exr-half-zip,ktx2-rgba8-none,webp-lossless
+        default: jpeg-quality420,jpeg-rate420,png-default,exr-half-zip,ktx2-rgba8-none,webp-lossless
       mode:
-        description: Full measurement or pipeline smoke check
+        description: Full adaptive measurement or smoke check
         type: choice
         options: [full, smoke]
         default: full
@@ -78,13 +78,10 @@ jobs:
             --suite "$BENCH_SUITE"
             --cases "$BENCH_CASES"
             --profiles "$BENCH_PROFILES"
+            --mode "$BENCH_MODE"
             --memory "$BENCH_MEMORY"
             --output "$BENCH_OUTPUT"
-            --filter '*'
           )
-          if [[ "$BENCH_MODE" == smoke ]]; then
-            args+=(--quick)
-          fi
           if [[ "$BENCH_COMPARABLE" == true ]]; then
             args+=(--comparable)
           fi
@@ -119,10 +116,11 @@ jobs:
           shopt -s nullglob
           {
             printf '# Benchmark\n\n'
-            printf 'Compare only within the same OS; Windows and Linux runners differ.\n'
-            printf 'Single-implementation groups have no winner. EXR: normalized byte/HALF samples, not HDR fidelity. KTX2: RGBA8 container conversion, not GPU block encoding.\n\n'
+            printf 'Compare within the same OS, case and profile. JPEG pairs use MSE ±5%% or file size ±2%% against a Q90 reference.\n\n'
+            printf 'Mean: time/op; Error: 99.9%% confidence interval half-width; Allocated: managed bytes/op; Process peak: sampled whole-process memory, including runtime and native heaps.\n\n'
+            printf 'Raw/encoded: compression ratio (higher is smaller); Workload MSE: reconstruction error (lower is better); Delta: signed deviation from the pairing target. Full diagnostics are in the uploaded reports.\n\n'
             if [[ "${{ inputs.mode }}" == smoke ]]; then
-              printf '**Smoke run: timings and ranks are not performance evidence.**\n\n'
+              printf '**Smoke run: pipeline verification only; timings are not performance evidence.**\n\n'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -134,28 +132,28 @@ jobs:
               printf '## %s\n\n' "$os"
               if [[ -f "$validation" ]]; then
                 jq -r '
-                  "Runtime: \(.Runtime) · Checks: \(.Results | length)\n",
-                  (if (.Errors | length) > 0 then
-                    "### Failures (\(.Errors | length))\n",
-                    (.Errors | to_entries | .[:50][] | "- \(.key): \(.value | split("\n")[0])"),
-                    "\n(showing 50; full log in workflow run)\n"
-                  else empty end),
-                  (if (.Skipped | length) > 0 then
-                    "<details><summary>Skipped (\(.Skipped | length))</summary>\n",
-                    (.Skipped | to_entries | .[:50][] | "- \(.key): \(.value)"),
-                    "\n</details>\n"
-                  else empty end)
+                  "Runtime: \(.Runtime) · Codec threads: \(.Options.CodecThreads)\n",
+                  "Preflight: \(.Results | length) checked · \(.Errors | length) rejected · \([.Results[] | select(.PairingMatched == false)] | length) unmatched · \(.Skipped | length) unsupported.\n"
                 ' "$validation"
               else
                 printf 'No validation report. Check logs.\n\n'
               fi
 
               for report in "${reports[@]}"; do
-                awk '/^##/ || /^\|/' "$report"
+                cat "$report"
                 printf '\n'
               done
               if (( ${#reports[@]} == 0 )); then
                 printf 'No timing report available.\n\n'
+              fi
+              if [[ -f "$validation" ]]; then
+                jq -r '
+                  if (.Errors | length) > 0 then
+                    "<details><summary>Rejected cases (\(.Errors | length))</summary>\n",
+                    (.Errors | to_entries | .[:20][] | "- \(.key): \(.value | split("\n")[0] | gsub("[<>]"; ""))"),
+                    "\nUp to 20 shown; full diagnostics are in validation.json.\n\n</details>\n"
+                  else empty end
+                ' "$validation"
               fi
             } >> "$GITHUB_STEP_SUMMARY"
           done

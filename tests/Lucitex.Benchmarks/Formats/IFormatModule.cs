@@ -18,6 +18,7 @@ internal interface IFormatModule
     public Library? ReferenceLibrary => Library.ImageSharp;
     public IReadOnlyList<Library> IndependentDecoders => [Library.ImageSharp, Library.NetVips, Library.MagickNet];
     public string ReferenceName => ReferenceLibrary?.ToString() ?? "Independent format reference";
+    public string ReferenceEncoderName(ComparisonCase comparison) => ReferenceName;
     public void DecodeReference(TestImage layout, byte[] encoded, byte[] destination) =>
         CodecAdapter.Create(ReferenceLibrary!.Value).Decode(encoded, layout, destination);
     public void ValidateDimensions(TestImage layout, byte[] encoded)

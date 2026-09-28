@@ -28,7 +28,6 @@ internal static class FormatCatalog
         new("ktx2", "webp", typeof(Ktx2ToWebpBenchmarks)),
         new("webp", "ktx2", typeof(WebpToKtx2Benchmarks)),
     ];
-    public static IReadOnlyList<string> PlannedFormats { get; } = ["dds", "hdr"];
     public static IEnumerable<string> Profiles => Modules.SelectMany(m => m.Profiles);
     public static IFormatModule Get(string id) => Modules.Single(m => m.Id == id);
     public static IFormatModule ForProfile(string profile) => Modules.Single(m => m.Profiles.Contains(profile));
@@ -38,6 +37,7 @@ internal static class FormatCatalog
         foreach (var module in Modules.Where(m => m.Profiles.Intersect(options.Profiles).Any())) {
             if (options.IncludesFormat(module.Id)) {
                 foreach (var type in module.BenchmarkTypes) {
+                    if (type == typeof(JpegDecodeBenchmarks) && !options.Profiles.Contains("jpeg-quality420")) continue;
                     yield return type;
                 }
             }
@@ -60,26 +60,14 @@ internal static class FormatCatalog
     {
         foreach (var profile in options.Profiles) {
             var format = ForProfile(profile).Id;
-            if (!options.IncludesFormat(format) && !options.IncludesConvert()) {
-                continue;
-            }
-            foreach (var image in options.Cases) {
-                foreach (var library in options.Libraries.Select(Enum.Parse<Library>)) {
-                    foreach (var operation in Enum.GetValues<Operation>()) {
-                        if (operation == Operation.Convert && !options.IncludesConvert()
-                            || operation != Operation.Convert && !options.IncludesFormat(format)) {
-                            continue;
-                        }
-                        if (operation == Operation.Convert) {
-                            foreach (var route in Conversions.Where(r => r.Destination == format && options.IncludesConvertRoute(r.Source, r.Destination))) {
-                                yield return new ComparisonCase(image, profile, library, operation, route.Source);
-                            }
-                        }
-                        else {
-                            yield return new ComparisonCase(image, profile, library, operation);
-                        }
-                    }
+            var routes = Conversions.Where(r => r.Destination == format && options.IncludesConvertRoute(r.Source, r.Destination)).ToArray();
+            foreach (var pair in from image in options.Cases from library in options.Libraries select (image, library)) {
+                var sample = new ComparisonCase(pair.image, profile, Enum.Parse<Library>(pair.library), Operation.Encode);
+                if (options.IncludesFormat(format)) {
+                    yield return sample;
+                    if (!sample.RateMatched) yield return sample with { Operation = Operation.Decode };
                 }
+                foreach (var route in routes) yield return sample with { Operation = Operation.Convert, SourceFormat = route.Source };
             }
         }
     }

@@ -27,7 +27,9 @@ internal sealed class PngModule : IFormatModule
         }
         return new {
             Width = BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(16)),
-            Height = BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(20)), BitDepth = 8, ColorType = "RGBA", Interlaced = false
+            Height = BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(20)), BitDepth = 8, ColorType = "RGBA", Interlaced = false,
+            Compression = comparison.Library == Library.Lucitex ? "SmallestSize" : "Library default",
+            Filter = comparison.Profile switch { "png-none" => "None", "png-paeth" => "Paeth", _ => "Adaptive (NetVips explicitly enables all filters)" },
         };
     }
 

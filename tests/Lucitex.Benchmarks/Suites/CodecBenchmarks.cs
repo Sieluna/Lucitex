@@ -12,7 +12,8 @@ public abstract class CodecBenchmarks
     [ParamsSource(nameof(Profiles))]
     public string Profile { get; set; } = "";
     public IEnumerable<string> Cases => RunOptions.Current.Cases;
-    public IEnumerable<string> Profiles => RunOptions.Current.Profiles.Intersect(FormatCatalog.Get(Format).Profiles);
+    public IEnumerable<string> Profiles => RunOptions.Current.Profiles.Intersect(FormatCatalog.Get(Format).Profiles)
+        .Where(p => OperationName != "Decode" || p != "jpeg-rate420");
     protected abstract string Format { get; }
     protected abstract string OperationName { get; }
     private CodecSession _session = null!;
@@ -30,12 +31,13 @@ public abstract class CodecBenchmarks
 
     private void Setup(Library library)
     {
-        _session = new CodecSession(new ComparisonCase(Case, Profile, library, Enum.Parse<Operation>(OperationName),
-            FormatCatalog.Conversions.SingleOrDefault(r => r.BenchmarkType.IsAssignableFrom(GetType()))?.Source));
-        ValidationStore.CheckWorkerResult(AccuracyCheck.Run(_session));
+        var comparison = new ComparisonCase(Case, Profile, library, Enum.Parse<Operation>(OperationName),
+            FormatCatalog.Conversions.SingleOrDefault(r => r.BenchmarkType.IsAssignableFrom(GetType()))?.Source);
+        _session = new CodecSession(comparison, frozenInputs: true);
+        ValidationStore.CheckWorker(_session);
     }
 
-    [Benchmark(Baseline = true)]
+    [Benchmark]
     public byte[] Lucitex() => _session.Run();
     [Benchmark]
     public byte[] ImageSharp() => _session.Run();

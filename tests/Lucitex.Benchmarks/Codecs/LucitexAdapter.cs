@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using Lucitex.Benchmarks.Data;
 using Lucitex.Core.Execution.Codecs;
 using Lucitex.Jpeg;
@@ -21,12 +20,10 @@ internal sealed class LucitexAdapter : CodecAdapter
         using var stream = new MemoryStream();
         using (var writer = comparison.Format switch {
             "jpeg" => new JpegCodec().CreateWriter(stream, descriptor, new JpegEncoderOptions {
-                Quality = ComparisonCase.Quality, OptimizeHuffmanTables = comparison.OptimizeHuffman,
-                Progressive = comparison.Progressive,
-                ChromaSubsampling = comparison.Is444 ? JpegChromaSubsampling.Ratio444 : JpegChromaSubsampling.Ratio420,
+                Quality = comparison.EncoderQuality, OptimizeHuffmanTables = true,
+                ChromaSubsampling = JpegChromaSubsampling.Ratio420,
             }),
             "png" => new PngCodec().CreateWriter(stream, descriptor, new PngEncoderOptions {
-                CompressionLevel = CompressionLevel.Fastest,
                 Filter = comparison.Profile switch { "png-none" => PngFilterType.None, "png-paeth" => PngFilterType.Paeth, _ => null },
             }),
             "exr" => new ExrCodec(comparison.Profile switch {
@@ -36,7 +33,7 @@ internal sealed class LucitexAdapter : CodecAdapter
             }).CreateWriter(stream, descriptor),
             "ktx2" => new Ktx2Codec().CreateWriter(stream, descriptor,
                 comparison.Profile == "ktx2-rgba8-zlib" ? Ktx2SupercompressionScheme.Zlib : Ktx2SupercompressionScheme.None),
-            "webp" => new WebpCodec().CreateWriter(stream, descriptor),
+            "webp" => new WebpCodec().CreateWriter(stream, descriptor, new WebpEncoderOptions { Effort = comparison.WebpEffort }),
             _ => throw new NotSupportedException(comparison.Format),
         }) {
             writer.Write(ImageLayout.Full(source), comparison.Format == "exr" ? ExrPixels.Pack(source) : source.Pixels);

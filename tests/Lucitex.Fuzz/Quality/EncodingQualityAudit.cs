@@ -36,7 +36,6 @@ internal static class EncodingQualityAudit
         oracle.EnsureAvailable();
         var results = new List<EncodingAuditResult>();
         var random = new Random(options.RandomSeed);
-        // Guaranteed compressible coverage; random noise alone cannot detect a missing compressor.
         foreach (var pattern in s_Patterns) {
             foreach (var format in new[] { "png", "jpeg", "webp" }) {
                 Check(new(format, pattern, 256, 256, format == "jpeg" ? 90 : 75, random.Next(), Corpus: "fixed"));
@@ -95,6 +94,8 @@ internal static class EncodingQualityAudit
                     MissingMetrics = group.Count(r => r.Compression is null),
                     RawBytes = raw, EncodedBytes = actual, ReferenceBytes = baseline,
                     LucitexCompression = Divide(raw, actual), ReferenceCompression = Divide(raw, baseline),
+                    LucitexMse = raw > 0 ? measured.Sum(m => m.SourceMse * m.RawBytes) / raw : (double?)null,
+                    ReferenceMse = raw > 0 ? measured.Sum(m => m.ReferenceMse * m.RawBytes) / raw : (double?)null,
                     SizeRatio = Divide(actual, baseline), GapPercent = (Divide(actual, baseline) - 1) * 100,
                     MedianSizeRatio = ratios.Length == 0 ? (double?)null : (ratios[(ratios.Length - 1) / 2] + ratios[ratios.Length / 2]) / 2,
                     P95SizeRatio = ratios.Length == 0 ? (double?)null : ratios[(int)Math.Ceiling(ratios.Length * .95) - 1],
@@ -113,10 +114,10 @@ internal static class EncodingQualityAudit
 
         var failures = results.Count(r => r.Error is not null);
         var missing = results.Count(r => r.Compression is null);
-        var status = $"{results.Count} checks · {results.Count - failures} passed · {failures} failed · {missing} missing metrics · seed {options.RandomSeed}";
+        var status = $"{results.Count} cases · {failures} issues · {missing} missing measurements · seed {options.RandomSeed}";
         var markdown = new StringBuilder();
-        markdown.AppendLine("| Format · corpus | Measured | Compression L / ref ↑ | Size gap ↓ | Worst L/ref ↓ | > 1.2× | Result |");
-        markdown.AppendLine("|:---|---:|---:|---:|---:|---:|:---|");
+        markdown.AppendLine("| Format · corpus | Measured | Bytes L / ref | Compression L / ref ↑ | Size gap ↓ | P95 gap ↓ | MSE L / ref ↓ |");
+        markdown.AppendLine("|:---|---:|---:|---:|---:|---:|---:|");
         var html = new StringBuilder("""
             <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
             <title>Fuzz compression audit</title><style>
@@ -124,24 +125,23 @@ internal static class EncodingQualityAudit
             p{max-width:1100px;line-height:1.6}table{border-collapse:collapse;background:white;width:100%;font-size:13px}
             th,td{padding:10px;border:1px solid #dae1ea;text-align:right;vertical-align:top}th{background:#e9eff6}
             th:first-child,td:first-child{text-align:left}.scroll{overflow:auto;margin:20px 0}small{color:#526274}
-            .fail{background:#fff0ee}.advisory{background:#fff9e6}a{color:#1657a0}code{overflow-wrap:anywhere}
+            .fail{background:#fff0ee}a{color:#1657a0}code{overflow-wrap:anywhere}
             details{max-width:540px;text-align:left}pre{white-space:pre-wrap;overflow-wrap:anywhere}summary{cursor:pointer}
             </style><h1>Fuzz compression audit</h1>
             """);
         html.Append($"<p><strong>{H(status)}</strong></p><p><a href='summary.json'>JSON + provenance</a> · <a href='cases.csv'>All cases (CSV)</a></p>");
-        html.Append($"<p>{H(methodology)}</p><p>{H(contract)}</p><h2>Compression by format, effort and corpus</h2>");
-        html.Append("<p>L = Lucitex. Oversize counts use the per-case 1.2× limit; passing an aggregate does not override a failing case. Empty values mean unavailable.</p>");
-        html.Append("<div class='scroll'><table><tr><th>Format / effort / corpus</th><th>Measured / total</th><th>Failed</th><th>Raw B</th><th>L B / ref B</th><th>Compression L / ref ↑</th><th>Gap % ↓</th><th>Median / P95 / worst L/ref ↓</th><th>≤ reference</th><th>Size fail / advisory</th><th>Fidelity fail</th></tr>");
+        html.Append($"<p>{H(methodology)}</p><details><summary>Validation rules</summary><p>{H(contract)}</p></details><h2>Compression by format, effort and corpus</h2>");
+        html.Append("<p>L = Lucitex; ref = native encoder. Empty values mean unavailable. MSE uses sample-count weighting across measured cases.</p>");
+        html.Append("<div class='scroll'><table><tr><th>Format / effort / corpus</th><th>Measured / total</th><th>Raw B</th><th>L B / ref B</th><th>Compression L / ref ↑</th><th>Gap % ↓</th><th>P95 gap % ↓</th><th>MSE L / ref ↓</th></tr>");
         foreach (var group in groups) {
             var name = $"{group.Format} / {group.Effort} / {group.Corpus}";
             var label = group.Format == "webp" ? $"WebP {group.Effort}" : group.Format.ToUpperInvariant();
-            var oversize = group.SizeAdvisories > 0 ? $"{group.SizeAdvisories} advisory" : group.SizeFailures.ToString(CultureInfo.InvariantCulture);
-            var outcome = group.Failed > 0 ? $"**FAIL ({group.Failed})**" : "PASS";
-            markdown.AppendLine($"| {label} · {group.Corpus} | {group.Measured}/{group.Cases} | {N(group.LucitexCompression, "F2")}× / {N(group.ReferenceCompression, "F2")}× | {N(group.GapPercent, "+0.00;-0.00;0.00")}% | {N(group.WorstSizeRatio, "F3")}× | {oversize} | {outcome} |");
-            html.Append($"<tr class='{(group.Failed > 0 ? "fail" : group.SizeAdvisories > 0 ? "advisory" : "")}'><td>{H(name)}</td><td>{group.Measured}/{group.Cases}</td><td>{group.Failed}</td><td>{group.RawBytes}</td><td>{group.EncodedBytes} / {group.ReferenceBytes}</td><td>{N(group.LucitexCompression)}× / {N(group.ReferenceCompression)}×</td><td>{N(group.GapPercent)}%</td><td>{N(group.MedianSizeRatio)} / {N(group.P95SizeRatio)} / {N(group.WorstSizeRatio)}</td><td>{group.AtOrBelowReference}</td><td>{group.SizeFailures} / {group.SizeAdvisories}</td><td>{group.FidelityFailures}</td></tr>");
+            var p95Gap = (group.P95SizeRatio - 1) * 100;
+            markdown.AppendLine($"| {label} · {group.Corpus} | {group.Measured}/{group.Cases} | {group.EncodedBytes} / {group.ReferenceBytes} | {N(group.LucitexCompression, "F2")}× / {N(group.ReferenceCompression, "F2")}× | {N(group.GapPercent, "+0.00;-0.00;0.00")}% | {N(p95Gap, "+0.00;-0.00;0.00")}% | {N(group.LucitexMse, "G4")} / {N(group.ReferenceMse, "G4")} |");
+            html.Append($"<tr><td>{H(name)}</td><td>{group.Measured}/{group.Cases}</td><td>{group.RawBytes}</td><td>{group.EncodedBytes} / {group.ReferenceBytes}</td><td>{N(group.LucitexCompression)}× / {N(group.ReferenceCompression)}×</td><td>{N(group.GapPercent)}%</td><td>{N(p95Gap)}%</td><td>{N(group.LucitexMse)} / {N(group.ReferenceMse)}</td></tr>");
         }
         html.Append("</table></div><h2>Every case</h2><p>Failures first, then largest size ratio. MSE is averaged over 8-bit RGB (JPEG) or RGBA (lossless) samples. PSNR uses peak 255; exact means MSE = 0. JPEG size and distortion must be read together. Source hash, pixel seed and replay artifacts are included in each row.</p>");
-        html.Append("<div class='scroll'><table><tr><th>Case / source</th><th>Result</th><th>Raw B</th><th>L B / ref B</th><th>Compression L / ref ↑</th><th>Gap % ↓</th><th>L/ref ↓</th><th>Size</th><th>Fidelity</th><th>MSE L / ref ↓</th><th>PSNR dB L / ref ↑</th></tr>");
+        html.Append("<div class='scroll'><table><tr><th>Case / source</th><th>Raw B</th><th>L B / ref B</th><th>Compression L / ref ↑</th><th>Gap % ↓</th><th>MSE L / ref ↓</th><th>PSNR dB L / ref ↑</th></tr>");
         var csv = new StringBuilder("Format,Effort,Corpus,Pattern,Width,Height,Quality,PixelSeed,SourceSha256,ReferenceEncoder,RawBytes,LucitexBytes,ReferenceBytes,LucitexCompression,ReferenceCompression,GapPercent,SizeRatio,MaxSizeRatio,EnforceSize,SizePassed,FidelityPassed,LucitexMse,ReferenceMse,LucitexPsnrDb,ReferencePsnrDb,Result,Error,Artifact\n");
         foreach (var result in results.OrderByDescending(r => r.Error is not null).ThenByDescending(r => r.Compression?.SizeRatio)) {
             var sample = result.Case;
@@ -152,14 +152,12 @@ internal static class EncodingQualityAudit
             var compression = metrics?.RawToEncodedRatio;
             var refCompression = metrics is null ? null : Divide(metrics.RawBytes, metrics.ReferenceBytes);
             var gap = (metrics?.SizeRatio - 1) * 100;
-            var size = metrics is null ? "unavailable" : metrics.SizePassed ? "pass" : metrics.EnforceSize ? "FAIL" : "advisory";
-            var fidelity = metrics is null ? "unavailable" : metrics.FidelityPassed ? "pass" : "FAIL";
             var outcome = result.Error is null ? "PASS" : "FAIL";
             var artifact = result.Artifact is null ? null : Path.GetFileName(result.Artifact);
-            html.Append($"<tr class='{(result.Error is not null ? "fail" : size == "advisory" ? "advisory" : "")}'><td>{H(name)}<details><summary>Source / diagnostics</summary><p>Pixel seed: {sample.PixelSeed}<br>SHA256: <code>{H(result.SourceSha256)}</code></p>");
+            html.Append($"<tr class='{(result.Error is not null ? "fail" : "")}'><td>{H(name)}<details><summary>Source / diagnostics</summary><p>Pixel seed: {sample.PixelSeed}<br>SHA256: <code>{H(result.SourceSha256)}</code></p>");
             if (artifact is not null) html.Append($"<a href='{H(Uri.EscapeDataString(artifact))}'>Replay JSON</a> · <a href='{H(Uri.EscapeDataString(Path.ChangeExtension(artifact, ".pixels")))}'>Source pixels</a>");
             if (result.Error is not null) html.Append($"<pre>{H(result.Error)}</pre>");
-            html.Append($"</details></td><td>{outcome}</td><td>{metrics?.RawBytes}</td><td>{metrics?.EncodedBytes} / {metrics?.ReferenceBytes}</td><td>{N(compression)}× / {N(refCompression)}×</td><td>{N(gap)}%</td><td>{N(metrics?.SizeRatio)}</td><td>{size}</td><td>{fidelity}</td><td>{N(metrics?.SourceMse)} / {N(metrics?.ReferenceMse)}</td><td>{Psnr(metrics?.SourceMse)} / {Psnr(metrics?.ReferenceMse)}</td></tr>");
+            html.Append($"</details></td><td>{metrics?.RawBytes}</td><td>{metrics?.EncodedBytes} / {metrics?.ReferenceBytes}</td><td>{N(compression)}× / {N(refCompression)}×</td><td>{N(gap)}%</td><td>{N(metrics?.SourceMse)} / {N(metrics?.ReferenceMse)}</td><td>{Psnr(metrics?.SourceMse)} / {Psnr(metrics?.ReferenceMse)}</td></tr>");
             object?[] cells = [sample.Format, effort, sample.Corpus, sample.Pattern, sample.Width, sample.Height, quality,
                 sample.PixelSeed, result.SourceSha256, metrics?.ReferenceEncoder, metrics?.RawBytes, metrics?.EncodedBytes,
                 metrics?.ReferenceBytes, compression, refCompression, gap, metrics?.SizeRatio, metrics?.MaxSizeRatio,
@@ -170,11 +168,22 @@ internal static class EncodingQualityAudit
         markdown.AppendLine();
         markdown.AppendLine("| Audit | Details |");
         markdown.AppendLine("|:---|:---|");
-        markdown.AppendLine($"| Checks | {results.Count - failures}/{results.Count} passed · {failures} failed · {missing} missing metrics |");
-        markdown.AppendLine("| Ratios | L = Lucitex; ref = native encoder. Compression = Σ raw / Σ encoded; gap = Σ L / Σ ref − 1. Failed cases included. |");
-        markdown.AppendLine("| Size gate | Per case: L/ref ≤ 1.2×; WebP Fast advisory. |");
-        markdown.AppendLine("| Fidelity gate | PNG/WebP: exact. JPEG: same Q, L MSE ≤ ref MSE × 1.25 + 2. |");
-        markdown.AppendLine("| Scope / artifacts | Synthetic corpus; no speed measurement. Full data, references and failures: `quality/index.html`, `cases.csv`, `summary.json` in uploaded artifacts. |");
+        markdown.AppendLine($"| Coverage | {results.Count} cases; {failures} issues; {missing} missing measurements; seed {options.RandomSeed} |");
+        markdown.AppendLine("| Reading the data | L = Lucitex; ref = native encoder. Bytes are totals; compression = sum(raw) / sum(encoded); gap = sum(L) / sum(ref) - 1. P95 is the 95th percentile of per-case size gaps. Measured cases with issues remain included. |");
+        markdown.AppendLine("| Image quality | MSE is weighted by sample count; zero means exact. JPEG compares the same Q and 4:2:0, not matched fidelity: read size and MSE together. |");
+        markdown.AppendLine("| References | PNG: libpng; JPEG: libjpeg optimized 4:2:0; WebP: libwebp lossless method 4, Q100, exact. |");
+        markdown.AppendLine("| Scope / artifacts | Synthetic corpus; no speed measurement. Per-case data and replay diagnostics: `quality/index.html`, `cases.csv`, `summary.json` in uploaded artifacts. |");
+        if (failures > 0) {
+            markdown.AppendLine();
+            markdown.AppendLine("| Case with issue (up to 10) | Diagnostic |");
+            markdown.AppendLine("|:---|:---|");
+            foreach (var result in results.Where(r => r.Error is not null).Take(10)) {
+                var sample = result.Case;
+                var effort = sample.Format == "webp" ? $" / {sample.Effort}" : "";
+                var issue = result.Error!.Split('\n')[0].Trim().Replace("|", "\\|").Replace("<", "&lt;").Replace(">", "&gt;");
+                markdown.AppendLine($"| {sample.Format}{effort} / {sample.Corpus} / {sample.Pattern} / {sample.Width}x{sample.Height} / Q{sample.Quality} | {issue} |");
+            }
+        }
         html.Append($"</table></div><h2>Reference provenance</h2><p>{H(reference)}</p><p>Native ABI {NativeAbi.Version}; SHA256 <code>{nativeSha256}</code>. Seed {options.RandomSeed}; random rounds {options.QualityIterations}. Full options and raw measurements are in <a href='summary.json'>summary.json</a>.</p></html>");
         File.WriteAllText(Path.Combine(directory, "index.html"), html.ToString());
         File.WriteAllText(Path.Combine(directory, "cases.csv"), csv.ToString());

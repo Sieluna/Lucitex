@@ -46,7 +46,7 @@ internal sealed class SkiaSharpAdapter : CodecAdapter
             return lossless.ToArray();
         }
         using var image = SKImage.FromBitmap(bitmap);
-        using var data = image.Encode(comparison.Format == "jpeg" ? SKEncodedImageFormat.Jpeg : SKEncodedImageFormat.Png, ComparisonCase.Quality);
+        using var data = image.Encode(comparison.Format == "jpeg" ? SKEncodedImageFormat.Jpeg : SKEncodedImageFormat.Png, comparison.EncoderQuality);
         return data.ToArray();
     }
 }

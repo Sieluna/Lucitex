@@ -7,21 +7,23 @@ namespace Lucitex.Benchmarks.Codecs;
 internal enum Library { Lucitex, ImageSharp, SkiaSharp, NetVips, MagickNet }
 internal enum Operation { Encode, Decode, Convert }
 
-internal sealed record ComparisonCase(string Image, string Profile, Library Library, Operation Operation, string? SourceFormat = null)
+internal sealed record ComparisonCase(string Image, string Profile, Library Library, Operation Operation, string? SourceFormat = null, int EncoderQuality = 90)
 {
     public string Format => FormatCatalog.ForProfile(Profile).Id;
     public string InputFormat => Operation == Operation.Convert ? SourceFormat ?? throw new InvalidOperationException("A conversion requires an explicit source format.") : Format;
     public string Key => $"{Profile}/{Image}/{Operation}/{Library}" + (Operation == Operation.Convert ? $"/from-{InputFormat}" : "");
-    public bool Is444 => Profile == "jpeg-standard444";
-    public bool Progressive => Profile == "jpeg-progressive420";
-    public bool OptimizeHuffman => Profile is "jpeg-optimized420" or "jpeg-progressive420"
-        || (Profile == "jpeg-default420" && Library == Library.Lucitex);
-    public const int Quality = 90;
-    public static IEnumerable<string> Profiles => FormatCatalog.Profiles;
+    public string GroupKey => $"{Profile}/{Image}/{Operation}/from-{InputFormat}";
+    public bool RequiresPairing => Format == "jpeg" && Operation != Operation.Decode;
+    public bool RateMatched => Profile == "jpeg-rate420";
+    public Lucitex.Webp.WebpCompressionEffort WebpEffort => Profile switch {
+        "webp-lossless-fast" => Lucitex.Webp.WebpCompressionEffort.Fast,
+        "webp-lossless-best" => Lucitex.Webp.WebpCompressionEffort.Best,
+        _ => Lucitex.Webp.WebpCompressionEffort.Balanced,
+    };
 
     public string? UnsupportedReason()
     {
-        if (!Profiles.Contains(Profile)) {
+        if (!FormatCatalog.Profiles.Contains(Profile)) {
             return $"Unknown profile {Profile}.";
         }
         if (!CodecCapabilities.Supports(Library, Format) || !CodecCapabilities.Supports(Library, InputFormat)) {
@@ -37,8 +39,7 @@ internal sealed record ComparisonCase(string Image, string Profile, Library Libr
             return "SkiaSharp's WebP encoder does not expose exact transparent RGB preservation; this input contains nonzero RGB under zero alpha. Decoding remains comparable.";
         }
         return Library switch {
-            Library.ImageSharp when Progressive || Profile == "jpeg-optimized420" => "ImageSharp 3.1.11 does not expose this encoding policy.",
-            Library.SkiaSharp when Profile is not ("jpeg-default420" or "png-default" or "webp-lossless") => "SkiaSharp does not expose this encoding policy.",
+            Library.SkiaSharp when Profile is not ("jpeg-quality420" or "jpeg-rate420" or "png-default" or "webp-lossless" or "webp-lossless-fast" or "webp-lossless-best") => "SkiaSharp does not expose this encoding policy.",
             Library.MagickNet when Profile is "png-none" or "png-paeth" => "Magick.NET 14.17.1's PNG path does not honor the strict per-row fixed-filter contract in verification; use png-default.",
             Library.NetVips when Profile == "png-paeth" && TestImage.DeclaredDimensions(Image) is { } size && (size.Width == 1 || size.Height == 1)
                 => "libpng disables Paeth for single-row/column inputs; this is outside the strict fixed-filter contract.",

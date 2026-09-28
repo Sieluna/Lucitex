@@ -89,37 +89,29 @@ internal sealed class PngWriter : IImageWriter
                     }
                 }
             }
-            using (var chunks = new PngIdatStream(_stream))
-            using (var zlib = new ZLibStream(chunks, compressionLevel, leaveOpen: true)) {
-                var bestOwner = ArrayPool<byte>.Shared.Rent(_rowStrideBytes + 1);
-                var candidateOwner = ArrayPool<byte>.Shared.Rent(_rowStrideBytes + 1);
-                var best = bestOwner.AsMemory(0, _rowStrideBytes + 1);
-                var candidate = candidateOwner.AsMemory(0, _rowStrideBytes + 1);
-                try {
-                    for (var y = 0; y < _document.Ihdr.Height; y++) {
-                        var row = _pixelBuffer.AsSpan(y * _rowStrideBytes, _rowStrideBytes);
-                        var previous = y == 0 ? ReadOnlySpan<byte>.Empty : _pixelBuffer.AsSpan((y - 1) * _rowStrideBytes, _rowStrideBytes);
-                        var filter = _options.Filter ?? PngFilterType.None;
-                        PngFilter.Apply(filter, best.Span[1..], row, previous, _document.Ihdr.BytesPerPixel);
-                        if (compressionLevel != CompressionLevel.NoCompression && _options.Filter is null && _document.Ihdr.BitDepth >= 8 && _document.Ihdr.ColorType != PngColorType.Indexed) {
-                            var bestScore = Score(best.Span[1..]);
-                            for (var choice = PngFilterType.Sub; choice <= PngFilterType.Paeth && bestScore > 0; choice++) {
-                                PngFilter.Apply(choice, candidate.Span[1..], row, previous, _document.Ihdr.BytesPerPixel);
-                                var score = Score(candidate.Span[1..]);
-                                if (score < bestScore) {
-                                    bestScore = score;
-                                    filter = choice;
-                                    (best, candidate) = (candidate, best);
-                                }
-                            }
+            using (var chunks = new PngIdatStream(_stream)) {
+                if (compressionLevel == CompressionLevel.SmallestSize && _options.Filter is null
+                    && _document.Ihdr.BitDepth >= 8 && _document.Ihdr.ColorType != PngColorType.Indexed
+                    && !IsHighEntropy(_pixelBuffer, _rowStrideBytes, _document.Ihdr.Width, _document.Ihdr.Height, _document.Ihdr.BytesPerPixel)) {
+                    using var best = new MemoryStream();
+                    WriteCompressed(best, compressionLevel, null);
+                    using var candidate = new MemoryStream();
+                    for (var filter = PngFilterType.None; filter <= PngFilterType.Paeth; filter++) {
+                        candidate.SetLength(0);
+                        candidate.Position = 0;
+                        WriteCompressed(candidate, compressionLevel, filter);
+                        if (candidate.Length < best.Length) {
+                            best.SetLength(0);
+                            best.Position = 0;
+                            candidate.Position = 0;
+                            candidate.CopyTo(best);
                         }
-                        best.Span[0] = (byte)filter;
-                        zlib.Write(best.Span);
                     }
+                    best.Position = 0;
+                    best.CopyTo(chunks);
                 }
-                finally {
-                    ArrayPool<byte>.Shared.Return(bestOwner);
-                    ArrayPool<byte>.Shared.Return(candidateOwner);
+                else {
+                    WriteCompressed(chunks, compressionLevel, _options.Filter);
                 }
             }
             PngDocumentWriter.WriteEnd(_stream);
@@ -135,6 +127,42 @@ internal sealed class PngWriter : IImageWriter
         if (_pixelBuffer is { } pixels) {
             _pixelBuffer = null;
             ArrayPool<byte>.Shared.Return(pixels);
+        }
+    }
+
+    private void WriteCompressed(Stream destination, CompressionLevel compressionLevel, PngFilterType? requestedFilter)
+    {
+        using (var zlib = new ZLibStream(destination, compressionLevel, leaveOpen: true)) {
+            var bestOwner = ArrayPool<byte>.Shared.Rent(_rowStrideBytes + 1);
+            var candidateOwner = ArrayPool<byte>.Shared.Rent(_rowStrideBytes + 1);
+            var best = bestOwner.AsMemory(0, _rowStrideBytes + 1);
+            var candidate = candidateOwner.AsMemory(0, _rowStrideBytes + 1);
+            try {
+                for (var y = 0; y < _document.Ihdr.Height; y++) {
+                    var row = _pixelBuffer.AsSpan(y * _rowStrideBytes, _rowStrideBytes);
+                    var previous = y == 0 ? ReadOnlySpan<byte>.Empty : _pixelBuffer.AsSpan((y - 1) * _rowStrideBytes, _rowStrideBytes);
+                    var filter = requestedFilter ?? PngFilterType.None;
+                    PngFilter.Apply(filter, best.Span[1..], row, previous, _document.Ihdr.BytesPerPixel);
+                    if (compressionLevel != CompressionLevel.NoCompression && requestedFilter is null && _document.Ihdr.BitDepth >= 8 && _document.Ihdr.ColorType != PngColorType.Indexed) {
+                        var bestScore = Score(best.Span[1..]);
+                        for (var choice = PngFilterType.Sub; choice <= PngFilterType.Paeth && bestScore > 0; choice++) {
+                            PngFilter.Apply(choice, candidate.Span[1..], row, previous, _document.Ihdr.BytesPerPixel);
+                            var score = Score(candidate.Span[1..]);
+                            if (score < bestScore) {
+                                bestScore = score;
+                                filter = choice;
+                                (best, candidate) = (candidate, best);
+                            }
+                        }
+                    }
+                    best.Span[0] = (byte)filter;
+                    zlib.Write(best.Span);
+                }
+            }
+            finally {
+                ArrayPool<byte>.Shared.Return(bestOwner);
+                ArrayPool<byte>.Shared.Return(candidateOwner);
+            }
         }
     }
 

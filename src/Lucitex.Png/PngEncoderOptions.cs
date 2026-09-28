@@ -5,6 +5,6 @@ namespace Lucitex.Png;
 
 public sealed record PngEncoderOptions
 {
-    public CompressionLevel CompressionLevel { get; init; } = CompressionLevel.Fastest;
+    public CompressionLevel CompressionLevel { get; init; } = CompressionLevel.SmallestSize;
     public PngFilterType? Filter { get; init; }
 }

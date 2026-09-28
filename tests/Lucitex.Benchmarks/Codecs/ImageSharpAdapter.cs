@@ -10,8 +10,6 @@ namespace Lucitex.Benchmarks.Codecs;
 
 internal sealed class ImageSharpAdapter : CodecAdapter
 {
-    public ImageSharpAdapter() => Configuration.Default.MaxDegreeOfParallelism = RunOptions.Current.CodecThreads;
-
     public override byte[] Encode(TestImage source, ComparisonCase comparison)
     {
         using Image image = source.Channels == 3
@@ -46,10 +44,12 @@ internal sealed class ImageSharpAdapter : CodecAdapter
                 ColorType = JpegEncodingColor.YCbCrRatio420,
             }
             : comparison.Format == "webp" ? new WebpEncoder {
-                FileFormat = WebpFileFormatType.Lossless, Quality = 100, Method = WebpEncodingMethod.Level4,
+                FileFormat = WebpFileFormatType.Lossless, Quality = comparison.Settings.WebpQuality,
+                Method = (WebpEncodingMethod)comparison.Settings.WebpMethod,
                 NearLossless = false, TransparentColorMode = WebpTransparentColorMode.Preserve,
             } : new PngEncoder {
                 ColorType = PngColorType.RgbWithAlpha, BitDepth = PngBitDepth.Bit8,
+                CompressionLevel = comparison.Settings.PngLevel is { } level ? (PngCompressionLevel)level : PngCompressionLevel.DefaultCompression,
                 FilterMethod = comparison.Profile switch { "png-none" => PngFilterMethod.None, "png-paeth" => PngFilterMethod.Paeth, _ => PngFilterMethod.Adaptive },
             };
         using var stream = new MemoryStream();

@@ -36,15 +36,10 @@ internal sealed class ComparisonExporter : IExporter
         var parameterNames = summary.BenchmarksCases.SelectMany(b => b.Parameters.Items).Select(p => p.Name).ToHashSet();
         var summaryColumns = columns.Where(c => parameterNames.Contains(c.Header)
             || c.Header is "Method" or "Job" or "Runtime" or "Mean" or "Error" or "Allocated"
-                or "Process peak MiB" or "Encoded B" or "Raw/encoded" or "Workload MSE" or "Delta %").ToArray();
+                or "Process peak MiB" or "Encoded B" or "Raw/encoded" or "Workload MSE" or "Delta %"
+                or "Decoder policy" or "Pairing" or "Size acceptance" or "Encoder settings" or "All threads B").ToArray();
         foreach (var group in summary.BenchmarksCases.Select((benchmark, index) => (benchmark, index))
-            .GroupBy(item => ComparisonColumn.Find(item.benchmark) switch {
-                null => "Performance",
-                { Case.Operation: Operation.Decode } => "Decode · identical input",
-                { Case.RateMatched: true } => "Same size · compare quality and performance",
-                { Selection: not null } => "Same quality · compare size and performance",
-                _ => "Lossless · compare size and performance",
-            })) {
+            .GroupBy(item => MeasurementGroup(ComparisonColumn.Find(item.benchmark)))) {
             var visible = summaryColumns.Where(c => group.Any(item => summary.Table.FullContent[item.index][c.Index] != "N/A")).ToArray();
             markdown?.Append("### ").AppendLine(group.Key).AppendLine()
                 .Append("| ").Append(string.Join(" | ", visible.Select(c => Markdown(c.Header)))).AppendLine(" |")
@@ -71,16 +66,32 @@ internal sealed class ComparisonExporter : IExporter
         return html.ToString();
     }
 
+    internal static string MeasurementGroup(ValidationResult? result)
+    {
+        if (result is null) return "Performance";
+        var label = result switch {
+            { Case.Operation: Operation.Decode } => "Decode · identical input",
+            { PairingMatched: false } => "Unmatched target · diagnostic performance only",
+            { Case.RateMatched: true } => "File size matched within 2% · compare quality and performance",
+            { Selection: not null } => "MSE matched within 5% · compare size and performance",
+            _ => "Lossless · compare size and performance",
+        };
+        return label + " · " + result.DecoderPolicy;
+    }
+
     public static void WriteIndex(RunOptions options, IEnumerable<Summary>? summaries = null)
     {
         var reports = summaries?.ToArray() ?? [];
         var measured = reports.Sum(s => s.Reports.Count(r => r.Success && r.ResultStatistics is not null));
         var unmatched = ValidationStore.Results.Values.Count(r => !r.PairingMatched);
+        var acceptanceFailures = ValidationStore.Results.Values.Count(r => r.AcceptanceFailed);
         var html = Header("Lucitex benchmark results");
-        html.Append($"<p>{measured} measured workloads · {ValidationStore.Results.Count} codec checks · {ValidationStore.Errors.Count} issues · {unmatched} unmatched · {ValidationStore.Skipped.Count} unsupported</p>");
+        html.Append($"<p>{measured} measured workloads · {ValidationStore.Results.Count} codec checks · {ValidationStore.Errors.Count} correctness issues · {acceptanceFailures} size acceptance failures · {unmatched} unmatched · {ValidationStore.Skipped.Count} unsupported</p>");
         html.Append("<nav><a href='#measurements'>Measurements</a> · <a href='#diagnostics'>Diagnostics</a> · <a href='validation.json'>Validation JSON</a></nav>");
         if (options.Smoke) html.Append("<p class='warning'>SMOKE RUN: pipeline verification only; no performance conclusions.</p>");
         if (options.VerifyOnly) html.Append("<p>Verification only: encoding and reconstruction data below; no timing or memory measurements.</p>");
+        if (options.Tradeoffs) html.Append("<p>Tradeoff phase: ").Append(options.TradeoffSelections.Length == 0 ? "calibration" : "evaluation")
+            .Append(". Candidate sizes are advisory for every library. <a href='../index.html'>Three-objective rankings and frozen selection policy</a>.</p>");
         html.Append("<section id='measurements'>");
         foreach (var report in reports) {
             var title = report.BenchmarksCases.Length > 0 ? report.BenchmarksCases[0].Descriptor.Type.Name : report.Title;
@@ -92,21 +103,22 @@ internal sealed class ComparisonExporter : IExporter
         html.Append("</section>").Append(Legend);
         html.Append("<details><summary>Inputs and comparison method</summary>");
         html.Append("<p>Encode uses identical pixels; decode uses identical encoded bytes. Conversion uses identical encoded input and compares end-to-end quality against common canonical decoded pixels. Lossless preservation is checked against each actual encoder input.</p>");
-        html.Append("<p>JPEG scans integer Q1-100 against a common Q90 reference: MSE within 5% (exact at zero), or file bytes within 2%. The closest point is chosen. Unmatched points have no timing. Calibration is excluded from measured time. Only Lucitex quality/lossless results have a 1.2x size gate against the smallest qualifying reference; WebP Fast is advisory.</p>");
-        html.Append($"<p>Requested codec threads: {options.CodecThreads}. Adapter settings are not an OS thread cap. EXR uses normalized byte/HALF samples, not full HDR fidelity; KTX2 uses one RGBA8 level, not GPU block encoding. Versions, hashes and decoder checks are retained in validation.json.</p></details>");
+        html.Append("<p>JPEG scans integer Q1-100 against a common Q90 reference: MSE within 5% (exact at zero), or file bytes within 2%. The closest point is chosen. Unmatched points are timed in a separate diagnostic group. Calibration is excluded from measured time. Lucitex's 1.2x size acceptance check can fail the run but does not exclude timings; WebP Fast is advisory. Encoder effort is library-specific, not an equal CPU budget.</p>");
+        html.Append("<p>Parallelism is unrestricted: no benchmark-imposed thread limits or CPU affinity. Libraries may use all CPUs available to the process with their own schedulers. EXR uses normalized byte/HALF samples, not full HDR fidelity; KTX2 uses one RGBA8 level, not GPU block encoding. Versions, hashes and decoder checks are retained in validation.json.</p></details>");
         var keys = ValidationStore.Results.Keys.Concat(ValidationStore.Errors.Keys).Concat(ValidationStore.Skipped.Keys)
             .Distinct().OrderByDescending(k => ValidationStore.Errors.ContainsKey(k))
             .ThenByDescending(k => ValidationStore.Results.TryGetValue(k, out var r) && !r.PairingMatched).ThenBy(k => k).ToArray();
         html.Append("<details id='diagnostics'").Append(options.VerifyOnly || measured == 0 ? " open" : "")
             .Append("><summary>Preflight diagnostics and encoding data (").Append(keys.Length).Append(" workloads)</summary>");
-        html.Append("<p>Preflight validation does not mean a workload was timed. Filters and pairing can exclude it from measurement.</p>");
+        html.Append("<p>Preflight validation does not mean a workload was timed: benchmark filters can exclude it. Pairing and size acceptance do not suppress correct workloads.</p>");
         html.Append("<div class='scroll'><table><thead><tr><th>Workload</th><th>Preflight</th><th>Encoded B</th><th>Raw/encoded</th><th>Workload MSE</th><th>Pairing target</th><th>Delta %</th><th>Details</th></tr></thead><tbody>");
         foreach (var key in keys) {
             ValidationStore.Results.TryGetValue(key, out var result);
             ValidationStore.Errors.TryGetValue(key, out var error);
             ValidationStore.Skipped.TryGetValue(key, out var skipped);
             var state = error is not null ? "Issue" : skipped is not null ? "Unsupported"
-                : result?.PairingMatched == false ? "Unmatched" : result?.EligibleForTiming == true ? "Validated" : "Incomplete";
+                : result?.AcceptanceFailed == true ? "Size acceptance failed; timing eligible"
+                : result?.PairingMatched == false ? "Unmatched; timing eligible" : result?.EligibleForTiming == true ? "Validated" : "Incomplete";
             var cells = new[] { key, state, result?.EncodedBytes?.ToString(CultureInfo.InvariantCulture) ?? "N/A",
                 Number(result?.Compression?.RawToEncodedRatio), Number(result?.WorkloadQuality.Mse),
                 result?.Selection is { } pairing ? $"{pairing.Metric} {Number(pairing.Target)}" : "N/A", Number(result?.Selection?.DeviationPercent) };

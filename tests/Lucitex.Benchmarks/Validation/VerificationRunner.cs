@@ -9,9 +9,12 @@ internal static class VerificationRunner
     public static int Run(RunOptions options)
     {
         foreach (var comparison in FormatCatalog.SelectCases(options)) {
-            if (ValidationStore.TryValidate(comparison)) Console.WriteLine($"PASS {comparison.Key}");
+            if (ValidationStore.TryValidate(comparison)) {
+                var result = ValidationStore.Results[comparison.Key];
+                var status = result.AcceptanceFailed ? "SIZE-FAIL" : !result.PairingMatched ? "UNMATCHED" : "PASS";
+                Console.WriteLine($"{status} {comparison.Key}; correctness passed; eligible for timing");
+            }
             else if (ValidationStore.Skipped.TryGetValue(comparison.Key, out var reason)) Console.WriteLine($"SKIP {comparison.Key}: {reason}");
-            else if (!ValidationStore.Errors.ContainsKey(comparison.Key)) Console.WriteLine($"UNMATCHED {comparison.Key}: no evaluated parameter meets the pairing tolerance.");
             else Console.Error.WriteLine($"FAIL {comparison.Key}: {ValidationStore.Errors[comparison.Key]}");
         }
         if (options.Suites.HasFlag(Suite.Core)) {
@@ -32,6 +35,6 @@ internal static class VerificationRunner
         ValidationStore.Save();
         Reporting.ComparisonExporter.WriteIndex(options);
         Console.WriteLine($"Validation: {Path.Combine(options.Artifacts, "validation.json")}");
-        return ValidationStore.HasErrors ? 1 : 0;
+        return ValidationStore.HasErrors || ValidationStore.HasAcceptanceFailures ? 1 : 0;
     }
 }

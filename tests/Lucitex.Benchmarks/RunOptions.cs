@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Lucitex.Benchmarks.Codecs;
 using Lucitex.Benchmarks.Data;
 using Lucitex.Benchmarks.Formats;
+using Lucitex.Benchmarks.Reporting;
 
 namespace Lucitex.Benchmarks;
 
@@ -14,11 +15,13 @@ internal sealed record RunOptions
     public Suite Suites { get; init; } = Suite.All;
     public bool ComparableOnly { get; init; }
     public string Memory { get; init; } = "process";
-    public int CodecThreads { get; init; } = 1;
     public string? DatasetManifest { get; init; }
     public string Artifacts { get; init; } = Path.GetFullPath("artifacts/comparisons/" + DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss-fff"));
     public bool VerifyOnly { get; init; }
     public string Mode { get; init; } = "full";
+    public bool Tradeoffs { get; init; } = true;
+    public string[] CalibrationCases { get; init; } = ["ramp@193x127", "checker@191x131", "noise@257x193"];
+    public TradeoffSelection[] TradeoffSelections { get; init; } = [];
     [JsonIgnore] public bool Smoke => Mode == "smoke";
     public static RunOptions Current => JsonSerializer.Deserialize<RunOptions>(
         Environment.GetEnvironmentVariable("LUCITEX_COMPARISON_OPTIONS") ?? "{}")!;
@@ -53,22 +56,39 @@ internal sealed record RunOptions
                 "--libraries" => options with { Libraries = Values().Select(v => v == "Magick.NET" ? "MagickNet" : v).Distinct().ToArray() },
                 "--suite" => options with { Suites = ParseSuites(Value()) },
                 "--memory" => options with { Memory = Value() },
-                "--threads" => options with { CodecThreads = int.Parse(Value(), System.Globalization.CultureInfo.InvariantCulture) },
                 "--mode" => options with { Mode = Value() },
                 "--dataset-manifest" => options with { DatasetManifest = Path.GetFullPath(Value()) },
                 "--output" => options with { Artifacts = Path.GetFullPath(Value()) },
                 "--verify" => options with { VerifyOnly = true },
+                "--comparison" => options with { Tradeoffs = false },
+                "--calibration-cases" => options with { CalibrationCases = Values() },
                 "--comparable" => options with { ComparableOnly = true },
                 _ => throw new ArgumentException($"Unknown option '{arg}'. Use --help; BenchmarkDotNet arguments follow --."),
             };
         }
-        if (options.Profiles is ["all"]) {
+        if (options.VerifyOnly) options = options with { Tradeoffs = false };
+        var allProfiles = options.Profiles is ["all"];
+        if (allProfiles) {
             options = options with { Profiles = FormatCatalog.Profiles.ToArray() };
         }
+        if (options.Tradeoffs) {
+            if (remaining.Length > 0)
+                throw new ArgumentException("Default rankings perform calibration and evaluation timing; use --comparison for BDN overrides.");
+            if (supplied.Contains("--suite") && (options.Suites & (Suite.Core | Suite.Convert | Suite.Kernels)) != 0
+                && options.Suites != Suite.All)
+                throw new ArgumentException("Rankings support encoding suites only; use --comparison for core, convert or kernels.");
+            if (!allProfiles && supplied.Contains("--profiles") && options.Profiles.Contains("jpeg-rate420"))
+                throw new ArgumentException("Tradeoff ranking requires equal quality; use jpeg-quality420 instead of jpeg-rate420.");
+            options = options with { Profiles = options.Profiles.Where(p => p != "jpeg-rate420")
+                .Select(p => p is "webp-lossless-fast" or "webp-lossless-best" ? "webp-lossless" : p).Distinct().ToArray() };
+            if (options.Cases.Intersect(options.CalibrationCases).Any())
+                throw new ArgumentException("Calibration and evaluation case IDs must be disjoint.");
+        }
+        else if (supplied.Contains("--calibration-cases"))
+            throw new ArgumentException("--calibration-cases is only used by the default rankings; omit --comparison and --verify.");
         if (options.Memory is not ("managed" or "process")) {
             throw new ArgumentException("Memory modes: managed/process.");
         }
-        if (options.CodecThreads < 1) throw new ArgumentException("--threads must be positive.");
         if (options.Mode is not ("full" or "smoke"))
             throw new ArgumentException("--mode must be full/smoke.");
         if (options.VerifyOnly && (options.Smoke || remaining.Length != 0))
@@ -80,7 +100,7 @@ internal sealed record RunOptions
             || options.Libraries.Length == 0 || options.Libraries.Any(l => !Enum.GetNames<Library>().Contains(l))) {
             throw new ArgumentException("Invalid case, profile or library. Use --help for supported values.");
         }
-        foreach (var id in options.Cases) {
+        foreach (var id in options.Cases.Concat(options.Tradeoffs ? options.CalibrationCases : [])) {
             if (id.StartsWith("external:", StringComparison.Ordinal)) {
                 if (string.IsNullOrWhiteSpace(id[9..]) || options.DatasetManifest is null || !File.Exists(options.DatasetManifest))
                     throw new ArgumentException("External cases require an ID and an existing --dataset-manifest.");
@@ -89,7 +109,7 @@ internal sealed record RunOptions
                 || TestImage.DeclaredDimensions(id) is not { Width: >= 1 and <= 8192, Height: >= 1 and <= 8192 })
                 throw new ArgumentException($"Invalid case '{id}'; use pattern@widthxheight with dimensions 1..8192.");
         }
-        if (options.DatasetManifest is not null && !options.Cases.Any(c => c.StartsWith("external:", StringComparison.Ordinal)))
+        if (options.DatasetManifest is not null && !options.Cases.Concat(options.Tradeoffs ? options.CalibrationCases : []).Any(c => c.StartsWith("external:", StringComparison.Ordinal)))
             throw new ArgumentException("--dataset-manifest requires at least one external:ID case.");
         if (!options.Suites.HasFlag(Suite.All)) {
             foreach (var module in FormatCatalog.Modules.Where(m => options.Suites.HasFlag(ToSuite(m.Id)))) {
@@ -98,6 +118,9 @@ internal sealed record RunOptions
                 }
             }
         }
+        if (options.Tradeoffs) options = options with {
+            Profiles = options.Profiles.Where(p => options.IncludesFormat(FormatCatalog.ForProfile(p).Id)).ToArray(),
+        };
         if (!FormatCatalog.SelectBenchmarks(options).Any())
             throw new ArgumentException("No benchmarks match the selected suites, profiles and libraries.");
         return (options, remaining);

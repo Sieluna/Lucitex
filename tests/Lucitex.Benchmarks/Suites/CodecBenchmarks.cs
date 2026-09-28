@@ -11,6 +11,9 @@ public abstract class CodecBenchmarks
     public string Case { get; set; } = "ramp@128x128";
     [ParamsSource(nameof(Profiles))]
     public string Profile { get; set; } = "";
+    [ParamsSource(nameof(Candidates))]
+    public string Candidate { get; set; } = "default";
+    public IEnumerable<string> Candidates => EncoderCandidates.Ids(Format, RunOptions.Current);
     public IEnumerable<string> Cases => RunOptions.Current.Cases;
     public IEnumerable<string> Profiles => RunOptions.Current.Profiles.Intersect(FormatCatalog.Get(Format).Profiles)
         .Where(p => OperationName != "Decode" || p != "jpeg-rate420");
@@ -32,7 +35,7 @@ public abstract class CodecBenchmarks
     private void Setup(Library library)
     {
         var comparison = new ComparisonCase(Case, Profile, library, Enum.Parse<Operation>(OperationName),
-            FormatCatalog.Conversions.SingleOrDefault(r => r.BenchmarkType.IsAssignableFrom(GetType()))?.Source);
+            FormatCatalog.Conversions.SingleOrDefault(r => r.BenchmarkType.IsAssignableFrom(GetType()))?.Source, Candidate: Candidate);
         _session = new CodecSession(comparison, frozenInputs: true);
         ValidationStore.CheckWorker(_session);
     }

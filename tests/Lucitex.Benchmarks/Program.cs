@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BenchmarkDotNet.Running;
+using BenchmarkDotNet.Reports;
 using Lucitex.Benchmarks.Formats;
 using Lucitex.Benchmarks.Measurement;
 using Lucitex.Benchmarks.Reporting;
@@ -26,6 +27,10 @@ internal static class Program
 
     private static int Run(string[] args)
     {
+        if (args is ["--render-tradeoffs", var directory]) {
+            TradeoffReport.Regenerate(directory);
+            return 0;
+        }
         if (args is ["--memory-worker", var payload]) {
             ProcessMemoryProbe.RunWorker(payload);
             return 0;
@@ -38,7 +43,9 @@ internal static class Program
         }
         if (args is ["--help"]) {
             Console.WriteLine("""
-                Lucitex benchmarks — quality-gated codec comparisons (BenchmarkDotNet)
+                Lucitex benchmarks — compression / balanced / speed rankings (BenchmarkDotNet)
+                Default: calibrate encoding candidates, freeze representatives, then rank --cases.
+                --comparison Run fixed-profile encode/decode/conversion and core/kernel comparisons.
                 --suite all|core,convert,jpeg,png,exr,ktx2,webp,kernels (default: all)
                 --mode full|smoke (default: full)
                     full: adaptive measurement and exhaustive JPEG quality search.
@@ -48,39 +55,51 @@ internal static class Program
                     Explicit cases are preserved in every mode; dimensions 1..8192.
                     Patterns: ramp,checker,impulse,stripes,chroma,flat,alpha,noise.
                 --profiles all|<comma-separated profiles; see --list-formats>
-                    Default: JPEG quality/rate pairing, PNG, EXR ZIP, KTX2, WebP Fast/Balanced/Best.
+                    Default rankings: JPEG quality pairing, PNG, EXR ZIP, KTX2, WebP lossless.
+                    --comparison/--verify also include JPEG rate pairing and WebP Fast/Best.
                 --libraries Lucitex,ImageSharp,SkiaSharp,NetVips,MagickNet (default: all five)
                 --comparable Only formats/routes supported by 2+ selected libraries.
-                --threads N (default: 1; adapter budget, not an OS thread cap)
                 --memory process|managed (default: process; timing runs only)
                     process includes sampled native memory.
                 --dataset-manifest <path> Required for external:ID cases.
                 --output <empty directory>
                 --verify   Quality/correctness checks only; no timing or memory probes.
+                --calibration-cases <cases> Separate tuning corpus for default rankings.
+                    Default: ramp@193x127,checker@191x131,noise@257x193.
                 --list-formats
+                --render-tradeoffs <output directory> Refresh an existing report without rerunning benchmarks.
 
                 Quality gates: every library must meet fidelity requirements. Only Lucitex
-                must stay within 1.2x the smallest matched-quality/exact output; WebP Fast
+                in --comparison/--verify must stay within 1.2x the smallest matched-quality/exact output; WebP Fast
                 size is advisory. JPEG pairing: reference Q90 MSE ±5% or file bytes ±2%.
                 Both profiles share a Q1..100 scan. Unmatched is not an error.
                 Failed cases remain in reports and make the run fail; valid peers still run.
 
-                BenchmarkDotNet options follow --, e.g. --suite png --mode smoke -- --filter *Encode*
+                BenchmarkDotNet options require --comparison and follow --,
+                    e.g. --comparison --suite png --mode smoke -- --filter *Encode*
+                Smoke rankings are pipeline diagnostics only; no performance conclusions.
                 --verify accepts neither smoke mode nor BDN options.
                 """);
             return 0;
         }
         var (options, benchmarkArguments) = RunOptions.Parse(args);
         Environment.SetEnvironmentVariable("LUCITEX_COMPARISON_OPTIONS", JsonSerializer.Serialize(options));
-        if (!options.IncludesKernels() && !options.Suites.HasFlag(Suite.Core)
+        if ((options.Tradeoffs || !options.IncludesKernels() && !options.Suites.HasFlag(Suite.Core))
             && !FormatCatalog.SelectCases(options).Any(c => c.UnsupportedReason() is null))
             throw new ArgumentException("No supported cases match the selected profiles, inputs and libraries.");
         if (Directory.Exists(options.Artifacts) && Directory.EnumerateFileSystemEntries(options.Artifacts).Any())
             throw new ArgumentException("Use an empty --output directory so results from different runs cannot mix.");
         Directory.CreateDirectory(options.Artifacts);
+        if (options.Tradeoffs) return TradeoffRunner.Run(options);
         if (options.VerifyOnly) {
             return VerificationRunner.Run(options);
         }
+        return RunTimed(options, benchmarkArguments).ExitCode;
+    }
+
+    internal static (Summary[] Summaries, int ExitCode) RunTimed(RunOptions options, string[] benchmarkArguments)
+    {
+        Environment.SetEnvironmentVariable("LUCITEX_COMPARISON_OPTIONS", JsonSerializer.Serialize(options));
         if (!benchmarkArguments.Contains("--filter") && !benchmarkArguments.Contains("-f")) {
             benchmarkArguments = [.. benchmarkArguments, "--filter", "*"];
         }
@@ -94,7 +113,8 @@ internal static class Program
         ValidationStore.Save();
         ComparisonExporter.WriteIndex(options, summaries);
         Console.WriteLine($"Report: {Path.Combine(options.Artifacts, "index.html")}");
-        return ValidationStore.HasErrors || summaries.Length == 0 || summaries.Any(s => s.HasCriticalValidationErrors
-            || s.Reports.Any(r => !r.Success || r.ResultStatistics is null)) ? 1 : 0;
+        var failed = ValidationStore.HasErrors || ValidationStore.HasAcceptanceFailures || summaries.Length == 0 || summaries.Any(s => s.HasCriticalValidationErrors
+            || s.Reports.Any(r => !r.Success || r.ResultStatistics is null));
+        return (summaries, failed ? 1 : 0);
     }
 }

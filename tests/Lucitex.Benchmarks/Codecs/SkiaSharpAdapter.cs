@@ -1,52 +1,79 @@
-using System.Runtime.InteropServices;
 using Lucitex.Benchmarks.Data;
 using SkiaSharp;
 
 namespace Lucitex.Benchmarks.Codecs;
 
-internal sealed class SkiaSharpAdapter : CodecAdapter
+internal sealed unsafe class SkiaSharpAdapter : CodecAdapter
 {
     public override byte[] Encode(TestImage source, ComparisonCase comparison)
     {
-        using var bitmap = new SKBitmap(Layout(source));
         var rgba = source.Channels == 4 ? source.Pixels : PixelLayout.ToRgba(source.Pixels);
-        Marshal.Copy(rgba, 0, bitmap.GetPixels(), rgba.Length);
-        return Save(bitmap, comparison);
+        fixed (byte* pixels = rgba) {
+            using var pixmap = new SKPixmap(Layout(source), (nint)pixels);
+            return Save(pixmap, comparison);
+        }
     }
 
     public override byte[] Convert(byte[] encoded, TestImage layout, ComparisonCase comparison)
     {
-        using var bitmap = SKBitmap.Decode(encoded, Layout(layout)) ?? throw new InvalidDataException("SkiaSharp failed to decode.");
-        return Save(bitmap, comparison);
+        fixed (byte* input = encoded) {
+            using var data = SKData.Create((nint)input, encoded.Length);
+            using var codec = SKCodec.Create(data) ?? throw new InvalidDataException("SkiaSharp failed to open input.");
+            ValidateDimensions(codec, layout);
+            using var bitmap = new SKBitmap(Layout(layout));
+            EnsureDecoded(codec.GetPixels(bitmap.Info, bitmap.GetPixels()));
+            using var pixels = bitmap.PeekPixels();
+            return Save(pixels, comparison);
+        }
     }
 
     public override void Decode(byte[] encoded, TestImage layout, byte[] destination)
     {
-        using var bitmap = SKBitmap.Decode(encoded, Layout(layout)) ?? throw new InvalidDataException("SkiaSharp failed to decode.");
-        if (layout.Channels == 4) {
-            Marshal.Copy(bitmap.GetPixels(), destination, 0, destination.Length);
-        }
-        else {
-            var rgba = new byte[checked(layout.Width * layout.Height * 4)];
-            Marshal.Copy(bitmap.GetPixels(), rgba, 0, rgba.Length);
-            for (var i = 0; i < layout.Width * layout.Height; i++) {
-                rgba.AsSpan(i * 4, 3).CopyTo(destination.AsSpan(i * 3));
+        if (destination.Length != checked(layout.Width * layout.Height * layout.Channels))
+            throw new ArgumentException("Destination does not match the requested layout.", nameof(destination));
+        fixed (byte* input = encoded) {
+            using var data = SKData.Create((nint)input, encoded.Length);
+            using var codec = SKCodec.Create(data) ?? throw new InvalidDataException("SkiaSharp failed to open input.");
+            ValidateDimensions(codec, layout);
+            var rgba = layout.Channels == 4 ? destination : new byte[checked(layout.Width * layout.Height * 4)];
+            EnsureDecoded(codec.GetPixels(Layout(layout), rgba));
+            if (layout.Channels != 4) {
+                for (var i = 0; i < layout.Width * layout.Height; i++) {
+                    rgba.AsSpan(i * 4, 3).CopyTo(destination.AsSpan(i * 3));
+                }
             }
         }
     }
 
+    private static void ValidateDimensions(SKCodec codec, TestImage layout)
+    {
+        var info = codec.Info;
+        if (info.Width != layout.Width || info.Height != layout.Height)
+            throw new InvalidDataException("SkiaSharp dimensions differ from source.");
+    }
+
+    private static void EnsureDecoded(SKCodecResult result)
+    {
+        if (result != SKCodecResult.Success)
+            throw new InvalidDataException($"SkiaSharp failed to decode: {result}.");
+    }
+
     private static SKImageInfo Layout(TestImage source) => new(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
 
-    private static byte[] Save(SKBitmap bitmap, ComparisonCase comparison)
+    private static byte[] Save(SKPixmap pixels, ComparisonCase comparison)
     {
         if (comparison.Format == "webp") {
-            using var pixels = bitmap.PeekPixels();
-            using var lossless = pixels.Encode(new SKWebpEncoderOptions(SKWebpEncoderCompression.Lossless, 100))
+            using var lossless = pixels.Encode(new SKWebpEncoderOptions(SKWebpEncoderCompression.Lossless, comparison.Settings.WebpQuality))
                 ?? throw new InvalidDataException("SkiaSharp failed to encode lossless WebP.");
             return lossless.ToArray();
         }
-        using var image = SKImage.FromBitmap(bitmap);
-        using var data = image.Encode(comparison.Format == "jpeg" ? SKEncodedImageFormat.Jpeg : SKEncodedImageFormat.Png, comparison.EncoderQuality);
+        if (comparison.Format == "png" && comparison.Settings.PngLevel is { } level) {
+            using var png = pixels.Encode(new SKPngEncoderOptions(SKPngEncoderFilterFlags.AllFilters, level))
+                ?? throw new InvalidDataException("SkiaSharp failed to encode PNG.");
+            return png.ToArray();
+        }
+        using var data = pixels.Encode(comparison.Format == "jpeg" ? SKEncodedImageFormat.Jpeg : SKEncodedImageFormat.Png, comparison.EncoderQuality)
+            ?? throw new InvalidDataException("SkiaSharp failed to encode.");
         return data.ToArray();
     }
 }

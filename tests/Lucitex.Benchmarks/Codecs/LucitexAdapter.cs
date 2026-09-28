@@ -20,10 +20,11 @@ internal sealed class LucitexAdapter : CodecAdapter
         using var stream = new MemoryStream();
         using (var writer = comparison.Format switch {
             "jpeg" => new JpegCodec().CreateWriter(stream, descriptor, new JpegEncoderOptions {
-                Quality = comparison.EncoderQuality, OptimizeHuffmanTables = true,
+                Quality = comparison.EncoderQuality, OptimizeHuffmanTables = comparison.Settings.OptimizeHuffman,
                 ChromaSubsampling = JpegChromaSubsampling.Ratio420,
             }),
             "png" => new PngCodec().CreateWriter(stream, descriptor, new PngEncoderOptions {
+                CompressionLevel = comparison.Settings.PngCompression ?? System.IO.Compression.CompressionLevel.SmallestSize,
                 Filter = comparison.Profile switch { "png-none" => PngFilterType.None, "png-paeth" => PngFilterType.Paeth, _ => null },
             }),
             "exr" => new ExrCodec(comparison.Profile switch {

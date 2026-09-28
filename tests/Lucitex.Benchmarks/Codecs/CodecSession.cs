@@ -16,6 +16,7 @@ internal sealed class CodecSession
     public PairingSelection? Selection { get; }
     public int SelectedQuality => _settings.EncoderQuality;
     private static readonly Dictionary<string, QualityCandidate[]> s_Candidates = new();
+    internal static void ResetCalibration() => s_Candidates.Clear();
     private readonly CodecAdapter _adapter;
     private readonly ComparisonCase _settings;
     private readonly string _sourceHash;
@@ -54,16 +55,16 @@ internal sealed class CodecSession
             var pixels = channels == Image.Channels ? Image.Pixels
                 : channels == 4 ? PixelLayout.ToRgba(Image.Pixels) : PixelLayout.ToRgb(Image.Pixels);
             var input = Image with { Channels = channels, Pixels = pixels };
-            var inputCase = comparison with { Profile = inputModule.DefaultProfile, Operation = Operation.Encode, Library = Library.ImageSharp };
+            var inputCase = comparison with { Profile = inputModule.DefaultProfile, Operation = Operation.Encode, Library = Library.ImageSharp, Candidate = "default" };
             DecodeInput = inputModule.CreateFixture(input, inputCase);
             var canonicalPixels = new byte[Image.Pixels.Length];
             inputModule.ValidateDimensions(input, DecodeInput);
             inputModule.DecodeReference(Image, DecodeInput, canonicalPixels);
             QualitySource = Image with { Pixels = canonicalPixels };
-            ReferenceEncoded = module.CreateFixture(QualitySource, comparison with { EncoderQuality = 90 });
+            ReferenceEncoded = module.CreateFixture(QualitySource, comparison with { EncoderQuality = 90, Candidate = "default" });
         }
         else {
-            ReferenceEncoded = module.CreateFixture(Image, comparison with { EncoderQuality = 90 });
+            ReferenceEncoded = module.CreateFixture(Image, comparison with { EncoderQuality = 90, Candidate = "default" });
             DecodeInput = ReferenceEncoded;
         }
         _settings = comparison with { EncoderQuality = selectedQuality ?? comparison.EncoderQuality };
@@ -80,7 +81,7 @@ internal sealed class CodecSession
             var candidates = Array.Empty<QualityCandidate>();
             double calibrationMs = 0;
             var reused = false;
-            var key = $"{comparison.Library}/{comparison.Operation}/{_sourceHash}/{_inputHash}/{_qualityHash}/{_referenceHash}";
+            var key = $"{comparison.Library}/{comparison.Operation}/{comparison.Candidate}/{_sourceHash}/{_inputHash}/{_qualityHash}/{_referenceHash}";
             if (s_Candidates.TryGetValue(key, out var cached)) {
                 candidates = cached;
                 reused = true;

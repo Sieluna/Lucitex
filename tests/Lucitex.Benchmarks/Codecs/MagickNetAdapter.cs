@@ -11,7 +11,6 @@ internal sealed class MagickNetAdapter : CodecAdapter
     public MagickNetAdapter(bool fancyUpsampling = true)
     {
         _fancyUpsampling = fancyUpsampling;
-        ResourceLimits.Thread = (ulong)RunOptions.Current.CodecThreads;
     }
 
     public override byte[] Encode(TestImage source, ComparisonCase comparison)
@@ -57,10 +56,10 @@ internal sealed class MagickNetAdapter : CodecAdapter
         image.Strip();
         image.Depth = 8;
         if (comparison.Format == "webp") {
-            image.Quality = 100;
+            image.Quality = (uint)comparison.Settings.WebpQuality;
             image.Settings.SetDefine(MagickFormat.WebP, "lossless", "true");
             image.Settings.SetDefine(MagickFormat.WebP, "exact", "true");
-            image.Settings.SetDefine(MagickFormat.WebP, "method", "4");
+            image.Settings.SetDefine(MagickFormat.WebP, "method", comparison.Settings.WebpMethod.ToString(System.Globalization.CultureInfo.InvariantCulture));
             return image.ToByteArray(MagickFormat.WebP);
         }
         if (comparison.Format == "exr") {
@@ -85,6 +84,7 @@ internal sealed class MagickNetAdapter : CodecAdapter
         image.Settings.ColorType = ColorType.TrueColorAlpha;
         image.Settings.SetDefines(new PngWriteDefines {
             BitDepth = 8, ColorType = ColorType.TrueColorAlpha,
+            CompressionLevel = (uint?)comparison.Settings.PngLevel,
             CompressionFilter = comparison.Profile switch { "png-none" => PngCompressionFilter.None, "png-paeth" => PngCompressionFilter.Paeth, _ => null },
             ExcludeChunks = PngChunkFlags.All,
         });

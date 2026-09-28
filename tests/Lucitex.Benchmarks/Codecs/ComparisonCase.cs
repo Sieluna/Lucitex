@@ -7,18 +7,33 @@ namespace Lucitex.Benchmarks.Codecs;
 internal enum Library { Lucitex, ImageSharp, SkiaSharp, NetVips, MagickNet }
 internal enum Operation { Encode, Decode, Convert }
 
-internal sealed record ComparisonCase(string Image, string Profile, Library Library, Operation Operation, string? SourceFormat = null, int EncoderQuality = 90)
+internal sealed record ComparisonCase(string Image, string Profile, Library Library, Operation Operation, string? SourceFormat = null, int EncoderQuality = 90, string Candidate = "default")
 {
     public string Format => FormatCatalog.ForProfile(Profile).Id;
     public string InputFormat => Operation == Operation.Convert ? SourceFormat ?? throw new InvalidOperationException("A conversion requires an explicit source format.") : Format;
-    public string Key => $"{Profile}/{Image}/{Operation}/{Library}" + (Operation == Operation.Convert ? $"/from-{InputFormat}" : "");
+    public string Key => $"{Profile}/{Image}/{Operation}/{Library}" + (Operation == Operation.Convert ? $"/from-{InputFormat}" : "")
+        + (Candidate == "default" ? "" : $"/candidate-{Candidate}");
+    public EncoderCandidate Settings => EncoderCandidates.Resolve(this);
     public string GroupKey => $"{Profile}/{Image}/{Operation}/from-{InputFormat}";
     public bool RequiresPairing => Format == "jpeg" && Operation != Operation.Decode;
     public bool RateMatched => Profile == "jpeg-rate420";
-    public Lucitex.Webp.WebpCompressionEffort WebpEffort => Profile switch {
+    public Lucitex.Webp.WebpCompressionEffort WebpEffort => Settings.WebpEffort ?? (Profile switch {
         "webp-lossless-fast" => Lucitex.Webp.WebpCompressionEffort.Fast,
         "webp-lossless-best" => Lucitex.Webp.WebpCompressionEffort.Best,
         _ => Lucitex.Webp.WebpCompressionEffort.Balanced,
+    });
+
+    public string EncoderSettings(int quality) => Format switch {
+        "jpeg" => $"Q{quality}; baseline 4:2:0; " + (Library == Library.Lucitex ? $"optimize Huffman={Settings.OptimizeHuffman}" : "library-specific entropy coding"),
+        "png" => $"{Profile}; " + (Library == Library.Lucitex
+            ? $"{Settings.PngCompression ?? System.IO.Compression.CompressionLevel.SmallestSize}; adaptive SmallestSize may evaluate multiple complete encodings"
+            : Settings.PngLevel is { } level ? $"compression {level}" : "library-default compression effort"),
+        "webp" => Library switch {
+            Library.Lucitex => $"Lossless; {WebpEffort}",
+            Library.SkiaSharp => $"Lossless; quality/effort {Settings.WebpQuality}; native method 0 (SkiaSharp 3.119.1)",
+            _ => $"Lossless; method {Settings.WebpMethod}; quality {Settings.WebpQuality}; exact transparent RGB",
+        },
+        _ => Profile,
     };
 
     public string? UnsupportedReason()
@@ -71,6 +86,6 @@ internal sealed record ComparisonCase(string Image, string Profile, Library Libr
         return new ComparisonCase((string)benchmark.Parameters["Case"], (string)benchmark.Parameters["Profile"], library,
             route is not null ? Operation.Convert
                 : benchmark.Descriptor.Type.Name.Contains("Encode", StringComparison.Ordinal) ? Operation.Encode : Operation.Decode,
-            route?.Source);
+            route?.Source, Candidate: benchmark.Parameters.Items.Any(p => p.Name == "Candidate") ? (string)benchmark.Parameters["Candidate"] : "default");
     }
 }

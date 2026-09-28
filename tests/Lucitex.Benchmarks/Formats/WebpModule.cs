@@ -55,7 +55,7 @@ internal sealed class WebpModule : IFormatModule
         return new {
             Bitstream = "VP8L", ExactRgba = true,
             Effort = comparison.Operation == Operation.Decode ? "Shared ImageSharp fixture: method 4, quality 100"
-                : comparison.Library == Library.Lucitex ? comparison.WebpEffort.ToString() : comparison.Library == Library.SkiaSharp ? "Lossless quality 100" : "Method 4, quality 100",
+                : comparison.EncoderSettings(comparison.EncoderQuality),
             Fairness = "Effort settings are library-specific. RGBA including hidden RGB must match exactly; speed, memory and size are measured separately."
         };
     }

@@ -18,7 +18,15 @@ on:
       profiles:
         description: Comma-separated profiles, or all
         type: string
-        default: jpeg-quality420,jpeg-rate420,png-default,exr-half-zip,ktx2-rgba8-none,webp-lossless
+        default: jpeg-quality420,png-default,exr-half-zip,ktx2-rgba8-none,webp-lossless
+      comparison:
+        description: Use fixed-profile comparisons instead of default compression / balanced / speed rankings
+        type: boolean
+        default: false
+      calibration_cases:
+        description: Independent calibration corpus (used only by default rankings)
+        type: string
+        default: ramp@193x127,checker@191x131,noise@257x193
       mode:
         description: Full adaptive measurement or smoke check
         type: choice
@@ -73,6 +81,8 @@ jobs:
           BENCH_PROFILES: ${{ inputs.profiles }}
           BENCH_MODE: ${{ inputs.mode }}
           BENCH_MEMORY: ${{ inputs.memory }}
+          BENCH_COMPARISON: ${{ inputs.comparison }}
+          BENCH_CALIBRATION_CASES: ${{ inputs.calibration_cases }}
         run: |
           args=(
             --suite "$BENCH_SUITE"
@@ -84,6 +94,11 @@ jobs:
           )
           if [[ "$BENCH_COMPARABLE" == true ]]; then
             args+=(--comparable)
+          fi
+          if [[ "$BENCH_COMPARISON" == true ]]; then
+            args+=(--comparison)
+          else
+            args+=(--calibration-cases "$BENCH_CALIBRATION_CASES")
           fi
           dotnet run --project "$BENCH_PROJECT" --configuration "$BUILD_CONFIGURATION" --no-build -- "${args[@]}"
 
@@ -103,7 +118,6 @@ jobs:
 
     steps:
       - name: Download results
-        if: always()
         uses: actions/download-artifact@v7
         with:
           pattern: benchmark-*
@@ -124,26 +138,41 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          for dir in artifacts/benchmark-*; do
+          directories=(artifacts/benchmark-*)
+          if (( ${#directories[@]} == 0 )); then
+            printf 'No benchmark artifacts were produced. Check the benchmark jobs for build or startup failures.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          for dir in "${directories[@]}"; do
             os="${dir#artifacts/benchmark-}"
             validation="$dir/validation.json"
             reports=("$dir"/results/*-comparison.md)
+            if [[ -d "$dir/calibration" ]]; then
+              validation="$dir/evaluation/validation.json"
+              [[ -f "$validation" ]] || validation="$dir/calibration/validation.json"
+              reports=()
+            fi
             {
               printf '## %s\n\n' "$os"
               if [[ -f "$validation" ]]; then
                 jq -r '
-                  "Runtime: \(.Runtime) · Codec threads: \(.Options.CodecThreads)\n",
-                  "Preflight: \(.Results | length) checked · \(.Errors | length) rejected · \([.Results[] | select(.PairingMatched == false)] | length) unmatched · \(.Skipped | length) unsupported.\n"
+                  "Runtime: \(.Runtime) · Available processors: \(.Processors)\n",
+                  "Preflight: \(.Results | length) checked · \(.Errors | length) rejected · \((.AcceptanceFailures // []) | length) size acceptance failures (timings retained) · \([.Results[] | select(.PairingMatched == false)] | length) unmatched (diagnostic timings) · \(.Skipped | length) unsupported.\n"
                 ' "$validation"
               else
                 printf 'No validation report. Check logs.\n\n'
               fi
 
+              if [[ -f "$dir/tradeoffs.json" ]]; then
+                printf 'Configurations were frozen on the calibration corpus before evaluation. Ratios are geometric means over the complete evaluation corpus; lower is better. See index.html for per-image times, bytes, compression ratios and Pareto plots.\n\n'
+                printf '| Profile | Goal | Rank | Library | Candidate | Time/ref | Size/ref | Cost |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n'
+                jq -r '.Overall[] | "| \(.Point.Group | split(" | ")[0]) | \(.Goal) | \(.Rank) | \(.Point.Library) | \(.Point.Candidate) | \(.Point.TimeRatio) | \(.Point.SizeRatio) | \(.Point.Cost) |"' "$dir/tradeoffs.json"
+                printf '\n'
+              fi
               for report in "${reports[@]}"; do
                 cat "$report"
                 printf '\n'
               done
-              if (( ${#reports[@]} == 0 )); then
+              if (( ${#reports[@]} == 0 )) && [[ ! -f "$dir/tradeoffs.json" ]]; then
                 printf 'No timing report available.\n\n'
               fi
               if [[ -f "$validation" ]]; then

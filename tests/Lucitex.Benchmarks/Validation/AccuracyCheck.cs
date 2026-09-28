@@ -37,14 +37,17 @@ internal sealed record ValidationResult(
     public double? BestSizeRatio => EncodedBytes is { } size && SizeTarget is { } target ? (double)size / target.Bytes : null;
     public bool PairingMatched => Selection?.Matched != false;
     public bool EnforceSize => Compression is not null && Case.Library == Library.Lucitex
-        && !Case.RateMatched && Case.Profile != "webp-lossless-fast";
+        && Case.Candidate == "default" && !Case.RateMatched && Case.Profile != "webp-lossless-fast";
     public bool SizeTargetPassed => !EnforceSize || !PairingMatched || BestSizeRatio <= SizeLimit;
     public string SizePolicy => Compression is null ? "N/A"
+        : Case.Candidate != "default" ? "Tradeoff candidate; size is a ranking objective"
         : Case.Library != Library.Lucitex ? "Comparison only; no size gate"
         : Case.RateMatched ? "Rate comparison; size acceptance belongs to quality comparison"
         : EnforceSize ? "Lucitex <=1.2x smallest qualifying comparable output" : "Lucitex Fast; size advisory";
     public bool FidelityPassed => Compression?.FidelityPassed != false;
-    public bool EligibleForTiming => CorrectnessPassed && FidelityPassed && PairingMatched && SizeTargetPassed;
+    public bool EligibleForTiming => CorrectnessPassed && FidelityPassed;
+    public bool AcceptanceFailed => EligibleForTiming && EnforceSize && PairingMatched && !SizeTargetPassed;
+    public string EncoderSettings => Case.Operation == Operation.Decode ? "N/A" : Case.EncoderSettings(Selection?.Quality ?? Case.EncoderQuality);
     public double? CommonSizeRatio => EncodedBytes is { } size ? (double)size / CommonReferenceBytes : null;
     public string CompressionBasis => Case.RequiresPairing ? "Common Q90 reference; symmetric pairing tolerance"
         : Case.Operation == Operation.Convert ? "Reference re-encoded from this codec's actual decoded pixels"
@@ -56,6 +59,7 @@ internal sealed record ValidationResult(
         : "Identical source pixels";
     public string QualityContract => Compression is null ? "Decoder correctness; no encoder compression score"
         : Compression.Lossless ? "Exact encoder-input samples"
+        : !PairingMatched ? "Unmatched target; diagnostic timing only, not equal quality or rate"
         : Case.RateMatched ? "File bytes within 2% of reference; distortion is measured, not gated"
         : "MSE within 5% of reference; exact when reference MSE is zero";
 
@@ -65,8 +69,6 @@ internal sealed record ValidationResult(
             + string.Join("; ", CorrectnessErrors.Concat(DecoderChecks.Where(c => c.Error is not null || c.Required && !c.Passed)
                 .Select(c => $"{c.Stage}/{c.Decoder}: {c.Error ?? $"MSE {c.Agreement?.Mse} > {c.Tolerance}"}"))));
         if (!FidelityPassed) throw new InvalidDataException("Invalid compression metrics or lossless fidelity failure.");
-        if (!SizeTargetPassed)
-            throw new InvalidDataException($"Lucitex size gate failed: encoded={EncodedBytes} B, target={SizeTarget?.Bytes} B ({SizeTarget?.Encoder}), ratio={BestSizeRatio:F4}x, limit={SizeLimit:F2}x.");
     }
 }
 
@@ -125,7 +127,7 @@ internal static class AccuracyCheck
                 // but enforce compression efficiency on identical actual encoder-input pixels.
                 comparisonPixels = encoderInput;
                 compressionError = encoderQuality.Mse;
-                compressionReference = module.CreateFixture(session.Image with { Pixels = encoderInput }, c);
+                compressionReference = module.CreateFixture(session.Image with { Pixels = encoderInput }, c with { Candidate = "default" });
             }
             module.DecodeReference(session.Image, compressionReference, reference);
             var referenceQuality = module.CompareQuality(session.Image, comparisonPixels, reference);

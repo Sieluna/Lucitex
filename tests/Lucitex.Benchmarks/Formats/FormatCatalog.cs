@@ -37,21 +37,22 @@ internal static class FormatCatalog
         foreach (var module in Modules.Where(m => m.Profiles.Intersect(options.Profiles).Any())) {
             if (options.IncludesFormat(module.Id)) {
                 foreach (var type in module.BenchmarkTypes) {
+                    if (options.Tradeoffs && !type.Name.Contains("Encode", StringComparison.Ordinal)) continue;
                     if (type == typeof(JpegDecodeBenchmarks) && !options.Profiles.Contains("jpeg-quality420")) continue;
                     yield return type;
                 }
             }
-            if (options.IncludesConvert()) {
+            if (options.IncludesConvert() && !options.Tradeoffs) {
                 foreach (var route in Conversions.Where(r => r.Destination == module.Id && options.IncludesConvertRoute(r.Source, r.Destination))) {
                     yield return route.BenchmarkType;
                 }
             }
         }
-        if (options.IncludesKernels()) {
+        if (options.IncludesKernels() && !options.Tradeoffs) {
             yield return typeof(Crc32Benchmarks);
             yield return typeof(PngFilterBenchmarks);
         }
-        if (options.Suites.HasFlag(Suite.Core)) {
+        if (options.Suites.HasFlag(Suite.Core) && !options.Tradeoffs) {
             yield return typeof(CoreExecutionBenchmarks);
         }
     }
@@ -63,6 +64,15 @@ internal static class FormatCatalog
             var routes = Conversions.Where(r => r.Destination == format && options.IncludesConvertRoute(r.Source, r.Destination)).ToArray();
             foreach (var pair in from image in options.Cases from library in options.Libraries select (image, library)) {
                 var sample = new ComparisonCase(pair.image, profile, Enum.Parse<Library>(pair.library), Operation.Encode);
+                if (options.Tradeoffs) {
+                    if (options.IncludesFormat(format)) {
+                        foreach (var candidate in EncoderCandidates.For(format, sample.Library)) {
+                            var comparison = sample with { Candidate = candidate.Id };
+                            if (EncoderCandidates.Includes(comparison, options)) yield return comparison;
+                        }
+                    }
+                    continue;
+                }
                 if (options.IncludesFormat(format)) {
                     yield return sample;
                     if (!sample.RateMatched) yield return sample with { Operation = Operation.Decode };

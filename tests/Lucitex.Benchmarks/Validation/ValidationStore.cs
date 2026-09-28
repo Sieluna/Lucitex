@@ -19,13 +19,21 @@ internal static class ValidationStore
     public static IReadOnlyDictionary<string, string> Errors => s_Errors;
     public static IReadOnlyDictionary<string, string> Skipped => s_Skipped;
     public static bool HasErrors => s_Errors.Count > 0;
-    private static readonly Guid s_RunId = Guid.NewGuid();
-    private static readonly DateTimeOffset s_StartedAt = DateTimeOffset.UtcNow;
+    public static bool HasAcceptanceFailures => s_Results.Values.Any(r => r.AcceptanceFailed);
+    private static Guid s_RunId = Guid.NewGuid();
+    private static DateTimeOffset s_StartedAt = DateTimeOffset.UtcNow;
     private static readonly Stopwatch s_Checkpoint = Stopwatch.StartNew();
+
+    internal static void Reset()
+    {
+        s_Results.Clear(); s_Errors.Clear(); s_Skipped.Clear(); s_FileHashes.Clear();
+        s_RunId = Guid.NewGuid(); s_StartedAt = DateTimeOffset.UtcNow; s_Checkpoint.Restart();
+        CodecSession.ResetCalibration();
+    }
 
     public static void Skip(ComparisonCase comparison, string reason) => s_Skipped[comparison.Key] = reason;
 
-    private sealed record WorkerPlan(string CaseKey, int CodecThreads, bool Approved,
+    private sealed record WorkerPlan(string CaseKey, bool Approved,
         string InputSha256, string EncodedInputSha256, string QualityInputSha256, string ReferenceEncodedSha256,
         string ResultSha256, int? SelectedQuality, string? Metric, double? Target, double? Tolerance, double? Actual);
 
@@ -37,7 +45,7 @@ internal static class ValidationStore
         var path = PlanPath(result.Case);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(new WorkerPlan(result.Case.Key,
-            RunOptions.Current.CodecThreads, approved, result.InputSha256, result.EncodedInputSha256,
+            approved, result.InputSha256, result.EncodedInputSha256,
             result.QualityInputSha256, result.ReferenceEncodedSha256, result.ResultSha256,
             result.Selection?.Quality, result.Selection?.Metric, result.Selection?.Target, result.Selection?.Tolerance, result.Selection?.Actual)));
     }
@@ -46,8 +54,8 @@ internal static class ValidationStore
     {
         var plan = JsonSerializer.Deserialize<WorkerPlan>(File.ReadAllText(PlanPath(comparison)))
             ?? throw new InvalidDataException("Missing frozen workload plan.");
-        if (!plan.Approved || plan.CaseKey != comparison.Key || plan.CodecThreads != RunOptions.Current.CodecThreads)
-            throw new InvalidDataException("Unapproved or mismatched workload/thread budget.");
+        if (!plan.Approved || plan.CaseKey != comparison.Key)
+            throw new InvalidDataException("Unapproved or mismatched workload.");
         return plan;
     }
 
@@ -92,8 +100,7 @@ internal static class ValidationStore
             || expected.ResultSha256 != outputHash
             || expected.SelectedQuality != session.Selection?.Quality
             || expected.Metric != session.Selection?.Metric || expected.Target != session.Selection?.Target
-            || expected.Tolerance != session.Selection?.Tolerance || expected.Actual != session.Selection?.Actual
-            || session.Selection?.Matched == false)
+            || expected.Tolerance != session.Selection?.Tolerance || expected.Actual != session.Selection?.Actual)
             throw new InvalidDataException("Worker inputs, settings or output differ from the approved plan.");
     }
 
@@ -173,7 +180,7 @@ internal static class ValidationStore
 
     private static ValidationResult SelectSizeTarget(ValidationResult result)
     {
-        if (result.Case.Library != Library.Lucitex || result.Case.RateMatched || !result.PairingMatched
+        if (result.Case.Candidate != "default" || result.Case.Library != Library.Lucitex || result.Case.RateMatched || !result.PairingMatched
             || result.Compression is not { } compression) return result;
         var target = new CompressionSizeTarget(compression.ReferenceEncoder, compression.ReferenceBytes,
             result.CompressionReferenceSha256);
@@ -184,7 +191,7 @@ internal static class ValidationStore
             var comparison = result.Case with { Library = library };
             if (!TryValidate(comparison)) continue;
             var peer = s_Results[comparison.Key];
-            if (!peer.EligibleForTiming || peer.EncodedBytes is not { } size) continue;
+            if (!peer.EligibleForTiming || !peer.PairingMatched || peer.EncodedBytes is not { } size) continue;
             if (!result.Case.RequiresPairing && peer.EncoderInputSha256 != result.EncoderInputSha256) continue;
             if (size < target.Bytes) target = new(comparison.Library.ToString(), size, peer.ResultSha256);
         }
@@ -218,17 +225,18 @@ internal static class ValidationStore
                 Sha256 = HashFile(m.FileName),
             }).ToArray();
         var metadata = new {
-            SchemaVersion = 4, RunId = s_RunId, StartedAtUtc = s_StartedAt,
+            SchemaVersion = 6, RunId = s_RunId, StartedAtUtc = s_StartedAt,
             Options = options, Runtime = RuntimeInformation.FrameworkDescription, OS = RuntimeInformation.OSDescription,
             Architecture = RuntimeInformation.ProcessArchitecture.ToString(), Processors = Environment.ProcessorCount,
             MeasurementContract = options.VerifyOnly ? "Verification only: correctness and quality checks; no timing or memory measurements."
                 : options.Smoke ? "Smoke only: BenchmarkDotNet Dry job; pipeline checks, no performance conclusions."
                 : "Full: adaptive BenchmarkDotNet measurement and exhaustive JPEG Q1..100 pairing calibration. Calibration is excluded from timing.",
             Assemblies = assemblies, NativeModules = nativeModules, Results = s_Results.Values, Errors = s_Errors, Skipped = s_Skipped,
+            AcceptanceFailures = s_Results.Values.Where(r => r.AcceptanceFailed).Select(r => r.Case.Key).ToArray(),
             NetVipsCache = "Operation cache disabled (Cache.Max = 0); all lazy results materialized inside timing.",
-            ThreadContract = $"Requested codec threads={options.CodecThreads}: ImageSharp MaxDegreeOfParallelism, libvips Concurrency, Magick.NET ResourceLimits.Thread. Applied in host and worker adapters. Not a process-wide thread cap; Skia has no matching control in this API. Lucitex codec adapters use synchronous operations; core parallelism benchmarks have separate explicit policies.",
-            CompressionContract = "Correctness, pairing and size acceptance are independent. JPEG: target is common reference Q90 MSE ±5% (zero requires exact) or file bytes ±2%. Closest evaluated value wins; ties use smaller bytes for quality or lower MSE for rate, then lower Q. Both profiles share a Q1..100 scan. Unmatched rows remain in Results, are not Errors and have no timing. Only Lucitex quality/exact comparisons enforce <=1.2x the smallest matched selected peer or fixed reference; Fast advisory. Rate comparisons measure distortion without a size gate. No perceptual-equivalence or global optimum claim.",
-            FairnessContract = "Encode: identical source pixels. Decode: identical encoded bytes. Convert: identical encoded bytes, common canonical decoded pixels for end-to-end quality; native decoded encoder input may differ and its hash is separate. No minimum-error reference picking. All decoder checks retained; designated policy selected before measuring error. No speed-only winner or composite score.",
+            ExecutionPolicy = "Unrestricted library parallelism: no benchmark-imposed thread limits or CPU affinity. Each library may use all CPUs available to the process through its own scheduler. This compares end-to-end latency, not equal CPU consumption. Host OS and externally configured limits still apply.",
+            CompressionContract = "Correctness alone controls timing eligibility. JPEG: target is common reference Q90 MSE ±5% (zero requires exact) or file bytes ±2%. Closest evaluated value wins; ties use smaller bytes for quality or lower MSE for rate, then lower Q. Both profiles share a Q1..100 scan. Unmatched points are timed separately and never labeled equal quality/rate. Only Lucitex quality/exact comparisons enforce <=1.2x the smallest matched selected peer or fixed reference; this independent acceptance check can fail the run but cannot remove timings. Fast is advisory. Rate comparisons measure distortion without a size gate. No perceptual-equivalence or global optimum claim.",
+            FairnessContract = "Encode: identical source pixels. Decode: identical encoded bytes. Convert: identical encoded bytes, common canonical decoded pixels for end-to-end quality; native decoded encoder input may differ and its hash is separate. No minimum-error reference picking. All decoder checks retained; designated policy selected before measuring error. Tradeoff mode ranks frozen representatives by time and size; candidate size is advisory for all libraries. See selection.json and tradeoffs.json in the parent output directory.",
             ExrIo = "Magick.NET's EXR byte-array API uses temporary files internally; this native implementation cost is included. Lucitex uses MemoryStream. EXR results are end-to-end API comparisons, not disk-free codec kernel comparisons.",
             NativeMemoryStatus = "Native allocation bytes unavailable. Process mode measures managed+native process memory; never interpret missing native values as zero.",
             Contract = "RGB8 JPEG reference Q90 with matched quality or rate; RGBA8 PNG/WebP/KTX2 or EXR HALF RGBA with normalized byte/255 samples. EXR is not full HDR fidelity. KTX2 is one 2D RGBA8 UNORM mip, None/Zlib, not GPU block encoding. Fresh handles; adaptation and output copies included; corpus construction and quality calibration excluded. No equal-CPU-budget or perceptual-equivalence claim.",

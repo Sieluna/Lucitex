@@ -185,11 +185,15 @@ internal static class ExrHeaderReader
     private static List<ExrChannelInfo> ReadChannelList(ExrBinaryReader reader)
     {
         var channels = new List<ExrChannelInfo>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
 
         while (true) {
             var name = reader.ReadCString();
             if (name.Length == 0) {
                 break;
+            }
+            if (!names.Add(name)) {
+                throw new InvalidDataException("Duplicate EXR channel name.");
             }
 
             var pixelType = (ExrPixelType)reader.ReadInt32();

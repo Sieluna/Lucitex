@@ -70,13 +70,18 @@ internal sealed class PngWriter : IImageWriter
         try {
             PngDocumentWriter.WriteHeader(_stream, _document);
             var compressionLevel = _options.CompressionLevel;
-            if (compressionLevel == CompressionLevel.Fastest
+            var requestedFilter = _options.Filter;
+            if (compressionLevel == CompressionLevel.SmallestSize && requestedFilter is null
+                && _document.Ihdr.BitDepth >= 8 && _document.Ihdr.ColorType != PngColorType.Indexed) {
+                (requestedFilter, compressionLevel) = SelectCompression();
+            }
+            if (_options.CompressionLevel == CompressionLevel.Fastest
                 && _document.Ihdr.BitDepth >= 8
                 && _document.Ihdr.ColorType != PngColorType.Indexed
                 && IsHighEntropy(_pixelBuffer, _rowStrideBytes, _document.Ihdr.Width, _document.Ihdr.Height, _document.Ihdr.BytesPerPixel)) {
                 compressionLevel = CompressionLevel.NoCompression;
             }
-            if (compressionLevel == CompressionLevel.NoCompression && _stream is MemoryStream memoryStream) {
+            if (compressionLevel is CompressionLevel.NoCompression or CompressionLevel.Fastest && _stream is MemoryStream memoryStream) {
                 var rawBytes = ((long)_rowStrideBytes + 1) * _document.Ihdr.Height;
                 var zlibBytes = rawBytes + (((rawBytes + 16382) / 16383) * 5) + 6;
                 var capacity = memoryStream.Position + zlibBytes + (((zlibBytes + 65535) / 65536) * 12) + 12;
@@ -90,35 +95,53 @@ internal sealed class PngWriter : IImageWriter
                 }
             }
             using (var chunks = new PngIdatStream(_stream)) {
-                if (compressionLevel == CompressionLevel.SmallestSize && _options.Filter is null
-                    && _document.Ihdr.BitDepth >= 8 && _document.Ihdr.ColorType != PngColorType.Indexed
-                    && !IsHighEntropy(_pixelBuffer, _rowStrideBytes, _document.Ihdr.Width, _document.Ihdr.Height, _document.Ihdr.BytesPerPixel)) {
-                    using var best = new MemoryStream();
-                    WriteCompressed(best, compressionLevel, null);
-                    using var candidate = new MemoryStream();
-                    for (var filter = PngFilterType.None; filter <= PngFilterType.Paeth; filter++) {
-                        candidate.SetLength(0);
-                        candidate.Position = 0;
-                        WriteCompressed(candidate, compressionLevel, filter);
-                        if (candidate.Length < best.Length) {
-                            best.SetLength(0);
-                            best.Position = 0;
-                            candidate.Position = 0;
-                            candidate.CopyTo(best);
-                        }
-                    }
-                    best.Position = 0;
-                    best.CopyTo(chunks);
-                }
-                else {
-                    WriteCompressed(chunks, compressionLevel, _options.Filter);
-                }
+                WriteCompressed(chunks, compressionLevel, requestedFilter);
             }
             PngDocumentWriter.WriteEnd(_stream);
             _finished = true;
         }
         finally {
             Dispose();
+        }
+    }
+
+    private (PngFilterType? Filter, CompressionLevel Level) SelectCompression()
+    {
+        var rowBytes = Math.Min(_rowStrideBytes, 512);
+        var rows = Math.Min(_document.Ihdr.Height, 8);
+        var rowOwner = ArrayPool<byte>.Shared.Rent(rowBytes + 1);
+        try {
+            using var sample = new MemoryStream();
+            var bestLength = long.MaxValue;
+            var paethLength = long.MaxValue;
+            var bestFilter = PngFilterType.None;
+            for (var filter = PngFilterType.None; filter <= PngFilterType.Paeth; filter++) {
+                sample.SetLength(0);
+                sample.Position = 0;
+                using (var zlib = new ZLibStream(sample, CompressionLevel.Fastest, leaveOpen: true)) {
+                    for (var i = 0; i < rows; i++) {
+                        var y = i * _document.Ihdr.Height / rows;
+                        var row = _pixelBuffer.AsSpan(y * _rowStrideBytes, rowBytes);
+                        var previous = y == 0 ? ReadOnlySpan<byte>.Empty : _pixelBuffer.AsSpan((y - 1) * _rowStrideBytes, rowBytes);
+                        rowOwner[0] = (byte)filter;
+                        PngFilter.Apply(filter, rowOwner.AsSpan(1, rowBytes), row, previous, _document.Ihdr.BytesPerPixel);
+                        zlib.Write(rowOwner.AsSpan(0, rowBytes + 1));
+                    }
+                }
+                if (sample.Length < bestLength) {
+                    bestLength = sample.Length;
+                    bestFilter = filter;
+                }
+                if (filter == PngFilterType.Paeth) paethLength = sample.Length;
+            }
+            var sampleBytes = (long)(rowBytes + 1) * rows;
+            if (bestLength * 8 < sampleBytes && paethLength <= bestLength * 2) bestFilter = PngFilterType.Paeth;
+            var level = bestLength * 8 < sampleBytes ? CompressionLevel.SmallestSize
+                : bestLength * 4 > sampleBytes * 3 ? CompressionLevel.Fastest : CompressionLevel.Optimal;
+            return (bestFilter, level);
+        }
+        finally {
+            ArrayPool<byte>.Shared.Return(rowOwner);
         }
     }
 
@@ -132,7 +155,9 @@ internal sealed class PngWriter : IImageWriter
 
     private void WriteCompressed(Stream destination, CompressionLevel compressionLevel, PngFilterType? requestedFilter)
     {
-        using (var zlib = new ZLibStream(destination, compressionLevel, leaveOpen: true)) {
+        using (var zlib = compressionLevel == CompressionLevel.Fastest && _options.CompressionLevel == CompressionLevel.SmallestSize
+            ? new ZLibStream(destination, new ZLibCompressionOptions { CompressionLevel = 3 }, leaveOpen: true)
+            : new ZLibStream(destination, compressionLevel, leaveOpen: true)) {
             var bestOwner = ArrayPool<byte>.Shared.Rent(_rowStrideBytes + 1);
             var candidateOwner = ArrayPool<byte>.Shared.Rent(_rowStrideBytes + 1);
             var best = bestOwner.AsMemory(0, _rowStrideBytes + 1);

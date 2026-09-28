@@ -7,6 +7,7 @@ internal sealed class Vp8LCodebook
     private readonly int _symbolCount;
     private readonly int _firstSymbol;
     private readonly int _lastSymbol;
+    private HeaderPlan? _headerPlan;
 
     public Vp8LCodebook(ReadOnlySpan<int> frequencies, int maxBits = 15)
     {
@@ -105,9 +106,13 @@ internal sealed class Vp8LCodebook
             }
             return;
         }
-        var plan = PlanHeader(_lengths.Length, false);
-        var trimmed = PlanHeader(_lastSymbol + 1, true);
-        if (trimmed.Symbols >= 2 && trimmed.Bits < plan.Bits) plan = trimmed;
+        var plan = _headerPlan;
+        if (plan is null) {
+            plan = PlanHeader(_lengths.Length, false);
+            var trimmed = PlanHeader(_lastSymbol + 1, true);
+            if (trimmed.Symbols >= 2 && trimmed.Bits < plan.Bits) plan = trimmed;
+            _headerPlan = plan;
+        }
         var lengthBook = plan.Book;
         writer.Write(0, 1);
         writer.Write((uint)(plan.Count - 4), 4);

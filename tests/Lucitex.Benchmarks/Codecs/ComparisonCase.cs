@@ -26,7 +26,7 @@ internal sealed record ComparisonCase(string Image, string Profile, Library Libr
     public string EncoderSettings(int quality) => Format switch {
         "jpeg" => $"Q{quality}; baseline 4:2:0; " + (Library == Library.Lucitex ? $"optimize Huffman={Settings.OptimizeHuffman}" : "library-specific entropy coding"),
         "png" => $"{Profile}; " + (Library == Library.Lucitex
-            ? $"{Settings.PngCompression ?? System.IO.Compression.CompressionLevel.SmallestSize}; adaptive SmallestSize may evaluate multiple complete encodings"
+            ? $"{Settings.PngCompression ?? System.IO.Compression.CompressionLevel.SmallestSize}; automatic SmallestSize samples filters and selects deflate effort"
             : Settings.PngLevel is { } level ? $"compression {level}" : "library-default compression effort"),
         "webp" => Library switch {
             Library.Lucitex => $"Lossless; {WebpEffort}",

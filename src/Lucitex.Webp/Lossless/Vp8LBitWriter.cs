@@ -4,14 +4,14 @@ namespace Lucitex.Webp.Lossless;
 
 internal sealed class Vp8LBitWriter(Stream? stream, WebpMemory memory, int bufferSize = 8192) : IDisposable
 {
-    private readonly WebpBuffer<byte> _buffer = memory.Rent<byte>(bufferSize);
+    private readonly WebpBuffer<byte>? _buffer = ReferenceEquals(stream, Stream.Null) ? null : memory.Rent<byte>(bufferSize);
     private ulong _bits;
     private int _pending;
     private int _position;
 
     public long TotalBits { get; private set; }
 
-    public ReadOnlySpan<byte> WrittenSpan => _buffer.Span[..checked((int)((TotalBits + 7) / 8))];
+    public ReadOnlySpan<byte> WrittenSpan => _buffer is null ? ReadOnlySpan<byte>.Empty : _buffer.Span[..checked((int)((TotalBits + 7) / 8))];
 
     public void Reset()
     {
@@ -26,9 +26,12 @@ internal sealed class Vp8LBitWriter(Stream? stream, WebpMemory memory, int buffe
         if (count == 0) {
             return;
         }
+        TotalBits += count;
+        if (_buffer is null) {
+            return;
+        }
         _bits |= (ulong)(value & ((1u << count) - 1)) << _pending;
         _pending += count;
-        TotalBits += count;
         if (_pending >= 32) {
             BinaryPrimitives.WriteUInt32LittleEndian(_buffer.Span[_position..], (uint)_bits);
             _position += 4;
@@ -42,6 +45,9 @@ internal sealed class Vp8LBitWriter(Stream? stream, WebpMemory memory, int buffe
 
     public void Finish()
     {
+        if (_buffer is null) {
+            return;
+        }
         while (_pending > 0) {
             _buffer.Span[_position++] = (byte)_bits;
             _bits >>= 8;
@@ -53,11 +59,11 @@ internal sealed class Vp8LBitWriter(Stream? stream, WebpMemory memory, int buffe
 
     private void FlushBuffer()
     {
-        if (stream is not null) {
+        if (stream is not null && _buffer is not null) {
             stream.Write(_buffer.Span[.._position]);
             _position = 0;
         }
     }
 
-    public void Dispose() => _buffer.Dispose();
+    public void Dispose() => _buffer?.Dispose();
 }

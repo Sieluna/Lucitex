@@ -35,11 +35,40 @@ internal static class Vp8LEncoder
             long bestPaddedSize = long.MaxValue;
             ReadOnlySpan<int> fixedModes = [-1, 1, 2, 7, 12];
             var fixedPasses = options.Effort == WebpCompressionEffort.Fast ? 1 : 2;
-            var plans = maxTier + 1 + (uniform ? 0 : fixedModes.Length * fixedPasses);
-            for (var plan = 0; plan < plans; plan++) {
+            var plans = uniform ? 1 : options.Effort != WebpCompressionEffort.Fast
+                ? maxTier + 1 + fixedModes.Length * fixedPasses : 0;
+            bestBits = CreatePaletteCandidate(pixels, width, height, subtractGreen, memory, work.Span, positions.Span, tokens, settings, out var compactPalette);
+            if (bestBits is not null) {
+                bestPayloadSize = checked(5 + bestBits.WrittenSpan.Length);
+                bestPaddedSize = (long)bestPayloadSize + (bestPayloadSize & 1);
+            }
+            var paletteOnly = !uniform && options.Effort != WebpCompressionEffort.Best && compactPalette;
+            var sampled = uniform || paletteOnly ? (First: -1, Second: -1, LimitSearch: false) : SelectPredictors(pixels, width);
+            var quickPlans = uniform || paletteOnly ? 0 : options.Effort == WebpCompressionEffort.Fast ? 1 : sampled.LimitSearch ? 2 : 5;
+            var residualReady = false;
+            var previousCandidates = 0;
+            for (var plan = -quickPlans; plan < plans; plan++) {
+                if (plan == 0 && !uniform && options.Effort == WebpCompressionEffort.Balanced
+                    && (!sampled.LimitSearch || bestPaddedSize * 4 >= pixels.Length * 9L)) {
+                    break;
+                }
                 var tier = plan <= maxTier ? plan : 0;
                 WebpBuffer<uint>? modes;
-                if (plan <= maxTier) {
+                var quick = plan + quickPlans;
+                if (plan < 0) {
+                    if (quickPlans > 1 && quick == quickPlans - 1) {
+                        modes = ChoosePredictors(pixels, width, height, memory, 0);
+                    }
+                    else if (quick == 3) {
+                        modes = ChoosePredictors(pixels, width, height, memory, 2);
+                    }
+                    else {
+                        var mode = quick <= 1 ? sampled.First : sampled.Second;
+                        modes = mode < 0 ? null : memory.Rent<uint>(modeWidth * Vp8LTransforms.Subsample(height, k_PredictorBits));
+                        modes?.Span.Fill(0xff000000 | ((uint)mode << 8));
+                    }
+                }
+                else if (plan <= maxTier) {
                     modes = uniform ? null : ChoosePredictors(pixels, width, height, memory, tier);
                 }
                 else {
@@ -51,14 +80,19 @@ internal static class Vp8LEncoder
                     previousModes is not null && modes.Span.SequenceEqual(previousModes.Span);
                 previousModes?.Dispose();
                 previousModes = modes;
-                if (plan == 0 || !samePredictors) {
+                if (!residualReady || !samePredictors) {
                     pixels.CopyTo(work.Span);
                     if (modes is not null) {
                         ApplyPredictors(work.Span, width, height, modes.Span);
                     }
+                    residualReady = true;
                 }
-                var candidates = plan <= maxTier ? 1 << tier
+                var candidates = plan < 0 ? quick == quickPlans - 1 ? 1 : quick == 3 ? 4 : quick == 0 ? 1 : 16 : plan <= maxTier ? 1 << tier
                     : (plan - maxTier - 1) / fixedModes.Length == 0 ? 1 : settings.MatchCandidates;
+                if (samePredictors && candidates == previousCandidates) {
+                    continue;
+                }
+                previousCandidates = candidates;
                 var table = positions.Span[..Vp8LMatchFinder.TableSize(pixels.Length, candidates)];
                 using var image = new Vp8LEntropyEncoder(work.Span, width, table, candidates, memory, tokens);
                 using var predictorImage = modes is null ? null : new Vp8LEntropyEncoder(modes.Span, modeWidth, table, candidates, memory);
@@ -93,18 +127,6 @@ internal static class Vp8LEncoder
                 image.WritePixels(bestBits, work.Span);
                 bestBits.Finish();
             }
-            using (var palette = CreatePaletteCandidate(pixels, width, height, subtractGreen, memory, work.Span, positions.Span, tokens, settings)) {
-                if (palette is not null) {
-                    var size = checked(5 + palette.WrittenSpan.Length);
-                    if ((long)size + (size & 1) < bestPaddedSize) {
-                        bestBits!.Dispose();
-                        bestBits = new Vp8LBitWriter(null, memory, palette.WrittenSpan.Length + 3);
-                        foreach (var value in palette.WrittenSpan) bestBits.Write(value, 8);
-                        bestBits.Finish();
-                        bestPayloadSize = size;
-                    }
-                }
-            }
             WebpContainer.WriteHeader(stream, bestPayloadSize, width, height, alpha, metadata, true);
             Span<byte> header = stackalloc byte[5];
             header[0] = 0x2f;
@@ -121,6 +143,39 @@ internal static class Vp8LEncoder
             previousModes?.Dispose();
             memory.Release(128 * 1024);
         }
+    }
+
+    private static (int First, int Second, bool LimitSearch) SelectPredictors(ReadOnlySpan<uint> pixels, int width)
+    {
+        ReadOnlySpan<int> choices = [-1, 1, 2, 7, 12];
+        Span<double> costs = stackalloc double[5];
+        Span<int> counts = stackalloc int[1024];
+        var samples = Math.Min(512, pixels.Length);
+        for (var choice = 0; choice < choices.Length; choice++) {
+            counts.Clear();
+            for (var i = 0; i < samples; i++) {
+                var index = (int)((long)i * pixels.Length / samples + (long)(i * 127 % 251) * (pixels.Length / samples) / 251);
+                var value = pixels[index];
+                if (choices[choice] >= 0) {
+                    value = Vp8LTransforms.Subtract(value, Prediction(pixels, index, index % width, index / width, width, choices[choice]));
+                }
+                counts[(byte)value]++;
+                counts[256 + (byte)(value >> 8)]++;
+                counts[512 + (byte)(value >> 16)]++;
+                counts[768 + (byte)(value >> 24)]++;
+            }
+            double bits = 0;
+            foreach (var count in counts) {
+                if (count > 0) bits += count * Math.Log2((double)samples / count);
+            }
+            costs[choice] = bits / samples;
+        }
+        var first = 0;
+        for (var i = 1; i < choices.Length; i++) if (costs[i] < costs[first]) first = i;
+        if (costs[0] > 16 && costs[0] - costs[first] < 0.25) return (-1, -1, true);
+        var second = first == 0 ? 1 : 0;
+        for (var i = 0; i < choices.Length; i++) if (i != first && costs[i] < costs[second]) second = i;
+        return (choices[first], choices[second], costs[first] > 14);
     }
 
     private static void WriteHeader(Vp8LBitWriter writer, bool subtractGreen, WebpBuffer<uint>? modes, Vp8LEntropyEncoder? predictorImage, Vp8LEntropyEncoder image)
@@ -254,10 +309,12 @@ internal static class Vp8LEncoder
     }
 
     private static Vp8LBitWriter? CreatePaletteCandidate(ReadOnlySpan<uint> pixels, int width, int height,
-        bool subtractGreen, WebpMemory memory, Span<uint> work, Span<int> positions, WebpBuffer<Vp8LToken> tokens, WebpEffortSettings settings)
+        bool subtractGreen, WebpMemory memory, Span<uint> work, Span<int> positions, WebpBuffer<Vp8LToken> tokens, WebpEffortSettings settings,
+        out bool compactAtFastEffort)
     {
+        compactAtFastEffort = false;
         var indices = new Dictionary<uint, int>(16);
-        Span<uint> colors = stackalloc uint[16];
+        Span<uint> colors = stackalloc uint[256];
         foreach (var pixel in pixels) {
             if (!indices.ContainsKey(pixel)) {
                 if (indices.Count == colors.Length) return null;
@@ -266,7 +323,7 @@ internal static class Vp8LEncoder
             }
         }
         var count = indices.Count;
-        var packing = count <= 2 ? 3 : count <= 4 ? 2 : 1;
+        var packing = count <= 2 ? 3 : count <= 4 ? 2 : count <= 16 ? 1 : 0;
         var bits = 8 >> packing;
         var codedWidth = Vp8LTransforms.Subsample(width, packing);
         var packed = work[..checked(codedWidth * height)];
@@ -309,6 +366,10 @@ internal static class Vp8LEncoder
                     WritePaletteHeader(writer, subtractGreen, colors[..count], palette, modes, predictor, image);
                     image.WritePixels(writer, residual.Span);
                     writer.Finish();
+                }
+                if (pass == 0) {
+                    compactAtFastEffort = (writer!.WrittenSpan.Length + 5L) * 8 < pixels.Length;
+                    if (compactAtFastEffort && packing > 0 && settings.PredictorTier < 4) break;
                 }
             }
             return writer;

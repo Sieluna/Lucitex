@@ -339,6 +339,8 @@ internal static class Vp8LEncoder
         using var extraPositions = positions.Length < tableSize ? memory.Rent<int>(tableSize) : null;
         var table = extraPositions is null ? positions[..tableSize] : extraPositions.Span;
         using var residual = memory.Rent<uint>(packed.Length);
+        using var previousModes = memory.Rent<uint>(Vp8LTransforms.Subsample(codedWidth, k_PredictorBits)
+            * Vp8LTransforms.Subsample(height, k_PredictorBits));
         Vp8LBitWriter? writer = null;
         try {
             var passes = settings.MatchCandidates == 1 ? 1 : 2;
@@ -347,9 +349,15 @@ internal static class Vp8LEncoder
                 var maxTier = pass == 0 ? 0 : settings.PaletteTier;
                 var passTable = table[..Vp8LMatchFinder.TableSize(packed.Length, candidates)];
                 using var palette = new Vp8LEntropyEncoder(colors[..count], count, passTable, candidates, memory);
+                var havePreviousModes = false;
                 for (var tier = -1; tier <= maxTier; tier++) {
                     using var modes = tier < 0 ? null : ChoosePredictors(packed, codedWidth, height, memory, tier);
                     if (tier >= 0 && modes is null) continue;
+                    if (modes is not null) {
+                        if (havePreviousModes && modes.Span.SequenceEqual(previousModes.Span)) continue;
+                        modes.Span.CopyTo(previousModes.Span);
+                        havePreviousModes = true;
+                    }
                     packed.CopyTo(residual.Span);
                     if (modes is not null) ApplyPredictors(residual.Span, codedWidth, height, modes.Span);
                     using var image = new Vp8LEntropyEncoder(residual.Span, codedWidth, passTable, candidates, memory, tokens);
@@ -369,7 +377,7 @@ internal static class Vp8LEncoder
                 }
                 if (pass == 0) {
                     compactAtFastEffort = (writer!.WrittenSpan.Length + 5L) * 8 < pixels.Length;
-                    if (compactAtFastEffort && packing > 0 && settings.PredictorTier < 4) break;
+                    if (compactAtFastEffort && packing >= 2 && settings.PredictorTier < 4) break;
                 }
             }
             return writer;

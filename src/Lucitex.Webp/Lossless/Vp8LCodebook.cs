@@ -29,6 +29,20 @@ internal sealed class Vp8LCodebook
     private static byte[] BuildLengths(ReadOnlySpan<int> frequencies, int maxBits)
     {
         var lengths = new byte[frequencies.Length];
+        var first = -1;
+        var second = -1;
+        var symbols = 0;
+        for (var i = 0; i < frequencies.Length; i++) {
+            if (frequencies[i] == 0) continue;
+            if (++symbols > 2) break;
+            if (first < 0) first = i;
+            else second = i;
+        }
+        if (symbols <= 2) {
+            lengths[first < 0 ? 0 : first] = 1;
+            if (second >= 0) lengths[second] = 1;
+            return lengths;
+        }
         Span<int> weights = stackalloc int[frequencies.Length];
         frequencies.CopyTo(weights);
         Span<int> parents = stackalloc int[(frequencies.Length * 2) - 1];

@@ -135,8 +135,8 @@ internal sealed class PngWriter : IImageWriter
                 if (filter == PngFilterType.Paeth) paethLength = sample.Length;
             }
             var sampleBytes = (long)(rowBytes + 1) * rows;
-            if (bestLength * 8 < sampleBytes && paethLength <= bestLength * 2) bestFilter = PngFilterType.Paeth;
-            var level = bestLength * 8 < sampleBytes ? CompressionLevel.SmallestSize
+            if (bestLength * 4 < sampleBytes && paethLength <= bestLength * 2) bestFilter = PngFilterType.Paeth;
+            var level = bestLength * 4 < sampleBytes ? CompressionLevel.SmallestSize
                 : bestLength * 4 > sampleBytes * 3 ? CompressionLevel.Fastest : CompressionLevel.Optimal;
             return (bestFilter, level);
         }

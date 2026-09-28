@@ -20,14 +20,14 @@ internal sealed class Vp8LEntropyEncoder : IDisposable
     {
         _width = width;
         var frequencies = new[] { new int[280], new int[256], new int[256], new int[256], new int[40] };
-        using var heads = candidates == 1 ? null : memory.Rent<byte>(positions.Length / candidates);
+        var uniform = !pixels.IsEmpty && !pixels.ContainsAnyExcept(pixels[0]);
+        using var heads = candidates == 1 || uniform ? null : memory.Rent<byte>(positions.Length / candidates);
         var headPositions = heads is null ? Span<byte>.Empty : heads.Span;
-        var finder = new Vp8LMatchFinder(pixels, positions, headPositions, width, candidates);
+        var finder = uniform ? default : new Vp8LMatchFinder(pixels, positions, headPositions, width, candidates);
         _ownsTokens = tokens is null;
         _tokens = tokens ?? memory.Rent<Vp8LToken>(Math.Max(1, pixels.Length));
         var tokenSpan = _tokens.Span;
         long extraBits = 0;
-        var uniform = !pixels.IsEmpty && !pixels.ContainsAnyExcept(pixels[0]);
         if (uniform) {
             var pixel = pixels[0];
             tokenSpan[_tokenCount++] = new Vp8LToken(pixels.Length, 0);

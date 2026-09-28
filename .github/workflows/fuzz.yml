@@ -152,7 +152,18 @@ jobs:
             --oracle $library --artifacts artifacts/fuzz/cases 2>&1 |
             Tee-Object -FilePath artifacts/fuzz/run.log
           $fuzzExitCode = $LASTEXITCODE
-          "Fuzz exit code: $fuzzExitCode; iterations: $env:FUZZ_ITERATIONS; seed: $env:FUZZ_SEED" >> $env:GITHUB_STEP_SUMMARY
+          "| Fuzz exit code | Requested mutations | Seed |" >> $env:GITHUB_STEP_SUMMARY
+          "|---:|---:|---:|" >> $env:GITHUB_STEP_SUMMARY
+          "| $fuzzExitCode | $env:FUZZ_ITERATIONS | $env:FUZZ_SEED |" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          $qualitySummary = 'artifacts/fuzz/cases/quality/summary.md'
+          if (Test-Path -LiteralPath $qualitySummary) {
+            Get-Content -LiteralPath $qualitySummary -Raw >> $env:GITHUB_STEP_SUMMARY
+          }
+          else {
+            "| Encoding audit | Report unavailable; see run.log |" >> $env:GITHUB_STEP_SUMMARY
+            "|:---|:---|" >> $env:GITHUB_STEP_SUMMARY
+          }
           exit $fuzzExitCode
 
       - name: Upload fuzz diagnostics

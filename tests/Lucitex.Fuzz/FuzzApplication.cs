@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Lucitex.Core.Execution;
 
 namespace Lucitex.Fuzz;
@@ -10,10 +11,10 @@ internal static class FuzzApplication
         try {
             return Dispatch(args);
         }
-        catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException) {
+        catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException or JsonException) {
             return UsageError(exception.Message);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException) {
             Console.Error.WriteLine(exception.Message);
             return 2;
         }
@@ -28,6 +29,8 @@ internal static class FuzzApplication
 
         return args[0] switch {
             "run" => RunFuzz(args[1..]),
+            "quality" => EncodingQualityAudit.Run(RunOptionsParser.Parse(args[1..], qualityOnly: true)),
+            "quality-replay" when args.Length == 4 => EncodingQualityAudit.Replay(args[1], ParseOracleOption(args.AsSpan(2))!),
             "replay" => Replay(args[1..]),
             "generate" => Generate(args[1..]),
             "generate-bench" => GenerateBenchmark(args[1..]),
@@ -149,7 +152,10 @@ internal static class FuzzApplication
 
     private static void PrintUsage()
     {
-        Console.WriteLine("Lucitex.Fuzz run [--iterations N] [--seed N] [--oracle LIBRARY] [--artifacts DIR] [--corpus DIR] [--mutation mixed|raw|structured]");
+        Console.WriteLine("Lucitex.Fuzz run --oracle LIBRARY [--iterations N] [--quality-iterations N] [--seed N] [--artifacts DIR] [--corpus DIR] [--mutation mixed|raw|structured]");
+        Console.WriteLine("Defaults: 256 mutations, 8 randomized quality rounds plus the fixed quality corpus; mutation=mixed. Increase --iterations/--quality-iterations for longer runs.");
+        Console.WriteLine("Lucitex.Fuzz quality --oracle LIBRARY [--quality-iterations N] [--seed N] [--artifacts DIR] (libpng/libjpeg/libwebp references; native ABI 2; size <= 1.2x reference, except WebP Fast advisory; fidelity required at every effort)");
+        Console.WriteLine("Lucitex.Fuzz quality-replay <failure.json> --oracle LIBRARY");
         Console.WriteLine("Lucitex.Fuzz replay <png|exr|hdr|ktx2|jpg|webp> <path> [--oracle LIBRARY]");
         Console.WriteLine("Lucitex.Fuzz generate <directory>");
         Console.WriteLine("Lucitex.Fuzz generate-bench <directory> <width> <height>");

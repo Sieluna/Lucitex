@@ -38,7 +38,9 @@ enum lucitex_oracle_operation
     LUCITEX_VALIDATE = 0,
     LUCITEX_WEBP_RGBA = 1,
     LUCITEX_WEBP_YUV = 2,
-    LUCITEX_WEBP_ENCODE = 3
+    LUCITEX_WEBP_ENCODE = 3,
+    LUCITEX_DECODE_PIXELS = 4,
+    LUCITEX_ENCODE_REFERENCE = 5
 };
 
 typedef struct lucitex_oracle_request

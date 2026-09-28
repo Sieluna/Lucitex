@@ -36,6 +36,11 @@ internal static class ConformanceCases
             var offset = bytes.AsSpan().IndexOf("channels\0chlist\0"u8) + "channels\0chlist\0"u8.Length + 4;
             bytes[offset + 6] = 176;
         });
+        yield return Mutate("rgba-none.exr", "duplicate-channel", bytes => {
+            var offset = bytes.AsSpan().IndexOf("channels\0chlist\0"u8) + "channels\0chlist\0"u8.Length + 4;
+            // Generated RGBA channel entries use one-byte names and 16-byte descriptors.
+            bytes[offset + 18] = bytes[offset];
+        });
         yield return Mutate("rgba-none.exr", "chunk-size", bytes => {
             var offset = 8;
             while (bytes[offset] != 0) {

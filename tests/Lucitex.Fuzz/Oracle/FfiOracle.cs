@@ -31,6 +31,17 @@ internal sealed unsafe class FfiOracle : IDecodeOracle
 
     public bool Supports(ImageFormat format) => format is ImageFormat.Png or ImageFormat.Exr or ImageFormat.Ktx2 or ImageFormat.Jpeg or ImageFormat.Webp;
 
+    public void EnsureAvailable()
+    {
+        if (_loadError is not null) throw new InvalidDataException("Native oracle unavailable: " + _loadError);
+    }
+
+    public NativePayload DecodePixels(ImageFormat format, byte[] data) =>
+        Invoke(format, data, NativeOperation.DecodePixels, FuzzLimits.Decode);
+
+    public NativePayload EncodeReference(ImageFormat format, byte[] pixels, uint width, uint height, int quality) =>
+        Invoke(format, pixels, NativeOperation.EncodeReference, FuzzLimits.Decode, width, height, quality);
+
     public DecodeOutcome Decode(ImageFormat format, byte[] data) => Decode(format, data, FuzzLimits.Decode);
 
     public DecodeOutcome Decode(ImageFormat format, byte[] data, DecodeLimits limits) =>

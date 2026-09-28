@@ -30,7 +30,7 @@ internal enum NativeStructKind : uint
 
 internal static class NativeAbi
 {
-    public const uint Version = 1;
+    public const uint Version = 2;
 }
 
 internal enum NativeOperation : uint
@@ -39,6 +39,8 @@ internal enum NativeOperation : uint
     WebpRgba,
     WebpYuv,
     WebpEncode,
+    DecodePixels,
+    EncodeReference,
 }
 
 [StructLayout(LayoutKind.Sequential)]

@@ -75,6 +75,37 @@ void encode_webp(const lucitex_oracle_request& request, const lucitex_oracle_lim
     const auto size = static_cast<uint64_t>(request.width) * request.height * 4;
     decoded_size(size, limits);
     require(request.input_length == size, LUCITEX_INVALID_REQUEST, "RGBA input length does not match the extent.");
+    if (request.operation == LUCITEX_ENCODE_REFERENCE) {
+        WebPConfig config;
+        WebPPicture picture;
+        require(WebPConfigInit(&config) && WebPPictureInit(&picture), LUCITEX_INTERNAL_ERROR, "WebP ABI mismatch.");
+        config.lossless = 1;
+        config.quality = 100;
+        config.method = 4;
+        config.exact = 1;
+        config.near_lossless = 100;
+        require(WebPValidateConfig(&config), LUCITEX_INVALID_REQUEST, "Invalid lossless WebP config.");
+        picture.width = static_cast<int>(request.width);
+        picture.height = static_cast<int>(request.height);
+        picture.use_argb = 1;
+        const std::unique_ptr<WebPPicture, decltype(&WebPPictureFree)> picture_owner(&picture, WebPPictureFree);
+        WebPMemoryWriter writer;
+        WebPMemoryWriterInit(&writer);
+        const std::unique_ptr<WebPMemoryWriter, decltype(&WebPMemoryWriterClear)> writer_owner(&writer, WebPMemoryWriterClear);
+        picture.writer = WebPMemoryWrite;
+        picture.custom_ptr = &writer;
+        require(WebPPictureImportRGBA(&picture, request.input, static_cast<int>(request.width * 4)),
+            LUCITEX_RESOURCE_LIMIT, "WebP pixel import failed.");
+        require(WebPEncode(&config, &picture), LUCITEX_REJECTED, "Lossless WebP reference encoding failed.");
+        require(writer.size <= limits.max_input_bytes && writer.size <= limits.max_working_set,
+            LUCITEX_RESOURCE_LIMIT, "WebP reference exceeds the output budget.");
+        std::memcpy(allocate_output(writer.size, result), writer.mem, writer.size);
+        result.width = request.width;
+        result.height = request.height;
+        result.decoded_bytes = size;
+        result.subresources = 1;
+        return;
+    }
     uint8_t* encoded = nullptr;
     const auto length = WebPEncodeRGBA(request.input, request.width, request.height, request.width * 4, request.quality, &encoded);
     const std::unique_ptr<uint8_t, decltype(&WebPFree)> owner(encoded, WebPFree);
@@ -89,7 +120,7 @@ void encode_webp(const lucitex_oracle_request& request, const lucitex_oracle_lim
 
 void webp(const lucitex_oracle_request& request, const lucitex_oracle_limits& limits, lucitex_oracle_result& result)
 {
-    if (request.operation == LUCITEX_WEBP_ENCODE) { encode_webp(request, limits, result); return; }
+    if (request.operation == LUCITEX_WEBP_ENCODE || request.operation == LUCITEX_ENCODE_REFERENCE) { encode_webp(request, limits, result); return; }
     const auto* payload = request.input;
     auto payload_size = static_cast<size_t>(request.input_length);
     webp_container(request, payload, payload_size);

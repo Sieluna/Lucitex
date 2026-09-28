@@ -65,7 +65,7 @@ internal static partial class SeedCorpus
         yield return new SeedInput("rgb8.jpg", ImageFormat.Jpeg, WriteJpegRgb8(width, height, 104));
     }
 
-    private static ImageAssetDescriptor PngDescriptor(int width, int height, IReadOnlyList<string> names, SampleType sampleType)
+    internal static ImageAssetDescriptor PngDescriptor(int width, int height, IReadOnlyList<string> names, SampleType sampleType)
     {
         var channels = names.Select(name => new ChannelDescriptor {
             Name = name,

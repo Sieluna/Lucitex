@@ -48,7 +48,7 @@ void message(lucitex_oracle_result& result, const char* text)
 
 uint32_t LUCITEX_ORACLE_CALL lucitex_oracle_abi_version(void)
 {
-    return 1;
+    return 2;
 }
 
 uint32_t LUCITEX_ORACLE_CALL lucitex_oracle_struct_size(uint32_t type)
@@ -79,9 +79,10 @@ uint32_t LUCITEX_ORACLE_CALL lucitex_oracle_execute(
         oracle::require(request->input_length <= limits->max_input_bytes && request->input_length <= std::numeric_limits<size_t>::max(),
             LUCITEX_RESOURCE_LIMIT, "Input exceeds the byte budget.");
         oracle::require(request->input_length > 0, LUCITEX_REJECTED, "Empty input.");
-        oracle::require(request->operation <= LUCITEX_WEBP_ENCODE, LUCITEX_INVALID_REQUEST, "Unknown operation.");
-        oracle::require(request->operation == LUCITEX_VALIDATE || request->format == LUCITEX_WEBP,
-            LUCITEX_UNSUPPORTED, "Output operations require WebP.");
+        oracle::require(request->operation <= LUCITEX_ENCODE_REFERENCE, LUCITEX_INVALID_REQUEST, "Unknown operation.");
+        oracle::require(request->operation == LUCITEX_VALIDATE || request->format == LUCITEX_WEBP ||
+            (request->operation >= LUCITEX_DECODE_PIXELS && (request->format == LUCITEX_PNG || request->format == LUCITEX_JPEG)),
+            LUCITEX_UNSUPPORTED, "Output operation is not supported for this format.");
         switch (request->format)
         {
             case LUCITEX_PNG: oracle::validate_png(*request, *limits, *result); break;

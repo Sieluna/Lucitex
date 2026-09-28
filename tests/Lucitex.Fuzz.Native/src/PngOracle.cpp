@@ -7,6 +7,32 @@
 
 namespace oracle
 {
+void encode_png(const lucitex_oracle_request& request, const lucitex_oracle_limits& limits, lucitex_oracle_result& result)
+{
+    extent(request.width, request.height, 1, limits);
+    const auto size = static_cast<uint64_t>(request.width) * request.height * 4;
+    decoded_size(size, limits);
+    require(request.input_length == size && limits.max_channels >= 4, LUCITEX_INVALID_REQUEST, "Expected RGBA8 PNG pixels.");
+    png_image image{};
+    image.version = PNG_IMAGE_VERSION;
+    image.width = request.width;
+    image.height = request.height;
+    image.format = PNG_FORMAT_RGBA;
+    const std::unique_ptr<png_image, decltype(&png_image_free)> owner(&image, png_image_free);
+    png_alloc_size_t length = 0;
+    require(png_image_write_to_memory(&image, nullptr, &length, 0, request.input, 0, nullptr) != 0,
+        LUCITEX_REJECTED, "PNG reference sizing failed.");
+    require(length <= limits.max_input_bytes && length <= limits.max_working_set, LUCITEX_RESOURCE_LIMIT, "PNG reference exceeds the output budget.");
+    auto* output = allocate_output(length, result);
+    require(png_image_write_to_memory(&image, output, &length, 0, request.input, 0, nullptr) != 0,
+        LUCITEX_REJECTED, "PNG reference encoding failed.");
+    result.output_length = length;
+    result.width = request.width;
+    result.height = request.height;
+    result.decoded_bytes = size;
+    result.subresources = 1;
+}
+
 void png_chunks(const lucitex_oracle_request& request)
 {
     const auto read32 = [](const uint8_t* p) {
@@ -35,6 +61,7 @@ void png_chunks(const lucitex_oracle_request& request)
 
 void validate_png(const lucitex_oracle_request& request, const lucitex_oracle_limits& limits, lucitex_oracle_result& result)
 {
+    if (request.operation == LUCITEX_ENCODE_REFERENCE) { encode_png(request, limits, result); return; }
     png_chunks(request);
     png_image image{};
     image.version = PNG_IMAGE_VERSION;
@@ -47,8 +74,10 @@ void validate_png(const lucitex_oracle_request& request, const lucitex_oracle_li
     require(pixels_count <= limits.max_decoded_bytes / 4, LUCITEX_RESOURCE_LIMIT, "PNG output exceeds the byte budget.");
     const auto size = pixels_count * 4;
     decoded_size(size, limits);
-    std::vector<png_byte> pixels(static_cast<size_t>(size));
-    require(png_image_finish_read(&image, nullptr, pixels.data(), 0, nullptr) != 0, LUCITEX_REJECTED, "PNG payload rejected.");
+    std::vector<png_byte> scratch;
+    auto* pixels = request.operation == LUCITEX_DECODE_PIXELS ? allocate_output(size, result) : nullptr;
+    if (!pixels) { scratch.resize(static_cast<size_t>(size)); pixels = scratch.data(); }
+    require(png_image_finish_read(&image, nullptr, pixels, 0, nullptr) != 0, LUCITEX_REJECTED, "PNG payload rejected.");
     require((image.warning_or_error & PNG_IMAGE_WARNING) == 0, LUCITEX_REJECTED, "PNG decoded with validation warnings.");
     result.width = image.width;
     result.height = image.height;

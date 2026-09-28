@@ -10,6 +10,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\Shared\CompressionQuality.cs" Link="Quality\CompressionQuality.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Lucitex.Core\Lucitex.Core.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Exr\Lucitex.Exr.csproj" />
     <ProjectReference Include="..\..\src\Lucitex.Hdr\Lucitex.Hdr.csproj" />

@@ -3,12 +3,13 @@ using System.Diagnostics;
 namespace Lucitex.Fuzz;
 
 internal sealed record FuzzOptions(int Iterations, int RandomSeed, string Artifacts, string? Oracle,
-    string? Corpus, MutationMode Mutation);
+    string? Corpus, MutationMode Mutation, int QualityIterations);
 
 internal static class FuzzRunner
 {
     public static int Run(FuzzOptions options)
     {
+        var qualityFailed = EncodingQualityAudit.Run(options) != 0;
         var generated = SeedCorpus.Create();
         var seeds = generated.Concat(CorpusLoader.Load(options.Corpus)).ToArray();
         using IDecodeOracle? oracle = options.Oracle is null ? null : new FfiOracle(options.Oracle);
@@ -42,7 +43,7 @@ internal static class FuzzRunner
         }
         var random = new Random(options.RandomSeed);
         var counters = new Dictionary<string, int>(StringComparer.Ordinal);
-        var failed = false;
+        var failed = qualityFailed;
         var stopwatch = Stopwatch.StartNew();
         var executed = 0;
         for (var iteration = 0; iteration < options.Iterations; iteration++) {

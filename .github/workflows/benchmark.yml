@@ -14,7 +14,7 @@ on:
       cases:
         description: Comma-separated procedural cases
         type: string
-        default: ramp@128x128,alpha@128x128,noise@128x128,ramp@512x512,alpha@512x512,noise@512x512,checker@513x385,ramp@2048x2048,alpha@2048x2048,noise@2048x2048
+        default: ramp@128x128,alpha@128x128,noise@128x128,checker@129x97,noise@512x512,noise@2048x2048
       profiles:
         description: Comma-separated profiles, or all
         type: string
